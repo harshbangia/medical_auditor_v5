@@ -1,0 +1,112 @@
+{
+    "meta": {
+        "audit_id": "GMS-20260325-5b2231",
+        "audit_date": "25/03/2026"
+    },
+    "report": {
+        "patient_details": {
+            "name": "Mr. RAJEEV KAKKAR",
+            "age": "64",
+            "sex": "M"
+        },
+        "claim_details": {
+            "hospital": "Institute of Liver & Biliary Sciences",
+            "date_of_admission": "09/02/2026 15:34",
+            "date_of_discharge": "14/03/2026 11:15",
+            "diagnosis": "Acute pancreatitis with complications"
+        },
+        "clinical_findings": [
+            {
+                "parameter": "Serum Amylase",
+                "value": "3 times upper limit of normal",
+                "normal_range": "< 100 U/L",
+                "comment": "Elevated indicating pancreatitis"
+            },
+            {
+                "parameter": "Serum Lipase",
+                "value": "3 times upper limit of normal",
+                "normal_range": "< 60 U/L",
+                "comment": "Elevated indicating pancreatitis"
+            },
+            {
+                "parameter": "C-Reactive Protein",
+                "value": "135 mg/L",
+                "normal_range": "< 10 mg/L",
+                "comment": "Elevated indicating inflammation"
+            },
+            {
+                "parameter": "Calcium",
+                "value": "9.8 mg/dL",
+                "normal_range": "8.6-10.3 mg/dL",
+                "comment": "Normal"
+            },
+            {
+                "parameter": "Triglycerides",
+                "value": "> 1000 mg/dL",
+                "normal_range": "< 150 mg/dL",
+                "comment": "Elevated indicating risk for pancreatitis"
+            }
+        ],
+        "documentation_gaps": [
+            "Lack of detailed medication chart",
+            "Missing follow-up plan post-discharge",
+            "Incomplete allergy history"
+        ],
+        "clinical_checklist": [
+            {
+                "area": "Admission notes",
+                "available": "YES",
+                "remarks": "Complete and detailed"
+            },
+            {
+                "area": "Discharge summary",
+                "available": "YES",
+                "remarks": "Includes follow-up instructions"
+            },
+            {
+                "area": "Medication administration records",
+                "available": "NO",
+                "remarks": "Incomplete documentation"
+            },
+            {
+                "area": "Nursing notes",
+                "available": "YES",
+                "remarks": "Regularly updated"
+            }
+        ],
+        "timeline": [
+            {
+                "date": "09/02/2026",
+                "event": "Admitted with acute abdominal pain"
+            },
+            {
+                "date": "10/02/2026",
+                "event": "CT scan shows necrotizing pancreatitis"
+            },
+            {
+                "date": "14/03/2026",
+                "event": "Discharged with follow-up instructions"
+            }
+        ],
+        "observations": [
+            {
+                "question": "Was the diagnosis of acute pancreatitis supported by imaging?",
+                "analysis": "CT scan confirmed necrotizing pancreatitis.",
+                "answer": "YES"
+            },
+            {
+                "question": "Were appropriate laboratory tests conducted?",
+                "analysis": "Amylase and lipase levels were significantly elevated.",
+                "answer": "YES"
+            },
+            {
+                "question": "Was there a follow-up plan post-discharge?",
+                "analysis": "Discharge summary included follow-up but lacked specific dates.",
+                "answer": "PARTIALLY"
+            }
+        ],
+        "inference": "The patient presented with acute pancreatitis, likely due to hypertriglyceridemia. Management was appropriate, but documentation gaps exist that could affect continuity of care.",
+        "auditor_conclusion": "Overall, the management of the patient was in line with current guidelines for acute pancreatitis. However, improvements in documentation practices are necessary to ensure comprehensive care.",
+        "remarks": "Further training on documentation for nursing staff may be beneficial."
+    }
+}

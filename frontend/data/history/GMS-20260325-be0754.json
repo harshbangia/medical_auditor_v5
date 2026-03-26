@@ -1,0 +1,130 @@
+{
+    "meta": {
+        "audit_id": "GMS-20260325-be0754",
+        "audit_date": "25/03/2026"
+    },
+    "report": {
+        "patient_details": {
+            "name": "Kamkar Pradyumn Bhimrao",
+            "age": "27",
+            "sex": "Male",
+            "claim_number": "2026030100131.A1",
+            "policy_number": "N/A",
+            "policy_period": "N/A"
+        },
+        "claim_details": {
+            "hospital": "Orion Hospital",
+            "consultation_date": "27-02-2026 09:15 PM",
+            "date_of_admission": "27-02-2026 09:15 PM",
+            "date_of_discharge": "Still hospitalized",
+            "diagnosis": "Emergency admission due to Vasculotoxic snake bite"
+        },
+        "clinical_findings": [
+            {
+                "parameter": "Hemoglobin",
+                "value": "12.6 gm%",
+                "normal_range": "13.5-17.5 gm%",
+                "comment": "Slightly low for male patient"
+            },
+            {
+                "parameter": "Total WBC Count",
+                "value": "13800 /cumm",
+                "normal_range": "4000-10000 /cumm",
+                "comment": "Elevated, suggestive of infection or stress response"
+            },
+            {
+                "parameter": "Neutrophils",
+                "value": "78%",
+                "normal_range": "40-70%",
+                "comment": "Elevated, indicating possible infection"
+            },
+            {
+                "parameter": "Platelet Count",
+                "value": "94000 /cu.mm",
+                "normal_range": "150000-450000 /cu.mm",
+                "comment": "Low, concerning for coagulopathy"
+            },
+            {
+                "parameter": "Clotting Time",
+                "value": "42.5 minutes",
+                "normal_range": "2-8 minutes",
+                "comment": "Prolonged, indicative of coagulopathy"
+            },
+            {
+                "parameter": "Activated Partial Thromboplastin Time (APTT)",
+                "value": "58.6 seconds",
+                "normal_range": "25-35 seconds",
+                "comment": "Prolonged, suggestive of coagulopathy"
+            },
+            {
+                "parameter": "ESR",
+                "value": "60 mm",
+                "normal_range": "0-20 mm",
+                "comment": "Elevated, indicating inflammation"
+            },
+            {
+                "parameter": "CRP",
+                "value": "53.7 mg/L",
+                "normal_range": "<10 mg/L",
+                "comment": "Elevated, suggestive of acute inflammation"
+            },
+            {
+                "parameter": "Kidney Function Test (KFT)",
+                "value": "Sr. Creatinine 0.90 mg/dl, Blood Urea 23.7 mg/dl",
+                "normal_range": "Creatinine: 0.6-1.2 mg/dl, Urea: 7-20 mg/dl",
+                "comment": "Within normal limits"
+            }
+        ],
+        "documentation_gaps": [
+            "Lack of documented evidence of active bleeding during hospitalization raises concerns regarding the medical necessity of blood transfusion."
+        ],
+        "clinical_checklist": [
+            {
+                "area": "Blood Pressure",
+                "available": "YES",
+                "remarks": "Blood pressure recorded at admission"
+            },
+            {
+                "area": "Examination",
+                "available": "YES",
+                "remarks": "Comprehensive examination documented"
+            },
+            {
+                "area": "History",
+                "available": "YES",
+                "remarks": "Detailed history of snake bite and symptoms recorded"
+            },
+            {
+                "area": "Consultation",
+                "available": "YES",
+                "remarks": "Consultation with treating physician documented"
+            }
+        ],
+        "timeline": [
+            {
+                "date": "27-02-2026 09:15 PM",
+                "event": "Date of Admission (D.O.A)"
+            },
+            {
+                "date": "27-02-2026 08:30 PM",
+                "event": "Incident of snake bite"
+            }
+        ],
+        "observations": [
+            {
+                "question": "Was the administration of ASV (Anti-Snake Venom) appropriate given the clinical presentation?",
+                "analysis": "The patient presented with signs of vasculotoxic envenomation, including severe local swelling and systemic symptoms. ASV was administered as per protocol, which is consistent with the standard treatment guidelines for snake bites. However, the prolonged administration of ASV without documented clinical improvement raises questions about the necessity of continued hospitalization.",
+                "answer": "Yes, ASV was administered appropriately, but the lack of clinical improvement necessitates further review of treatment efficacy."
+            },
+            {
+                "question": "Was the blood transfusion justified based on the clinical findings?",
+                "analysis": "The patient was transfused with blood on two occasions; however, there was no documented evidence of active bleeding during the hospital stay. The low platelet count and prolonged clotting times suggest a coagulopathy, but without active bleeding, the necessity of transfusion is questionable. This raises concerns about adherence to transfusion guidelines.",
+                "answer": "No, the justification for blood transfusion is not adequately supported by clinical documentation."
+            }
+        ],
+        "inference": "The patient was admitted with a confirmed vasculotoxic snake bite and presented with significant clinical symptoms consistent with envenomation. The treatment protocol was initiated, including the administration of ASV and supportive care. However, the prolonged hospitalization and blood transfusions lack sufficient clinical justification based on the available documentation. Further investigation into the necessity of these interventions is warranted.",
+        "auditor_conclusion": "Treatment appears to be in accordance with standard treatment protocol for snake bites; however, the justification for blood transfusions and prolonged hospitalization requires further scrutiny.",
+        "remarks": "It is recommended that the hospital review its protocols for blood transfusion in cases of snake bite and ensure that clinical documentation supports all interventions to maintain compliance with treatment guidelines.",
+        "selected_guideline": "SnakeBiteGuidelines.pdf"
+    }
+}

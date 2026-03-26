@@ -1,0 +1,176 @@
+{
+    "meta": {
+        "audit_id": "GMS-20260325-ddc3a5",
+        "audit_date": "25/03/2026"
+    },
+    "report": {
+        "patient_details": {
+            "name": "Kamkar Pradyumn Bhimrao",
+            "age": "27",
+            "sex": "Male",
+            "claim_number": "2026030100131.A1",
+            "policy_number": "NA",
+            "policy_period": "NA"
+        },
+        "claim_details": {
+            "hospital": "Orion Hospital",
+            "consultation_date": "27-02-2026",
+            "date_of_admission": "27-02-2026 09:15 PM",
+            "date_of_discharge": "Still hospitalized",
+            "diagnosis": "Emergency admission due to Vasculotoxic snake bite"
+        },
+        "clinical_findings": [
+            {
+                "parameter": "Pulse Rate",
+                "value": "108/min",
+                "normal_range": "60-100/min",
+                "comment": "Tachycardia observed at the time of admission."
+            },
+            {
+                "parameter": "Blood Pressure",
+                "value": "127/78 mmHg",
+                "normal_range": "120/80 mmHg",
+                "comment": "Blood pressure within normal limits."
+            },
+            {
+                "parameter": "SPO2",
+                "value": "81%",
+                "normal_range": "95-100%",
+                "comment": "Hypoxemia noted; patient on oxygen support."
+            },
+            {
+                "parameter": "Respiratory Rate",
+                "value": "24/min",
+                "normal_range": "12-20/min",
+                "comment": "Tachypnea observed."
+            },
+            {
+                "parameter": "Temperature",
+                "value": "98.2\u00b0F",
+                "normal_range": "97-99\u00b0F",
+                "comment": "Temperature within normal limits."
+            },
+            {
+                "parameter": "Hemoglobin",
+                "value": "12.6 gm%",
+                "normal_range": "13.5-17.5 gm%",
+                "comment": "Slightly low hemoglobin level."
+            },
+            {
+                "parameter": "Total WBC Count",
+                "value": "13800 /cumm",
+                "normal_range": "4000-10000 /cumm",
+                "comment": "Leukocytosis observed."
+            },
+            {
+                "parameter": "Platelet Count",
+                "value": "94000 /cu.mm",
+                "normal_range": "150000-450000 /cu.mm",
+                "comment": "Thrombocytopenia noted."
+            },
+            {
+                "parameter": "Clotting Time",
+                "value": "42.5 minutes",
+                "normal_range": "3-8 minutes",
+                "comment": "Prolonged clotting time indicative of coagulopathy."
+            },
+            {
+                "parameter": "APTT",
+                "value": "58.6 seconds",
+                "normal_range": "30-40 seconds",
+                "comment": "Prolonged APTT indicative of coagulopathy."
+            },
+            {
+                "parameter": "ESR",
+                "value": "60 mm",
+                "normal_range": "0-20 mm",
+                "comment": "Elevated ESR indicative of inflammation."
+            },
+            {
+                "parameter": "CRP",
+                "value": "53.7 mg/L",
+                "normal_range": "<10 mg/L",
+                "comment": "Elevated CRP indicative of acute inflammation."
+            },
+            {
+                "parameter": "LDH",
+                "value": "481 U/L",
+                "normal_range": "125-220 U/L",
+                "comment": "Elevated LDH indicative of tissue damage."
+            },
+            {
+                "parameter": "Kidney Function Test (KFT)",
+                "value": "Sr. Creatinine 0.90 mg/dl, Blood Urea 23.7 mg/dl",
+                "normal_range": "Creatinine: 0.6-1.2 mg/dl, Urea: 7-20 mg/dl",
+                "comment": "KFT values within normal limits."
+            }
+        ],
+        "documentation_gaps": [
+            "Lack of documented evidence of active bleeding during hospitalization raises concerns regarding the medical necessity of blood transfusion."
+        ],
+        "clinical_checklist": [
+            {
+                "area": "Blood Pressure",
+                "available": "YES",
+                "remarks": "Blood pressure recorded at the time of admission."
+            },
+            {
+                "area": "Examination",
+                "available": "YES",
+                "remarks": "Comprehensive examination performed upon admission."
+            },
+            {
+                "area": "History",
+                "available": "YES",
+                "remarks": "Detailed history of snake bite documented."
+            },
+            {
+                "area": "Consultation",
+                "available": "YES",
+                "remarks": "Consultation with treating physician documented."
+            },
+            {
+                "area": "Lab Investigations",
+                "available": "YES",
+                "remarks": "All relevant lab investigations performed and documented."
+            }
+        ],
+        "timeline": [
+            {
+                "date": "27-02-2026 09:15 PM",
+                "event": "Date of Admission (D.O.A)"
+            },
+            {
+                "date": "27-02-2026 08:30 PM",
+                "event": "Incident of snake bite reported."
+            },
+            {
+                "date": "27-02-2026",
+                "event": "Initial lab investigations performed."
+            },
+            {
+                "date": "28-02-2026",
+                "event": "Blood transfusion administered."
+            },
+            {
+                "date": "02-03-2026",
+                "event": "Continued monitoring and treatment."
+            }
+        ],
+        "observations": [
+            {
+                "question": "Was the blood transfusion medically necessary given the absence of documented active bleeding?",
+                "analysis": "The patient was transfused with blood on two occasions without documented evidence of active bleeding during hospitalization. This raises concerns regarding the appropriateness of the transfusion, as transfusions should be based on clinical need and evidence of significant blood loss or anemia requiring correction.",
+                "answer": "The necessity of blood transfusion is questionable based on available documentation."
+            },
+            {
+                "question": "Was the administration of Anti-Snake Venom (ASV) justified given the prolonged hospitalization without clinical improvement?",
+                "analysis": "Despite the administration of ASV, there was no documented progression or change in the patient\u2019s clinical condition, which raises questions about the justification for prolonged hospitalization and continued ASV administration. The standard treatment guidelines recommend reassessment of the need for ASV if no clinical improvement is observed.",
+                "answer": "The justification for continued ASV administration is not supported by clinical evidence of improvement."
+            }
+        ],
+        "inference": "The patient presented with a vasculotoxic snake bite, characterized by significant clinical symptoms including tachycardia, hypoxemia, and elevated inflammatory markers. Despite appropriate initial management, including ASV administration, the patient's clinical condition did not show expected improvement, leading to concerns regarding the necessity of prolonged hospitalization and blood transfusions. The documentation gaps identified may impact the assessment of the medical necessity of interventions performed.",
+        "auditor_conclusion": "Treatment appears to be inconsistent with standard treatment protocols, particularly regarding the justification for blood transfusions and the prolonged administration of ASV without documented clinical improvement.",
+        "remarks": "It is recommended that the hospital review its protocols for managing snake bite cases, particularly in relation to documentation practices and the criteria for blood transfusion and ASV administration."
+    }
+}

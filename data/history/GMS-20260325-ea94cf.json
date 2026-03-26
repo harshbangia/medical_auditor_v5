@@ -1,0 +1,100 @@
+{
+    "meta": {
+        "audit_id": "GMS-20260325-ea94cf",
+        "audit_date": "25/03/2026"
+    },
+    "report": {
+        "patient_details": {
+            "name": "Mr. RAJEEV KAKKAR",
+            "age": "64Y",
+            "sex": "M",
+            "claim_number": "ILBS.0000413324",
+            "policy_number": "",
+            "policy_period": ""
+        },
+        "claim_details": {
+            "hospital": "Institute of Liver & Biliary Sciences",
+            "consultation_date": "09/02/2026",
+            "date_of_admission": "09/02/2026 15:34",
+            "date_of_discharge": "14/03/2026 11:50",
+            "diagnosis": "Acute Necrotizing Pancreatitis"
+        },
+        "clinical_findings": [
+            {
+                "parameter": "Serum Amylase",
+                "value": "3x upper limit of normal",
+                "normal_range": "< 100 U/L",
+                "comment": "Elevated indicating pancreatitis"
+            },
+            {
+                "parameter": "Serum Lipase",
+                "value": "3x upper limit of normal",
+                "normal_range": "< 60 U/L",
+                "comment": "Elevated indicating pancreatitis"
+            },
+            {
+                "parameter": "C-Reactive Protein",
+                "value": "135 mg/L",
+                "normal_range": "< 10 mg/L",
+                "comment": "Significantly elevated, suggestive of inflammation"
+            },
+            {
+                "parameter": "Calcium",
+                "value": "9.8 mg/dL",
+                "normal_range": "8.6-10.3 mg/dL",
+                "comment": "Within normal limits"
+            },
+            {
+                "parameter": "Blood Glucose",
+                "value": "133 mg/dL",
+                "normal_range": "70-100 mg/dL",
+                "comment": "Elevated, indicative of stress response"
+            }
+        ],
+        "documentation_gaps": [
+            "Lack of detailed documentation regarding the patient's dietary history and alcohol consumption, which are critical in assessing the etiology of acute pancreatitis."
+        ],
+        "clinical_checklist": [
+            {
+                "area": "Blood Pressure",
+                "available": "YES",
+                "remarks": "Blood pressure monitored regularly, stable during admission."
+            },
+            {
+                "area": "History",
+                "available": "YES",
+                "remarks": "Comprehensive history taken, including previous episodes of pancreatitis."
+            },
+            {
+                "area": "Consultation Notes",
+                "available": "YES",
+                "remarks": "Consultation notes by Dr. Rakhi Maiwall are thorough and documented."
+            }
+        ],
+        "timeline": [
+            {
+                "date": "09/02/2026 15:34",
+                "event": "Date of Admission (D.O.A)"
+            },
+            {
+                "date": "14/03/2026 11:50",
+                "event": "Date of Discharge (D.O.D)"
+            }
+        ],
+        "observations": [
+            {
+                "question": "Was the management of acute pancreatitis in accordance with established guidelines?",
+                "analysis": "The management included intravenous fluid resuscitation, pain management, and nutritional support, which aligns with current guidelines for acute pancreatitis treatment. However, the absence of prophylactic antibiotics and the timing of imaging studies should be critically evaluated.",
+                "answer": "Overall, the treatment appears to be in accordance with standard treatment protocol, but further evaluation of specific management decisions is warranted."
+            },
+            {
+                "question": "Were there any signs of infection or complications during the hospital stay?",
+                "analysis": "The patient exhibited elevated CRP levels and required monitoring for potential infection. Imaging studies indicated the presence of necrotic collections, which necessitated careful management to prevent infection.",
+                "answer": "Yes, there were indications of potential complications that required ongoing assessment and management."
+            }
+        ],
+        "inference": "Mr. Rajeev Kakkar, a 64-year-old male, was admitted with acute necrotizing pancreatitis, characterized by elevated serum amylase and lipase levels, and significant inflammatory markers. His management included supportive care, nutritional support, and monitoring for complications. The clinical course was consistent with current guidelines, although documentation gaps regarding dietary history and alcohol use were noted.",
+        "auditor_conclusion": "Treatment appears to be in accordance with standard treatment protocol, with appropriate management of acute pancreatitis and monitoring for complications.",
+        "remarks": "It is recommended that the hospital enhance documentation practices, particularly regarding patient history and dietary factors, to improve future management of similar cases."
+    }
+}

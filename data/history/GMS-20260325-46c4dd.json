@@ -1,0 +1,129 @@
+{
+    "meta": {
+        "audit_id": "GMS-20260325-46c4dd",
+        "audit_date": "25/03/2026"
+    },
+    "report": {
+        "guideline_used": "Snakebiteguidelines",
+        "patient_details": {
+            "name": "Kamkar Pradyumn Bhimrao",
+            "age": "27",
+            "sex": "Male",
+            "claim_number": "2026030100131.A1",
+            "policy_number": "Not provided",
+            "policy_period": "Not provided"
+        },
+        "claim_details": {
+            "hospital": "Orion Hospital",
+            "consultation_date": "27-02-2026 09:15 PM",
+            "date_of_admission": "27-02-2026 09:15 PM",
+            "date_of_discharge": "Still hospitalized",
+            "diagnosis": "Emergency admission due to Vasculotoxic snake bite"
+        },
+        "clinical_findings": [
+            {
+                "parameter": "Pulse Rate",
+                "value": "108/min",
+                "normal_range": "60-100/min",
+                "comment": "Tachycardia observed at the time of admission."
+            },
+            {
+                "parameter": "Blood Pressure",
+                "value": "127/78 mmHg",
+                "normal_range": "90/60 - 120/80 mmHg",
+                "comment": "Blood pressure within normal limits."
+            },
+            {
+                "parameter": "SPO2",
+                "value": "81%",
+                "normal_range": "95-100%",
+                "comment": "Hypoxemia noted; patient on oxygen support."
+            },
+            {
+                "parameter": "Temperature",
+                "value": "98.2\u00b0F",
+                "normal_range": "97-99\u00b0F",
+                "comment": "Temperature within normal limits."
+            },
+            {
+                "parameter": "Total WBC Count",
+                "value": "13800 /cumm",
+                "normal_range": "4000-10000 /cumm",
+                "comment": "Leukocytosis indicative of infection or stress response."
+            },
+            {
+                "parameter": "Platelet Count",
+                "value": "94000 /cu.mm",
+                "normal_range": "150000-450000 /cu.mm",
+                "comment": "Thrombocytopenia observed."
+            },
+            {
+                "parameter": "Hemoglobin",
+                "value": "12.6 gm%",
+                "normal_range": "13.5-17.5 gm%",
+                "comment": "Hemoglobin level slightly low."
+            },
+            {
+                "parameter": "Clotting Time",
+                "value": "42.5 minutes",
+                "normal_range": "5-10 minutes",
+                "comment": "Prolonged clotting time indicative of coagulopathy."
+            }
+        ],
+        "documentation_gaps": [
+            "Lack of documented evidence of active bleeding during hospitalization raises concerns regarding the medical necessity of blood transfusion."
+        ],
+        "clinical_checklist": [
+            {
+                "area": "Blood Pressure",
+                "available": "YES",
+                "remarks": "Blood pressure was monitored and recorded."
+            },
+            {
+                "area": "Examination",
+                "available": "YES",
+                "remarks": "Comprehensive examination was performed upon admission."
+            },
+            {
+                "area": "History",
+                "available": "YES",
+                "remarks": "History of snake bite was documented."
+            },
+            {
+                "area": "Consultation",
+                "available": "YES",
+                "remarks": "Consultation with treating physician was conducted."
+            }
+        ],
+        "timeline": [
+            {
+                "date": "27-02-2026 09:15 PM",
+                "event": "Date of Admission (D.O.A) to Orion Hospital due to snake bite."
+            },
+            {
+                "date": "27-02-2026",
+                "event": "Initial treatment commenced including ASV administration."
+            },
+            {
+                "date": "28-02-2026",
+                "event": "Blood transfusion administered."
+            }
+        ],
+        "observations": [
+            {
+                "question": "Was the administration of ASV timely and adequate?",
+                "analysis": "The patient received 10 vials of ASV upon admission, which is consistent with the guidelines for neurotoxic envenomation. However, the lack of improvement in clinical status raises questions about the adequacy of the dosage or the presence of complications such as secondary infections or coagulopathy.",
+                "answer": "The administration appears to be in accordance with standard treatment protocol, but further evaluation is warranted."
+            },
+            {
+                "question": "Is there evidence of ongoing envenomation despite ASV treatment?",
+                "analysis": "The patient's clinical status, including persistent thrombocytopenia and prolonged clotting times, suggests that there may be ongoing effects of envenomation or complications that require further intervention.",
+                "answer": "Yes, ongoing monitoring and potential adjustment of treatment are necessary."
+            }
+        ],
+        "inference": "The patient presents with a confirmed case of vasculotoxic snake bite, exhibiting signs of acute kidney injury and coagulopathy. Initial management with ASV was initiated promptly; however, the patient's clinical status indicates a need for continued monitoring and potential adjustment of treatment protocols to address complications arising from the envenomation.",
+        "auditor_conclusion": "Treatment appears to be in accordance with standard treatment protocol, but the lack of documented improvement necessitates further investigation into the patient's ongoing clinical status and management plan.",
+        "remarks": "It is recommended that the hospital review its protocols for monitoring and managing snake bite cases, particularly in relation to the administration of ASV and the management of potential complications such as coagulopathy and secondary infections.",
+        "guideline_file": "SnakeBiteGuidelines.pdf"
+    }
+}

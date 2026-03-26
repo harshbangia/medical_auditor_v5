@@ -1,0 +1,142 @@
+{
+    "meta": {
+        "audit_id": "GMS-20260326-21ff35",
+        "audit_date": "26/03/2026"
+    },
+    "report": {
+        "guideline_used": "Snakebiteguidelines",
+        "patient_details": {
+            "name": "Kamkar Pradyumn Bhimrao",
+            "age": "27",
+            "sex": "Male",
+            "claim_number": "2026030100131.A1",
+            "policy_number": "",
+            "policy_period": ""
+        },
+        "claim_details": {
+            "hospital": "Orion Hospital",
+            "consultation_date": "27-02-2026 09:15 PM",
+            "date_of_admission": "27-02-2026 09:15 PM",
+            "date_of_discharge": "Still hospitalized",
+            "diagnosis": "Emergency admission due to Vasculotoxic snake bite"
+        },
+        "clinical_findings": [
+            {
+                "parameter": "Pulse Rate",
+                "value": "108/min",
+                "normal_range": "60-100/min",
+                "comment": "Tachycardia observed at the time of admission."
+            },
+            {
+                "parameter": "Blood Pressure",
+                "value": "127/78 mmHg",
+                "normal_range": "90/60 - 120/80 mmHg",
+                "comment": "Blood pressure within normal limits."
+            },
+            {
+                "parameter": "SPO2",
+                "value": "81%",
+                "normal_range": "95-100%",
+                "comment": "Hypoxemia noted; patient on supplemental oxygen."
+            },
+            {
+                "parameter": "Respiratory Rate",
+                "value": "24/min",
+                "normal_range": "12-20/min",
+                "comment": "Tachypnea observed."
+            },
+            {
+                "parameter": "Temperature",
+                "value": "98.2\u00b0F",
+                "normal_range": "97-99\u00b0F",
+                "comment": "Temperature within normal limits."
+            },
+            {
+                "parameter": "Hemoglobin",
+                "value": "12.6 gm%",
+                "normal_range": "13.5-17.5 gm%",
+                "comment": "Slightly low; monitor for further drops."
+            },
+            {
+                "parameter": "Total WBC Count",
+                "value": "13800 /cumm",
+                "normal_range": "4000-10000 /cumm",
+                "comment": "Leukocytosis indicative of infection or stress response."
+            },
+            {
+                "parameter": "Platelet Count",
+                "value": "94000 /cu.mm",
+                "normal_range": "150000-450000 /cu.mm",
+                "comment": "Thrombocytopenia noted; monitor for bleeding."
+            },
+            {
+                "parameter": "Clotting Time",
+                "value": "42.5 minutes",
+                "normal_range": "3-8 minutes",
+                "comment": "Prolonged; indicative of coagulopathy."
+            },
+            {
+                "parameter": "ESR",
+                "value": "60 mm",
+                "normal_range": "<20 mm",
+                "comment": "Elevated; suggestive of inflammation."
+            },
+            {
+                "parameter": "CRP",
+                "value": "53.7 mg/L",
+                "normal_range": "<10 mg/L",
+                "comment": "Elevated; indicative of acute inflammation."
+            }
+        ],
+        "documentation_gaps": [
+            "Lack of documented evidence of active bleeding during hospitalization raises concerns regarding the medical necessity of blood transfusion."
+        ],
+        "clinical_checklist": [
+            {
+                "area": "Blood Pressure / Examination / History / Consultation",
+                "available": "YES",
+                "remarks": "All parameters were documented and monitored."
+            },
+            {
+                "area": "Laboratory Investigations",
+                "available": "YES",
+                "remarks": "All necessary lab tests were performed and documented."
+            },
+            {
+                "area": "Treatment Protocols",
+                "available": "YES",
+                "remarks": "Treatment adhered to standard protocols for snakebite management."
+            }
+        ],
+        "timeline": [
+            {
+                "date": "27-02-2026 09:15 PM",
+                "event": "Date of Admission (D.O.A) to Orion Hospital with snake bite."
+            },
+            {
+                "date": "27-02-2026",
+                "event": "Initial treatment commenced including ASV administration."
+            },
+            {
+                "date": "28-02-2026",
+                "event": "Continued monitoring and treatment in ICU."
+            }
+        ],
+        "observations": [
+            {
+                "question": "Was the administration of ASV timely and in accordance with guidelines?",
+                "analysis": "The patient received ASV within the recommended timeframe post-admission, which is critical for effective management of snakebite. However, the dosage and frequency of ASV administration need to be evaluated against the patient's clinical response and laboratory findings.",
+                "answer": "Yes, ASV was administered promptly; however, further doses may be required based on clinical progression."
+            },
+            {
+                "question": "Is there evidence of improvement in clinical parameters post-ASV administration?",
+                "analysis": "Despite initial administration of ASV, the patient continues to exhibit signs of severe envenomation, including thrombocytopenia and prolonged clotting times. This necessitates close monitoring and potential adjustment of treatment protocols.",
+                "answer": "No significant improvement observed; further evaluation and intervention required."
+            }
+        ],
+        "inference": "The patient presents with a confirmed case of vasculotoxic snakebite, exhibiting significant clinical signs of envenomation. Initial management appears to be in accordance with established guidelines; however, ongoing monitoring and potential adjustments to treatment are warranted based on laboratory findings and clinical response. The presence of thrombocytopenia and prolonged clotting times raises concerns regarding the adequacy of the current treatment regimen and necessitates further evaluation of the patient's condition.",
+        "auditor_conclusion": "Treatment appears to be in accordance with standard treatment protocol; however, the necessity for further evaluation of blood transfusion and ASV administration is indicated based on the patient's ongoing clinical status.",
+        "remarks": "It is recommended that the hospital review the documentation practices regarding blood transfusions and ensure that all clinical decisions are well-documented to support the medical necessity of interventions. Continuous education on snakebite management protocols for clinical staff is advised.",
+        "guideline_file": "SnakeBiteGuidelines.pdf"
+    }
+}

@@ -1,0 +1,129 @@
+{
+    "meta": {
+        "audit_id": "GMS-20260325-c94341",
+        "audit_date": "25/03/2026"
+    },
+    "report": {
+        "guideline_used": "Snakebiteguidelines",
+        "patient_details": {
+            "name": "Kamkar Pradyumn Bhimrao",
+            "age": "27",
+            "sex": "Male",
+            "claim_number": "2026030100131.A1",
+            "policy_number": "Not specified",
+            "policy_period": "Not specified"
+        },
+        "claim_details": {
+            "hospital": "Orion Hospital",
+            "consultation_date": "27-02-2026",
+            "date_of_admission": "27-02-2026 at 09:15 PM",
+            "date_of_discharge": "Still hospitalized",
+            "diagnosis": "Emergency admission due to Vasculotoxic snake bite"
+        },
+        "clinical_findings": [
+            {
+                "parameter": "Pulse Rate",
+                "value": "108/min",
+                "normal_range": "60-100/min",
+                "comment": "Tachycardia observed at the time of admission."
+            },
+            {
+                "parameter": "Blood Pressure",
+                "value": "127/78 mmHg",
+                "normal_range": "120/80 mmHg",
+                "comment": "Blood pressure within normal limits."
+            },
+            {
+                "parameter": "SPO2",
+                "value": "81%",
+                "normal_range": "95-100%",
+                "comment": "Hypoxemia noted; patient on oxygen support."
+            },
+            {
+                "parameter": "Temperature",
+                "value": "98.2\u00b0F",
+                "normal_range": "97-99\u00b0F",
+                "comment": "Temperature within normal limits."
+            },
+            {
+                "parameter": "Total WBC Count",
+                "value": "13800 /cumm",
+                "normal_range": "4000-10000 /cumm",
+                "comment": "Leukocytosis indicative of infection or stress response."
+            },
+            {
+                "parameter": "Platelet Count",
+                "value": "94000 /cu.mm",
+                "normal_range": "150000-450000 /cu.mm",
+                "comment": "Thrombocytopenia observed, critical monitoring required."
+            },
+            {
+                "parameter": "Hemoglobin",
+                "value": "12.6 gm%",
+                "normal_range": "13.5-17.5 gm%",
+                "comment": "Slightly low; requires monitoring."
+            },
+            {
+                "parameter": "Clotting Time",
+                "value": "42.5 minutes",
+                "normal_range": "3-8 minutes",
+                "comment": "Prolonged clotting time indicative of coagulopathy."
+            }
+        ],
+        "documentation_gaps": [
+            "Lack of documented evidence of active bleeding during hospitalization raises concerns regarding the medical necessity of blood transfusion."
+        ],
+        "clinical_checklist": [
+            {
+                "area": "Blood Pressure",
+                "available": "YES",
+                "remarks": "Blood pressure monitored and recorded."
+            },
+            {
+                "area": "Examination",
+                "available": "YES",
+                "remarks": "Comprehensive examination performed upon admission."
+            },
+            {
+                "area": "History",
+                "available": "YES",
+                "remarks": "Detailed history of snake bite and symptoms documented."
+            },
+            {
+                "area": "Consultation",
+                "available": "YES",
+                "remarks": "Consultation with treating physician documented."
+            }
+        ],
+        "timeline": [
+            {
+                "date": "27-02-2026 at 09:15 PM",
+                "event": "Date of Admission (D.O.A) to Orion Hospital due to snake bite."
+            },
+            {
+                "date": "27-02-2026",
+                "event": "Initial treatment commenced including ASV administration."
+            },
+            {
+                "date": "28-02-2026",
+                "event": "Blood transfusion administered."
+            }
+        ],
+        "observations": [
+            {
+                "question": "Was the administration of ASV timely and adequate based on clinical presentation?",
+                "analysis": "The patient received 10 vials of ASV upon admission, which is consistent with the guidelines for vasculotoxic snake bites. However, the lack of improvement in clinical status raises questions about the adequacy of the dosage or the presence of complications such as secondary infections or coagulopathy.",
+                "answer": "The administration appears to be in accordance with standard treatment protocol, but further evaluation is necessary to assess the effectiveness."
+            },
+            {
+                "question": "Is there sufficient documentation regarding the patient's clinical progress?",
+                "analysis": "While initial assessments and treatments are documented, ongoing monitoring and changes in clinical status, particularly regarding the effectiveness of ASV and the necessity of blood transfusions, lack comprehensive documentation.",
+                "answer": "Documentation is insufficient to fully assess the patient's clinical progress and treatment efficacy."
+            }
+        ],
+        "inference": "The patient, a 27-year-old male, was admitted with a vasculotoxic snake bite and presented with significant clinical symptoms including tachycardia, hypoxemia, and coagulopathy. Initial management included the administration of ASV and supportive care. However, the patient's clinical status has not shown significant improvement, necessitating further investigation into potential complications and the adequacy of treatment provided. Continuous monitoring and documentation are critical for ongoing management.",
+        "auditor_conclusion": "Treatment appears to be in accordance with standard treatment protocol; however, the lack of documented clinical progress and the necessity of blood transfusions warrant further investigation.",
+        "remarks": "It is recommended that the hospital enhance documentation practices to ensure comprehensive tracking of patient progress and treatment efficacy. Additionally, a review of the patient's response to ASV and the necessity of blood transfusions should be conducted to optimize patient care.",
+        "guideline_file": "SnakeBiteGuidelines.pdf"
+    }
+}
