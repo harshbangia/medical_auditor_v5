@@ -54,7 +54,9 @@ def run_audit(case_text, guideline_text, user_question=None, images=None):
     image_analysis_text = ""
 
     if images:
-        for img in images[:3]:  # limit to 3 images
+        selected_images = images[:2] + images[len(images) // 2:len(images) // 2 + 2] + images[-2:]
+
+        for img in selected_images:
 
             try:
                 response = client.responses.create(

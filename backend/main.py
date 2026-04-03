@@ -109,64 +109,47 @@ async def audit(
         # =========================
         # FILE PROCESSING (UPDATED)
         # =========================
+        case_texts = []
+
         if files:
             for file in files:
-                file_bytes = await file.read()  # ✅ READ ONCE ONLY
 
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                    tmp.write(file_bytes)
-                    tmp_path = tmp.name
+                await file.seek(0)
+                file_bytes = await file.read()
 
-                case_texts = []
+                if not file_bytes:
+                    print("❌ EMPTY FILE:", file.filename)
+                    continue
 
-                if files:
-                    for file in files:
+                tmp_path = None
 
-                        await file.seek(0)  # 🔥 VERY IMPORTANT
+                try:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                        tmp.write(file_bytes)
+                        tmp.flush()
+                        tmp_path = tmp.name
 
-                        file_bytes = await file.read()
+                    # ✅ TEXT EXTRACTION
+                    text = extract_text_from_pdf(tmp_path)
 
-                        if not file_bytes:
-                            print("❌ EMPTY FILE:", file.filename)
-                            continue
+                    if text.strip():
+                        case_texts.append(text)
+                    else:
+                        print("⚠️ No text extracted from:", file.filename)
 
-                        tmp_path = None
+                    # ✅ IMAGE EXTRACTION
+                    imgs = extract_images_from_pdf(tmp_path)
+                    images.extend(imgs)
 
-                        try:
-                            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                                tmp.write(file_bytes)
-                                tmp.flush()
+                except Exception as e:
+                    print("❌ File processing failed:", str(e))
 
-                                if os.path.getsize(tmp.name) == 0:
-                                    print("❌ TEMP FILE EMPTY:", tmp.name)
-                                    continue
+                finally:
+                    if tmp_path and os.path.exists(tmp_path):
+                        os.remove(tmp_path)
 
-                                tmp_path = tmp.name
-
-                            # ✅ TEXT EXTRACTION
-                            text = extract_text_from_pdf(tmp_path)
-
-                            if text.strip():
-                                case_texts.append(text)
-                            else:
-                                print("⚠️ No text extracted from:", file.filename)
-
-                            # ✅ IMAGE EXTRACTION (SAFE)
-                            try:
-                                imgs = extract_images_from_pdf(tmp_path)
-                                images.extend(imgs)
-                            except Exception as img_err:
-                                print("⚠️ Image extraction failed:", str(img_err))
-
-                        except Exception as e:
-                            print("❌ File processing failed:", str(e))
-
-                        finally:
-                            if tmp_path and os.path.exists(tmp_path):
-                                os.remove(tmp_path)
-
-                # ✅ FINAL MERGE
-                case_text = "\n\n".join(case_texts[:5])
+        # ✅ FINAL MERGE (NO LIMIT)
+        case_text = "\n\n".join(case_texts)
 
         print("🔥 TOTAL CASE LENGTH:", len(case_text))
         print("🖼️ TOTAL IMAGES:", len(images))
@@ -199,21 +182,44 @@ async def audit(
             print("📁 AVAILABLE FILES:", available)
             return {"error": f"Guideline not found: {guideline}"}
 
+        # =========================
+        # GET QUESTION FROM BODY (IMPORTANT)
+        # =========================
+        # body = await request.json() if request else {}
+        user_question = question
+        print("❓ USER QUESTION:", user_question)
+
         index, chunks = get_or_create_index(guideline)
 
-        summary = extract_case_summary(case_text)
+        case_chunks = chunk_text(case_text)
+        combined_query_text = "\n".join(case_chunks[:10])
+        summary = extract_case_summary(combined_query_text)
 
         query = f"""
         Diagnosis: {summary.get("diagnosis")}
         Findings: {summary.get("key_findings")}
         """
 
-        relevant_guideline = search(
-            index,
-            chunks,
-            query,
-            top_k=6
-        )
+        if user_question:
+            print("🧠 QA MODE → using focused retrieval")
+
+            # 🔥 Use question itself for retrieval
+            relevant_guideline = search(
+                index,
+                chunks,
+                user_question,
+                top_k=10
+            )
+
+        else:
+            print("🧠 AUDIT MODE → using smart RAG")
+
+            relevant_guideline = search(
+                index,
+                chunks,
+                query,
+                top_k=6
+            )
 
         print("📚 GUIDELINE LENGTH:", len(relevant_guideline))
 
@@ -226,16 +232,13 @@ async def audit(
         def limit_text(text, max_chars):
             return text[:max_chars] if len(text) > max_chars else text
 
-        case_text = limit_text(case_text, 12000)
-        relevant_guideline = limit_text(relevant_guideline, 8000)
+        if user_question:
+            case_text = case_text[:20000]  # more context for QA
+        else:
+            case_text = case_text[:12000]
 
-        # =========================
-        # GET QUESTION FROM BODY (IMPORTANT)
-        # =========================
-        #body = await request.json() if request else {}
-        user_question = question
+        relevant_guideline = limit_text(relevant_guideline, 10000)
 
-        print("❓ USER QUESTION:", user_question)
 
         # =========================
         # RUN AUDIT
@@ -324,3 +327,13 @@ async def get_history(authorization: str = Header(None)):
         }
         for r in reports
     ]
+
+def chunk_text(text, size=3000, overlap=300):
+    chunks = []
+    start = 0
+
+    while start < len(text):
+        chunks.append(text[start:start+size])
+        start += size - overlap
+
+    return chunks

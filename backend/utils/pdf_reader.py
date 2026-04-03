@@ -10,39 +10,41 @@ pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tessera
 # TEXT EXTRACTION
 # =========================
 def extract_text_from_pdf(pdf_path):
+    import fitz
+
     text = ""
 
     try:
-        # Try normal extraction first
-        import fitz
         doc = fitz.open(pdf_path)
 
         for page in doc:
-            text += page.get_text()
+            page_text = page.get_text()
+            text += page_text
 
         doc.close()
 
-        if len(text.strip()) > 50:
+        # ✅ If good text found → return
+        if len(text.strip()) > 100:
             return text
 
     except Exception as e:
         print("⚠️ PyMuPDF failed:", str(e))
 
-    # 🔥 FALLBACK TO OCR (SAFE)
+    # 🔥 OCR FALLBACK (CONTROLLED)
     try:
         from pdf2image import convert_from_path
         import pytesseract
 
         print("⚠️ Using OCR fallback...")
 
-        images = convert_from_path(pdf_path)
+        # ✅ ONLY FIRST 10 PAGES (NOT FULL PDF)
+        images = convert_from_path(pdf_path, first_page=1, last_page=10)
 
         for img in images:
             text += pytesseract.image_to_string(img)
 
     except Exception as e:
         print("❌ OCR FAILED:", str(e))
-        return text  # return whatever we have (don't crash)
 
     return text
 
@@ -66,7 +68,7 @@ def extract_images_from_pdf(pdf_path):
                 images_base64.append(image_base64)
 
         doc.close()
-    
+
     except Exception as e:
         print("Image extraction failed:", e)
 
