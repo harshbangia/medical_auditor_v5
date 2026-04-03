@@ -1,12 +1,21 @@
 from openai import OpenAI
 import os
 from dotenv import load_dotenv
-import os
 
 load_dotenv()
 
-api_key = os.getenv("OPENAI_API_KEY")
-client =  OpenAI(api_key=api_key)
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+def extract_text(response):
+    text = ""
+    if hasattr(response, "output") and response.output:
+        for item in response.output:
+            if hasattr(item, "content"):
+                for c in item.content:
+                    if hasattr(c, "text"):
+                        text += c.text
+    return text.strip()
+
 
 def select_guideline(case_text):
 
@@ -23,13 +32,12 @@ Available guidelines:
 {guidelines}
 
 CASE:
-{case_text}
+{case_text[:3000]}
 """
 
-    response = client.chat.completions.create(
+    response = client.responses.create(
         model="gpt-4o-mini",
-        temperature=0,
-        messages=[{"role": "user", "content": prompt}]
+        input=prompt
     )
 
-    return response.choices[0].message.content.strip()
+    return extract_text(response)

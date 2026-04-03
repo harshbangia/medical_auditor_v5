@@ -2,13 +2,64 @@ from openai import OpenAI
 import json
 from dotenv import load_dotenv
 import os
+import fitz
+import base64
 
 load_dotenv()
 
 api_key = os.getenv("OPENAI_API_KEY")
 client = OpenAI(api_key=api_key)
 
-def run_audit(case_text, guideline_text):
+
+def run_audit(case_text, guideline_text, user_question=None, images=None):
+    print("Running audit engine")
+    image_analysis_text = ""
+
+    if images:
+        for img in images[:3]:  # limit to 3 images
+
+            try:
+                response = client.responses.create(
+                    model="gpt-4o",
+                    input=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "input_text",
+                                    "text": """You are a clinical medical auditor.
+
+                Analyze this image carefully.
+
+                - Describe only visible findings
+                - Do NOT hallucinate
+                - Use cautious medical tone
+                - If not relevant → say 'No clinical relevance'
+                """
+                                },
+                                {
+                                    "type": "input_image",
+                                    "image_base64": img["base64"]
+                                }
+                            ]
+                        }
+                    ]
+                )
+
+                # ✅ IMPORTANT FIX — READ ONCE
+                image_analysis = response.output_text if hasattr(response, "output_text") else ""
+
+                image_analysis_text += f"""
+    [IMAGE EVIDENCE FOUND - Page {img['page']}]
+    {image_analysis}
+    """
+
+            except Exception as e:
+                image_analysis_text += f"\n[IMAGE ERROR]: {str(e)}\n"
+
+    if image_analysis_text.strip():
+        case_text = "[IMAGING PRESENT]\n" + case_text + "\n" + image_analysis_text
+
     prompt = f"""
     You are a SENIOR MEDICAL AUDITOR working for an insurance audit firm.
 
@@ -16,30 +67,110 @@ def run_audit(case_text, guideline_text):
 
     Include the name of the guideline used for this audit in "guideline_used".
 
-    The report must be:
-    - Clinically accurate
-    - Legally defensible
-    - Written in formal audit language
-    - Strict, objective, and evidence-based
+    ----------------------------------------
+    CORE OBJECTIVE
+    ----------------------------------------
+    - Analyze ALL case documents (including OCR-extracted text and imaging reports such as X-ray/CT/MRI)
+    - Identify disease/condition
+    - Identify patient demographics (especially age)
+    - Apply age-appropriate medical guideline(s)
+    - Validate treatment against protocol
+    - Ensure report consistency across UI and PDF
 
-    DO NOT sound like AI.
-    DO NOT summarize loosely.
-    DO NOT guess.
+    ----------------------------------------
+    CRITICAL CONSISTENCY REQUIREMENT
+    ----------------------------------------
+    - The JSON output MUST be the SINGLE SOURCE OF TRUTH
+    - The SAME JSON will be used for:
+      1. Frontend display
+      2. PDF generation
+
+    - Therefore:
+      ✔ ALL sections must be complete
+      ✔ NO missing or partial sections
+      ✔ NO additional interpretation outside JSON
+
+    ----------------------------------------
+    MULTI-GUIDELINE HANDLING
+    ----------------------------------------
+    - Multiple guidelines may be provided
+    - You MUST:
+      1. Select most relevant guideline
+      2. Optionally use secondary guideline if needed
+      3. Clearly mention in "guideline_used"
+
+    ----------------------------------------
+    AGE-SPECIFIC VALIDATION
+    ----------------------------------------
+    - Extract patient age from case
+    - Apply ONLY relevant age-based guideline sections
+    - If mismatch → flag deviation clearly
+
+    ----------------------------------------
+    IMAGING & OCR HANDLING
+    ----------------------------------------
+    
+    - Assume case_text includes:
+      ✔ OCR extracted text
+      ✔ Imaging/radiology descriptions
+
+    - You MUST:
+      - Extract imaging findings
+      - Correlate clinically
+      - Validate against diagnosis
+
+    - If imaging referenced but missing → add to documentation_gaps
+----------------------------------------
+IMAGE PRESENCE VALIDATION (CRITICAL FIX)
+----------------------------------------
+
+- If [IMAGE ANALYSIS] sections are present in CASE:
+    ✔ Treat them as AVAILABLE clinical images
+    ✔ DO NOT mark "clinical picture missing"
+    ✔ DO NOT add image-related items in documentation_gaps
+
+- If NO [IMAGE ANALYSIS] is present:
+    ✔ THEN AND ONLY THEN mark images as missing
+
+- IMPORTANT:
+    IMAGE ANALYSIS = EVIDENCE OF IMAGE PROVIDED
+    ----------------------------------------
+    FOLLOW-UP QUESTION HANDLING (Q&A)
+    ----------------------------------------
+    If USER QUESTION is provided:
+
+    - DO NOT regenerate full report
+    - Answer strictly based on:
+      1. Case documents
+      2. Guidelines
+      3. Existing audit logic
+
+    - Response MUST be structured and reusable in PDF
 
     ----------------------------------------
     STEP 1: UNDERSTAND CONTEXT
     ----------------------------------------
-    - Identify disease/condition from case
-    - Understand applicable medical guidelines
-    - Evaluate treatment vs standard protocol
+    - Identify disease
+    - Identify patient age
+    - Identify applicable guideline
+    - Evaluate treatment
+    - The case may include sections labeled [IMAGE ANALYSIS].
+    - These represent findings extracted from clinical images (e.g., X-ray, oral cavity photos, scans).
+    - You MUST use these findings for clinical correlation wherever relevant.
+    - If image findings are present, include them appropriately in clinical reasoning and observations.
+    - Do NOT ignore image-derived information.
 
     ----------------------------------------
-    STEP 2: GENERATE REPORT IN STRICT FORMAT
+    STEP 2: GENERATE OUTPUT
     ----------------------------------------
+
+    IF USER QUESTION IS NONE:
 
     Return ONLY JSON:
 
     {{
+      "mode": "audit",
+
       "guideline_used": "",
 
       "patient_details": {{
@@ -58,13 +189,22 @@ def run_audit(case_text, guideline_text):
         "date_of_discharge": "",
         "diagnosis": ""
       }},
+        - Populate "imaging_findings" using IMAGE ANALYSIS if available.
+      "imaging_findings": [
+        {{
+          "type": "",
+          "finding": "",
+          "clinical_correlation": "",
+          "consistency_with_diagnosis": ""
+        }}
+      ],
 
       "clinical_findings": [
         {{
           "parameter": "",
           "value": "",
           "normal_range": "",
-          "comment": "STRICTLY factual (avoid interpretation unless necessary)"
+          "comment": ""
         }}
       ],
 
@@ -74,56 +214,72 @@ def run_audit(case_text, guideline_text):
 
       "clinical_checklist": [
         {{
-          "area": "Blood Pressure / Examination / History / Consultation etc.",
+          "area": "",
           "available": "YES or NO",
-          "remarks": "Brief justification"
+          "remarks": ""
         }}
       ],
 
       "timeline": [
         {{
           "date": "",
-          "event": "Use formal audit language like 'Date of Admission (D.O.A)'"
+          "event": ""
         }}
       ],
 
       "observations": [
         {{
-          "question": "Frame clinically relevant audit question",
-          "analysis": "DETAILED reasoning like a senior doctor (2–4 lines minimum)",
-          "answer": "Conclusion based on reasoning (not just YES/NO)"
+          "question": "",
+          "analysis": "DETAILED clinical reasoning (2–4 lines minimum)",
+          "answer": ""
         }}
       ],
 
-      "inference": "Write a professional clinical summary of the case in audit tone",
+      "inference": "",
 
-      "auditor_conclusion": "Clear medico-legal conclusion (e.g. 'Treatment appears to be in accordance with standard treatment protocol')",
+      "auditor_conclusion": "",
 
-      "remarks": "Formal advisory remarks for hospital/insurer"
+      "remarks": "",
+
+      "qa_section": []   // IMPORTANT: this must always exist
+    }}
+
+    ----------------------------------------
+
+    IF USER QUESTION IS PROVIDED:
+
+    Return ONLY JSON:
+
+    {{
+      "mode": "qa",
+
+      "question": "{user_question}",
+
+      "answer": "",
+
+      "justification": "",
+
+      "evidence_used": [
+        "Case reference",
+        "Guideline reference"
+      ]
     }}
 
     ----------------------------------------
     STRICT RULES
     ----------------------------------------
 
-    1. Observations MUST show deep clinical reasoning:
-       - Consider alternative diagnoses
-       - Evaluate lab values critically
-       - Question assumptions
-
-    2. Do NOT over-interpret:
-       - If evidence is insufficient → say so
-
-    3. Tone MUST match:
-       - Insurance audit reports
-       - Medico-legal documentation
-
-    4. Use formal phrasing like:
-       - "appears to be"
-       - "is suggestive of"
-       - "based on available records"
-
-    5. Checklist MUST be realistic and relevant to case
+    1. NO hallucination
+    2. Only evidence-based reasoning
+    3. Clearly separate facts vs interpretation
+    4. Maintain medico-legal tone
+    5. Imaging interpretation must be conservative
+    6. If insufficient data → explicitly state
+    7. Case document may include image analysis sections. Use them for clinical correlations.
+    8. If IMAGE ANALYSIS is present:
+        - Use cautious interpretation (e.g., "appears to be", "suggestive of")
+        - Correlate with diagnosis
+        - Mention inconsistencies if any
 
     ----------------------------------------
 
@@ -132,18 +288,39 @@ def run_audit(case_text, guideline_text):
 
     ----------------------------------------
 
-    GUIDELINE:
+    GUIDELINES:
     {guideline_text}
-    """
 
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        temperature=0,
-        response_format={"type": "json_object"},
-        messages=[{"role": "user", "content": prompt}]
+    ----------------------------------------
+
+    USER QUESTION:
+    {user_question if user_question else "NONE"}
+    """
+    print("Case text sample\n",case_text[:1000])
+    print("Case text sample\n", guideline_text[:1000])
+
+    response = client.responses.create(
+        model="gpt-4o",
+        input=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": prompt}
+                ]
+            }
+        ]
     )
 
-    data = json.loads(response.choices[0].message.content)
+    raw_output = response.output_text
+
+    print("🧠 RAW OUTPUT:\n", raw_output)
+
+    try:
+        data = json.loads(raw_output)
+    except Exception as e:
+        print("❌ JSON ERROR:", e)
+        print("❌ RAW OUTPUT:", raw_output)
+        return {"error": "Invalid AI response"}
 
     # Ensure minimum observation depth
     for obs in data.get("observations", []):
