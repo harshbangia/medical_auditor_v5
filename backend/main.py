@@ -2,9 +2,13 @@ from fastapi import FastAPI, UploadFile, File, Form, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from typing import List, Optional
+from backend.ai.audit_engine import extract_case_summary
+
+from fastapi import Form
 import os
 import tempfile
 import json
+import traceback
 from backend.utils.pdf_reader import extract_images_from_pdf
 from backend.utils.pdf_reader import extract_text_from_pdf
 from backend.ai.audit_engine import run_audit
@@ -82,6 +86,7 @@ async def audit(
     request: Request,
     files: Optional[List[UploadFile]] = File(None),
     guideline: Optional[str] = Form(None),
+    question: Optional[str] = Form(None),
     authorization: str = Header(None)
 ):
 
@@ -112,10 +117,56 @@ async def audit(
                     tmp.write(file_bytes)
                     tmp_path = tmp.name
 
-                case_text += "\n" + extract_text_from_pdf(tmp_path)
-                images.extend(extract_images_from_pdf(tmp_path))
+                case_texts = []
 
-                os.remove(tmp_path)
+                if files:
+                    for file in files:
+
+                        await file.seek(0)  # 🔥 VERY IMPORTANT
+
+                        file_bytes = await file.read()
+
+                        if not file_bytes:
+                            print("❌ EMPTY FILE:", file.filename)
+                            continue
+
+                        tmp_path = None
+
+                        try:
+                            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                                tmp.write(file_bytes)
+                                tmp.flush()
+
+                                if os.path.getsize(tmp.name) == 0:
+                                    print("❌ TEMP FILE EMPTY:", tmp.name)
+                                    continue
+
+                                tmp_path = tmp.name
+
+                            # ✅ TEXT EXTRACTION
+                            text = extract_text_from_pdf(tmp_path)
+
+                            if text.strip():
+                                case_texts.append(text)
+                            else:
+                                print("⚠️ No text extracted from:", file.filename)
+
+                            # ✅ IMAGE EXTRACTION (SAFE)
+                            try:
+                                imgs = extract_images_from_pdf(tmp_path)
+                                images.extend(imgs)
+                            except Exception as img_err:
+                                print("⚠️ Image extraction failed:", str(img_err))
+
+                        except Exception as e:
+                            print("❌ File processing failed:", str(e))
+
+                        finally:
+                            if tmp_path and os.path.exists(tmp_path):
+                                os.remove(tmp_path)
+
+                # ✅ FINAL MERGE
+                case_text = "\n\n".join(case_texts[:5])
 
         print("🔥 TOTAL CASE LENGTH:", len(case_text))
         print("🖼️ TOTAL IMAGES:", len(images))
@@ -133,21 +184,35 @@ async def audit(
             print("🤖 Auto-selecting guideline...")
             guideline = select_guideline(case_text)
 
-        print("📘 SELECTED GUIDELINE:", guideline)
+        # ✅ CLEAN AGAIN (extra safety)
+        guideline = guideline.strip().replace('"', '').replace("'", "")
+
+        print("📘 FINAL GUIDELINE:", guideline)
 
         BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         guideline_path = os.path.join(BASE_DIR, "data", "guidelines", guideline)
 
+        print("📂 FULL PATH:", guideline_path)
+
         if not os.path.exists(guideline_path):
+            available = os.listdir(os.path.join(BASE_DIR, "data", "guidelines"))
+            print("📁 AVAILABLE FILES:", available)
             return {"error": f"Guideline not found: {guideline}"}
 
         index, chunks = get_or_create_index(guideline)
 
+        summary = extract_case_summary(case_text)
+
+        query = f"""
+        Diagnosis: {summary.get("diagnosis")}
+        Findings: {summary.get("key_findings")}
+        """
+
         relevant_guideline = search(
             index,
             chunks,
-            case_text,
-            top_k=5
+            query,
+            top_k=6
         )
 
         print("📚 GUIDELINE LENGTH:", len(relevant_guideline))
@@ -158,14 +223,17 @@ async def audit(
         # =========================
         # LIMIT SIZE (CRITICAL)
         # =========================
-        case_text = case_text[:12000]
-        relevant_guideline = relevant_guideline[:15000]
+        def limit_text(text, max_chars):
+            return text[:max_chars] if len(text) > max_chars else text
+
+        case_text = limit_text(case_text, 12000)
+        relevant_guideline = limit_text(relevant_guideline, 8000)
 
         # =========================
         # GET QUESTION FROM BODY (IMPORTANT)
         # =========================
-        body = await request.json() if request else {}
-        user_question = body.get("question") if body else None
+        #body = await request.json() if request else {}
+        user_question = question
 
         print("❓ USER QUESTION:", user_question)
 
@@ -200,8 +268,13 @@ async def audit(
 
         return result
 
+
     except Exception as e:
-        print("❌ AUDIT FAILED:", str(e))
+
+        print("❌ AUDIT FAILED:")
+
+        traceback.print_exc()  # 🔥 THIS WILL SHOW EXACT LINE
+
         return {"error": str(e)}
 
 # =========================

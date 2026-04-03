@@ -13,25 +13,38 @@ def extract_text_from_pdf(pdf_path):
     text = ""
 
     try:
+        # Try normal extraction first
+        import fitz
         doc = fitz.open(pdf_path)
+
         for page in doc:
             text += page.get_text()
+
         doc.close()
+
+        if len(text.strip()) > 50:
+            return text
+
     except Exception as e:
-        print("PyMuPDF failed:", e)
+        print("⚠️ PyMuPDF failed:", str(e))
 
-    # OCR fallback
-    if len(text.strip()) < 100:
+    # 🔥 FALLBACK TO OCR (SAFE)
+    try:
+        from pdf2image import convert_from_path
+        import pytesseract
+
         print("⚠️ Using OCR fallback...")
-        images = convert_from_path(pdf_path)
 
-        if len(images) > 10:
-            images = images[:10]
+        images = convert_from_path(pdf_path)
 
         for img in images:
             text += pytesseract.image_to_string(img)
 
-    return text.strip()
+    except Exception as e:
+        print("❌ OCR FAILED:", str(e))
+        return text  # return whatever we have (don't crash)
+
+    return text
 
 
 # =========================
@@ -53,7 +66,7 @@ def extract_images_from_pdf(pdf_path):
                 images_base64.append(image_base64)
 
         doc.close()
-
+    
     except Exception as e:
         print("Image extraction failed:", e)
 

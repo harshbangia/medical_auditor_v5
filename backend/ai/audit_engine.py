@@ -10,6 +10,44 @@ load_dotenv()
 api_key = os.getenv("OPENAI_API_KEY")
 client = OpenAI(api_key=api_key)
 
+def extract_case_summary(case_text):
+    import json
+
+    prompt = f"""
+Extract key clinical information.
+
+Return JSON:
+{{
+  "diagnosis": "",
+  "age": "",
+  "gender": "",
+  "key_findings": []
+}}
+
+CASE:
+{case_text[:6000]}
+"""
+
+    response = client.responses.create(
+        model="gpt-4o-mini",
+        input=prompt
+    )
+
+    text = ""
+
+    if hasattr(response, "output"):
+        for item in response.output:
+            if hasattr(item, "content"):
+                for c in item.content:
+                    if hasattr(c, "text"):
+                        text += c.text
+
+    text = text.replace("```json", "").replace("```", "").strip()
+
+    try:
+        return json.loads(text)
+    except:
+        return {}
 
 def run_audit(case_text, guideline_text, user_question=None, images=None):
     print("Running audit engine")
@@ -47,7 +85,16 @@ def run_audit(case_text, guideline_text, user_question=None, images=None):
                 )
 
                 # ✅ IMPORTANT FIX — READ ONCE
-                image_analysis = response.output_text if hasattr(response, "output_text") else ""
+                image_analysis = ""
+
+                if hasattr(response, "output") and response.output:
+                    for item in response.output:
+                        if hasattr(item, "content"):
+                            for c in item.content:
+                                if hasattr(c, "text"):
+                                    image_analysis += c.text
+
+                image_analysis = image_analysis.strip()
 
                 image_analysis_text += f"""
     [IMAGE EVIDENCE FOUND - Page {img['page']}]
@@ -132,7 +179,10 @@ IMAGE PRESENCE VALIDATION (CRITICAL FIX)
 - If NO [IMAGE ANALYSIS] is present:
     ✔ THEN AND ONLY THEN mark images as missing
 
-- IMPORTANT:
+
+- You may receive partial case data due to chunking
+- Infer missing continuity carefully
+- Do NOT assume missing data as absence
     IMAGE ANALYSIS = EVIDENCE OF IMAGE PROVIDED
     ----------------------------------------
     FOLLOW-UP QUESTION HANDLING (Q&A)
@@ -311,15 +361,32 @@ IMAGE PRESENCE VALIDATION (CRITICAL FIX)
         ]
     )
 
-    raw_output = response.output_text
+    # ✅ SAFE EXTRACTION (NO STREAM CONSUMPTION)
+    raw_output = ""
+
+    if hasattr(response, "output") and response.output:
+        for item in response.output:
+            if hasattr(item, "content"):
+                for c in item.content:
+                    if hasattr(c, "text"):
+                        raw_output += c.text
+
+    raw_output = raw_output.strip()
 
     print("🧠 RAW OUTPUT:\n", raw_output)
 
     try:
-        data = json.loads(raw_output)
+        cleaned = raw_output.strip()
+
+        # 🔥 REMOVE MARKDOWN WRAPPERS
+        if cleaned.startswith("```"):
+            cleaned = cleaned.replace("```json", "").replace("```", "").strip()
+
+        data = json.loads(cleaned)
+
     except Exception as e:
         print("❌ JSON ERROR:", e)
-        print("❌ RAW OUTPUT:", raw_output)
+        print("❌ CLEANED OUTPUT:", cleaned)
         return {"error": "Invalid AI response"}
 
     # Ensure minimum observation depth

@@ -52,6 +52,30 @@ def build_vector_store(text):
 def search(index, chunks, query, top_k=5):
     query_embedding = np.array([get_embedding(query)]).astype("float32")
 
-    distances, indices = index.search(query_embedding, top_k)
+    distances, indices = index.search(query_embedding, top_k * 3)
 
-    return "\n\n".join([chunks[i] for i in indices[0]])
+    # 🔥 RE-RANK BASED ON KEYWORDS (CLINICAL BOOST)
+    scored = []
+
+    keywords = ["diagnosis", "treatment", "surgery", "biopsy", "cancer", "tumor"]
+
+    for i in indices[0]:
+        if i >= len(chunks):
+            continue
+
+        chunk = chunks[i]
+        score = 0
+
+        for k in keywords:
+            if k.lower() in chunk.lower():
+                score += 1
+
+        scored.append((score, chunk))
+
+    # sort by score
+    scored = sorted(scored, key=lambda x: x[0], reverse=True)
+
+    # take best chunks
+    selected = [c[1] for c in scored[:top_k]]
+
+    return "\n\n".join(selected)
