@@ -3,8 +3,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from typing import List, Optional
 from backend.ai.audit_engine import extract_case_summary
-
+from backend.utils.pdf_reader import extract_text_and_images
 from fastapi import Form
+from uuid import uuid4
 import os
 import tempfile
 import json
@@ -20,6 +21,7 @@ from backend.db.models import AuditReport, User
 
 from backend.rag.rag_manager import get_or_create_index
 from backend.rag.vector_store import search
+GLOBAL_CACHE = {}
 
 app = FastAPI()
 
@@ -87,9 +89,37 @@ async def audit(
     files: Optional[List[UploadFile]] = File(None),
     guideline: Optional[str] = Form(None),
     question: Optional[str] = Form(None),
+    session_id: str = Form(None),
     authorization: str = Header(None)
 ):
+    # =========================
+    # ⚡ FAST QA MODE (NO OCR)
+    # =========================
+    if question and session_id:
 
+        cached = GLOBAL_CACHE.get(session_id)
+
+        if not cached:
+            return {"error": "Session expired"}
+
+        print("⚡ FAST QA MODE (no OCR)")
+
+        case_text = cached["case_text"]
+        images = cached["images"]
+        guideline = cached["guideline"]
+        index = cached["index"]
+        chunks = cached["chunks"]
+
+        relevant_guideline = search(index, chunks, question, top_k=10)
+
+        result = run_audit(
+            case_text,
+            relevant_guideline,
+            user_question=question,
+            images=images
+        )
+
+        return result
     # =========================
     # AUTH (KEEP SAME)
     # =========================
@@ -130,16 +160,19 @@ async def audit(
                         tmp_path = tmp.name
 
                     # ✅ TEXT EXTRACTION
-                    text = extract_text_from_pdf(tmp_path)
+                    # 🔥 SINGLE OCR PASS (TEXT + IMAGES)
+                    text, imgs = extract_text_and_images(tmp_path)
 
                     if text.strip():
                         case_texts.append(text)
                     else:
                         print("⚠️ No text extracted from:", file.filename)
 
-                    # ✅ IMAGE EXTRACTION
-                    imgs = extract_images_from_pdf(tmp_path)
                     images.extend(imgs)
+
+                    # # ✅ IMAGE EXTRACTION
+                    # imgs = extract_images_from_pdf(tmp_path)
+                    # images.extend(imgs)
 
                 except Exception as e:
                     print("❌ File processing failed:", str(e))
@@ -191,23 +224,20 @@ async def audit(
 
         index, chunks = get_or_create_index(guideline)
 
-        case_chunks = chunk_text(case_text)
-        combined_query_text = "\n".join(case_chunks[:10])
-        summary = extract_case_summary(combined_query_text)
+        query = case_text[:5000]
 
-        query = f"""
-        Diagnosis: {summary.get("diagnosis")}
-        Findings: {summary.get("key_findings")}
-        """
+
 
         if user_question:
             print("🧠 QA MODE → using focused retrieval")
 
             # 🔥 Use question itself for retrieval
+            query_text = (user_question or "") + "\n" + case_text[:3000]
+
             relevant_guideline = search(
                 index,
                 chunks,
-                user_question,
+                query_text,
                 top_k=10
             )
 
@@ -235,7 +265,7 @@ async def audit(
         if user_question:
             case_text = case_text[:20000]  # more context for QA
         else:
-            case_text = case_text[:12000]
+            case_text = case_text[:20000]
 
         relevant_guideline = limit_text(relevant_guideline, 10000)
 
@@ -250,6 +280,18 @@ async def audit(
             images=images
         )
 
+
+        session_id = str(uuid4())
+
+        GLOBAL_CACHE[session_id] = {
+            "case_text": case_text,
+            "images": images,
+            "guideline": guideline,
+            "index": index,
+            "chunks": chunks
+        }
+
+        result["session_id"] = session_id
         if not result:
             return {"error": "Empty AI response"}
 
@@ -337,3 +379,4 @@ def chunk_text(text, size=3000, overlap=300):
         start += size - overlap
 
     return chunks
+

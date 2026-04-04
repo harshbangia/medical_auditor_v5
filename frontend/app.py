@@ -137,7 +137,10 @@ if run:
 
         result = response.json()
 
+        # 🔥 THIS LINE IS MISSING (CRITICAL FIX)
         st.session_state["report"] = result
+
+        st.session_state["session_id"] = result.get("session_id")
 
         st.session_state["audit_meta"] = {
             "audit_id": f"GMS-{datetime.now().strftime('%Y%m%d')}-{str(uuid.uuid4())[:6]}",
@@ -293,20 +296,44 @@ if "report" in st.session_state:
             st.warning("Enter a question")
             st.stop()
 
+        # 🔥 REUSE PREVIOUS FILES + GUIDELINE
+        files = [
+            ("files", (file.name, file.getvalue(), "application/pdf"))
+            for file in uploaded_files
+        ]
+
         res = requests.post(
             f"{API_BASE}/audit",
-            data={"question": question},
+            data={
+                "question": question,
+                "guideline": selected_guideline,
+                "session_id": st.session_state.get("session_id")  # 🔥 ADD THIS
+            },
             headers=headers
         )
 
         qa = res.json()
+        st.write("DEBUG QA RESPONSE:", qa)
 
         if qa.get("mode") == "qa":
 
             if "qa_section" not in st.session_state["report"]:
                 st.session_state["report"]["qa_section"] = []
 
-            st.session_state["report"]["qa_section"].append(qa)
+            # 🔥 HANDLE BOTH FORMATS
+
+            if qa.get("qa_section"):
+                # normal case
+                for item in qa["qa_section"]:
+                    st.session_state["report"]["qa_section"].append(item)
+
+            else:
+                # 🔥 single QA response (your current case)
+                st.session_state["report"]["qa_section"].append({
+                    "question": qa.get("question"),
+                    "answer": qa.get("answer"),
+                    "justification": qa.get("justification")
+                })
 
             st.rerun()
 

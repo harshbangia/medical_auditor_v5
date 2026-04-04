@@ -18,30 +18,59 @@ def extract_text_from_pdf(pdf_path):
         doc = fitz.open(pdf_path)
 
         for page in doc:
-            page_text = page.get_text()
-            text += page_text
+            text += page.get_text()
 
         doc.close()
-
-        # ✅ If good text found → return
-        if len(text.strip()) > 100:
-            return text
 
     except Exception as e:
         print("⚠️ PyMuPDF failed:", str(e))
 
-    # 🔥 OCR FALLBACK (CONTROLLED)
+    # 🔥 ALWAYS RUN OCR (FOR RELIABILITY)
     try:
         from pdf2image import convert_from_path
         import pytesseract
 
-        print("⚠️ Using OCR fallback...")
+        def extract_text_from_pdf(pdf_path):
+            import fitz
 
-        # ✅ ONLY FIRST 10 PAGES (NOT FULL PDF)
-        images = convert_from_path(pdf_path, first_page=1, last_page=10)
+            text = ""
 
-        for img in images:
-            text += pytesseract.image_to_string(img)
+            try:
+                doc = fitz.open(pdf_path)
+
+                for page in doc:
+                    page_text = page.get_text()
+                    text += page_text
+
+                doc.close()
+
+            except Exception as e:
+                print("⚠️ PyMuPDF failed:", str(e))
+
+            # 🔥 SMART DECISION (NOT LIMIT)
+            if len(text.strip()) > 1000:
+                print("✅ Using native PDF text (sufficient)")
+                return text
+
+            print("⚠️ Low text detected → using OCR...")
+
+            # 🔥 OCR ONLY WHEN NEEDED
+            try:
+                from pdf2image import convert_from_path
+                import pytesseract
+
+                images = convert_from_path(pdf_path)
+
+                ocr_text = ""
+                for img in images:
+                    ocr_text += pytesseract.image_to_string(img)
+
+                return text + "\n" + ocr_text
+
+            except Exception as e:
+                print("❌ OCR FAILED:", str(e))
+
+            return text
 
     except Exception as e:
         print("❌ OCR FAILED:", str(e))
@@ -74,3 +103,32 @@ def extract_images_from_pdf(pdf_path):
 
     print(f"🖼️ Extracted {len(images_base64)} images")
     return images_base64[:3]  # limit
+
+def extract_text_and_images(pdf_path):
+    from pdf2image import convert_from_path
+    import pytesseract
+
+    text = ""
+    images_base64 = []
+
+    print("⚠️ Running OCR (single pass)...")
+
+    pages = convert_from_path(pdf_path)
+
+    for i, img in enumerate(pages):
+        print(f"🧠 OCR page {i+1}/{len(pages)}")
+
+        # TEXT
+        text += pytesseract.image_to_string(img)
+
+        # IMAGE (convert to base64 for model)
+        import base64
+        from io import BytesIO
+
+        buffered = BytesIO()
+        img.save(buffered, format="JPEG")
+        img_str = base64.b64encode(buffered.getvalue()).decode()
+
+        images_base64.append(img_str)
+
+    return text, images_base64

@@ -129,6 +129,11 @@ def run_audit(case_text, guideline_text, user_question=None, images=None):
     ----------------------------------------
     CRITICAL CONSISTENCY REQUIREMENT
     ----------------------------------------
+    - You MUST extract patient details ONLY from the case text
+    - Do NOT assume or infer age
+    - If multiple numbers are present, choose the one clearly linked to patient demographics
+    - Prefer patterns like: "Age", "years", "male/female"
+
     - The JSON output MUST be the SINGLE SOURCE OF TRUTH
     - The SAME JSON will be used for:
       1. Frontend display
@@ -384,7 +389,61 @@ IMAGE PRESENCE VALIDATION (CRITICAL FIX)
         if cleaned.startswith("```"):
             cleaned = cleaned.replace("```json", "").replace("```", "").strip()
 
-        data = json.loads(cleaned)
+        import re
+
+        try:
+            # 🔥 FIX COMMON JSON ISSUES
+
+            cleaned = cleaned.strip()
+
+            # remove ```json wrappers
+            cleaned = cleaned.replace("```json", "").replace("```", "").strip()
+
+            # 🔥 FIX MISSING COMMAS BETWEEN OBJECT KEYS
+            cleaned = re.sub(r'"\s*\n\s*"', '",\n"', cleaned)
+
+            # 🔥 FIX trailing commas
+            cleaned = re.sub(r',\s*}', '}', cleaned)
+            cleaned = re.sub(r',\s*]', ']', cleaned)
+
+            data = json.loads(cleaned)
+
+
+        except Exception as e:
+
+            print("❌ JSON ERROR:", e)
+
+            print("❌ CLEANED OUTPUT:", cleaned)
+
+
+
+            # 🔥 TRY TO EXTRACT JSON FROM TEXT
+
+            match = re.search(r'\{.*\}', cleaned, re.DOTALL)
+
+            if match:
+
+                try:
+
+                    recovered = json.loads(match.group(0))
+
+                    print("✅ RECOVERED JSON SUCCESSFULLY")
+
+                    return recovered
+
+                except Exception as e2:
+
+                    print("❌ RECOVERY FAILED:", e2)
+
+            # fallback
+
+            return {
+
+                "error": "Invalid AI response",
+
+                "raw_output": cleaned
+
+            }
 
     except Exception as e:
         print("❌ JSON ERROR:", e)
