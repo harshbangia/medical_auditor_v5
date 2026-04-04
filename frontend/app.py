@@ -6,6 +6,19 @@ import uuid
 import requests
 import sys
 
+
+from streamlit_cookies_manager import EncryptedCookieManager
+
+
+
+cookies = EncryptedCookieManager(
+    prefix="glowix",
+    password="glowix-super-secret-key-2026-!@#"
+)
+
+if not cookies.ready():
+    st.stop()
+
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # =========================
@@ -60,15 +73,37 @@ def login_page():
         data = res.json()
 
         if "access_token" in data:
+
+            # 🔥 set session
             st.session_state["token"] = data["access_token"]
+            st.session_state["force_login"] = False
+
+            # 🔥 reset logout flag
+            st.session_state["is_logged_out"] = False
+
+            # 🔥 set cookie
+            cookies["token"] = data["access_token"]
+            cookies.save()
+
             st.rerun()
+
+
         else:
             st.error("Invalid credentials")
 
-# =========================
-# LOGIN CHECK
-# =========================
+# 🔥 DO NOT RESTORE IF USER LOGGED OUT
 if "token" not in st.session_state:
+
+    if not st.session_state.get("is_logged_out"):
+
+        cookie_token = cookies.get("token")
+
+        if cookie_token:
+            st.session_state["token"] = cookie_token
+
+# 🔥 THEN CHECK LOGIN
+if "token" not in st.session_state:
+
     login_page()
     st.stop()
 
@@ -92,7 +127,13 @@ uploaded_files = st.sidebar.file_uploader("📂 Upload Case Documents", accept_m
 run = st.sidebar.button("🚀 Run Audit")
 
 if st.sidebar.button("Logout"):
-    st.session_state.clear()
+
+    # 🔥 set logout flag
+    st.session_state["is_logged_out"] = True
+
+    # 🔥 clear token from session
+    st.session_state.pop("token", None)
+
     st.rerun()
 
 # =========================
@@ -156,6 +197,7 @@ if run:
 # DISPLAY REPORT (PREMIUM UI)
 # =========================
 if "report" in st.session_state:
+
 
     data = st.session_state["report"]
     meta = st.session_state.get("audit_meta", {})
