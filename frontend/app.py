@@ -72,7 +72,7 @@ def login_page():
     if st.button("Login"):
         response = requests.post(
             url=f"{API_BASE}/login",
-            data={
+            json={
                 "username": email,
                 "password": password
             }
