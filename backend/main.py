@@ -56,8 +56,8 @@ def health():
 # LOGIN
 # =========================
 @app.post("/login")
-def login(data: dict):
-    user = authenticate_user(data["email"], data["password"])
+def login(email: str = Form(...), password: str = Form(...)):
+    user = authenticate_user(email, password)
 
     if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -73,22 +73,22 @@ def login(data: dict):
 # =========================
 # REGISTER
 # =========================
-@app.post("/register")
-async def register(email: str = Form(...), password: str = Form(...)):
-
-    db = SessionLocal()
-
-    if db.query(User).filter(User.email == email).first():
-        db.close()
-        return {"error": "User already exists"}
-
-    new_user = User(email=email, password=password)
-
-    db.add(new_user)
-    db.commit()
-    db.close()
-
-    return {"message": "User created successfully"}
+# @app.post("/register")
+# async def register(email: str = Form(...), password: str = Form(...)):
+#
+#     db = SessionLocal()
+#
+#     if db.query(User).filter(User.email == email).first():
+#         db.close()
+#         return {"error": "User already exists"}
+#
+#     new_user = User(email=email, password=password)
+#
+#     db.add(new_user)
+#     db.commit()
+#     db.close()
+#
+#     return {"message": "User created successfully"}
 
 
 # =========================
