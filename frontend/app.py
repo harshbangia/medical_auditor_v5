@@ -73,7 +73,7 @@ def login_page():
         response = requests.post(
             url=f"{API_BASE}/login",
             data={
-                "email": email,
+                "username": email,
                 "password": password
             }
         )

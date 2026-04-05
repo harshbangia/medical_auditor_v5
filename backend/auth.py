@@ -18,7 +18,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60
 # =========================
 # PASSWORD HASHING
 # =========================
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+#pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # =========================
 # TEMP USER (REPLACE WITH DB LATER)
@@ -31,8 +31,8 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 # =========================
 # VERIFY PASSWORD
 # =========================
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+# def verify_password(plain_password: str, hashed_password: str) -> bool:
+#     return pwd_context.verify(plain_password, hashed_password)
 
 # =========================
 # AUTHENTICATE USER
@@ -47,7 +47,8 @@ def authenticate_user(email: str, password: str):
         db.close()
         return None
 
-    if not verify_password(password, user.password):
+    # if not verify_password(password, user.password):
+    if password != user.password:
         db.close()
         return None
 
