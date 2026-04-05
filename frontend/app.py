@@ -80,6 +80,7 @@ def login_page():
 
         if response.status_code != 200:
             st.error(response.text)
+            return
         else:
             data = response.json()
 
