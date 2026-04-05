@@ -70,8 +70,16 @@ def login_page():
     password = st.text_input("Password", type="password")
 
     if st.button("Login"):
-        res = requests.post(f"{API_BASE}/login", data={"email": email, "password": password})
-        data = res.json()
+        response = requests.post(f"{API_BASE}/login", json={
+            "email": email,
+            "password": password
+        })
+
+        if response.status_code != 200:
+            st.error(response.text)
+        else:
+            data = response.json()
+            st.success("Login successful")
 
         if "access_token" in data:
 

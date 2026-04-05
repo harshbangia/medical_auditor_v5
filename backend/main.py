@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from typing import List, Optional
 from backend.ai.audit_engine import extract_case_summary
+from fastapi import HTTPException
 from backend.utils.pdf_reader import extract_text_and_images
 from fastapi import Form
 from uuid import uuid4
@@ -55,14 +56,18 @@ def health():
 # LOGIN
 # =========================
 @app.post("/login")
-async def login(email: str = Form(...), password: str = Form(...)):
-    user = authenticate_user(email, password)
+def login(data: dict):
+    user = authenticate_user(data["email"], data["password"])
 
     if not user:
-        return {"error": "Invalid credentials"}
+        raise HTTPException(status_code=401, detail="Invalid credentials")
 
     token = create_access_token({"sub": user["email"]})
-    return {"access_token": token}
+
+    return {
+        "access_token": token,
+        "token_type": "bearer"
+    }
 
 
 # =========================
