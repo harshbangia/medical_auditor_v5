@@ -23,6 +23,13 @@ from backend.rag.rag_manager import get_or_create_index
 from backend.rag.vector_store import search
 GLOBAL_CACHE = {}
 
+import boto3
+
+USE_S3 = False
+
+s3 = boto3.client("s3")
+BUCKET_NAME = "glowix-medical-auditor"
+
 app = FastAPI()
 
 # =========================
@@ -158,6 +165,14 @@ async def audit(
                         tmp.write(file_bytes)
                         tmp.flush()
                         tmp_path = tmp.name
+                        s3 = boto3.client("s3")
+                        BUCKET_NAME = "glowix-medical-auditor"
+                        if USE_S3:
+                            s3_key = f"uploads/{uuid4()}.pdf"
+                            s3.upload_file(tmp_path, BUCKET_NAME, s3_key)
+
+                            s3_url = f"https://{BUCKET_NAME}.s3.amazonaws.com/{s3_key}"
+                            print("☁️ Uploaded to S3:", s3_url)
 
                     # ✅ TEXT EXTRACTION
                     # 🔥 SINGLE OCR PASS (TEXT + IMAGES)
@@ -205,8 +220,23 @@ async def audit(
 
         print("📘 FINAL GUIDELINE:", guideline)
 
-        BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        guideline_path = os.path.join(BASE_DIR, "data", "guidelines", guideline)
+        USE_S3_GUIDELINE = True  # toggle
+
+        if USE_S3_GUIDELINE:
+
+
+            s3 = boto3.client("s3")
+            BUCKET_NAME = "glowix-medical-auditor"
+
+            key = f"guidelines/{guideline}"
+
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                s3.download_file(BUCKET_NAME, key, tmp.name)
+                guideline_path = tmp.name
+
+        else:
+            BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            guideline_path = os.path.join(BASE_DIR, "data", "guidelines", guideline)
 
         print("📂 FULL PATH:", guideline_path)
 

@@ -37,7 +37,8 @@ st.set_page_config(
     layout="wide"
 )
 
-API_BASE = "http://localhost:8000"
+#API_BASE = "http://localhost:8000"
+API_BASE = "http://16.171.236.99:8000"
 API_URL = f"{API_BASE}/audit"
 
 # =========================
