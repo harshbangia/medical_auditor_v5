@@ -70,35 +70,34 @@ def login_page():
     password = st.text_input("Password", type="password")
 
     if st.button("Login"):
-        response = requests.post(url=f"{API_BASE}/login", data={
-            "email": email,
-            "password": password
-        })
+        response = requests.post(
+            url=f"{API_BASE}/login",
+            data={
+                "email": email,
+                "password": password
+            }
+        )
 
         if response.status_code != 200:
             st.error(response.text)
         else:
             data = response.json()
-            st.success("Login successful")
 
-        if "access_token" in data:
+            if "access_token" in data:
+                st.success("Login successful")
 
-            # 🔥 set session
-            st.session_state["token"] = data["access_token"]
-            st.session_state["force_login"] = False
+                # 🔥 set session
+                st.session_state["token"] = data["access_token"]
+                st.session_state["force_login"] = False
+                st.session_state["is_logged_out"] = False
 
-            # 🔥 reset logout flag
-            st.session_state["is_logged_out"] = False
+                # 🔥 set cookie
+                cookies["token"] = data["access_token"]
+                cookies.save()
 
-            # 🔥 set cookie
-            cookies["token"] = data["access_token"]
-            cookies.save()
-
-            st.rerun()
-
-
-        else:
-            st.error("Invalid credentials")
+                st.rerun()
+            else:
+                st.error("Login failed")
 
 # 🔥 DO NOT RESTORE IF USER LOGGED OUT
 if "token" not in st.session_state:
