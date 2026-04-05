@@ -40,17 +40,22 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
 def authenticate_user(email: str, password: str):
     db = SessionLocal()
-
+    print("Login attempt:", email, password)
     user = db.query(User).filter(User.email == email).first()
+    print("User found", user)
 
     if not user:
         db.close()
         return None
 
+    print("DB pwd:", user.password)
+
     # if not verify_password(password, user.password):
     if password != user.password:
+        print("Pwd mismatch")
         db.close()
         return None
+    print("Login success")
 
     db.close()
     return {"email": user.email}
