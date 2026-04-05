@@ -70,7 +70,7 @@ def login_page():
     password = st.text_input("Password", type="password")
 
     if st.button("Login"):
-        response = requests.post(f"{API_BASE}/login", json={
+        response = requests.post(url=f"{API_BASE}/login", data={
             "email": email,
             "password": password
         })
