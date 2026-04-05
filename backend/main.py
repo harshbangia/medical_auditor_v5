@@ -55,9 +55,15 @@ def health():
 # =========================
 # LOGIN
 # =========================
+from  pydantic import BaseModel
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
 @app.post("/login")
-def login(email: str = Form(...), password: str = Form(...)):
-    user = authenticate_user(email, password)
+def login(data: LoginRequest):
+    user = authenticate_user(data.email, data.password)
 
     if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
