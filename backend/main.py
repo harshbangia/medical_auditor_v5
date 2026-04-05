@@ -75,7 +75,6 @@ def login(data: dict):
 # =========================
 @app.post("/register")
 async def register(email: str = Form(...), password: str = Form(...)):
-    from backend.auth import pwd_context
 
     db = SessionLocal()
 
@@ -83,7 +82,7 @@ async def register(email: str = Form(...), password: str = Form(...)):
         db.close()
         return {"error": "User already exists"}
 
-    new_user = User(email=email, password=pwd_context.hash(password))
+    new_user = User(email=email, password=password)
 
     db.add(new_user)
     db.commit()
