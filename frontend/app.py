@@ -185,7 +185,13 @@ if run:
             headers=headers
         )
 
-        result = response.json()
+        try:
+            result = response.json()
+        except Exception:
+            st.error("Something went wrong")
+            st.text(response.text)
+            st.stop()
+        #result = response.json()
 
         # 🔥 THIS LINE IS MISSING (CRITICAL FIX)
         st.session_state["report"] = result
