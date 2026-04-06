@@ -114,6 +114,7 @@ async def audit(
     print('hit audit')
     print('files received:',files)
     print('guideline received:',guideline)
+    print('authorization header:', authorization)
     # =========================
     # ⚡ FAST QA MODE (NO OCR)
     # =========================
@@ -406,13 +407,13 @@ async def generate_pdf_api(data: dict):
 async def get_history(authorization: str = Header(None)):
 
     if not authorization:
-        return {"error": "Missing token"}
+        raise HTTPException(status_code=401, detail="Missing token")
 
     token = authorization.replace("Bearer ", "")
     payload = verify_token(token)
 
     if not payload:
-        return {"error": "Invalid token"}
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
 
     db = SessionLocal()
 
