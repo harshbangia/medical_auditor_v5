@@ -141,6 +141,13 @@ async def audit(
         )
         print("final result",result)
         return result
+
+    if not files:
+        return {"error": "No files received"}
+
+    result = await run_audit(files,guideline)
+    print("final:",result)
+    return result
     # =========================
     # AUTH (KEEP SAME)
     # =========================
