@@ -45,6 +45,15 @@ def _audit_log(request_id: str, message: str):
     logger.info("[audit:%s] %s", request_id, message)
     print(f"[audit:{request_id}] {message}", flush=True)
 
+
+def _extract_bearer_token(authorization: Optional[str]) -> Optional[str]:
+    if not authorization:
+        return None
+    parts = authorization.strip().split()
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        return None
+    return parts[1].strip()
+
 # =========================
 # CORS
 # =========================
@@ -166,7 +175,10 @@ async def audit(
         _audit_log(request_id, "missing Authorization header")
         raise HTTPException(status_code=401, detail="Missing token")
 
-    token = authorization.replace("Bearer ", "")
+    token = _extract_bearer_token(authorization)
+    if not token:
+        _audit_log(request_id, "malformed Authorization header")
+        raise HTTPException(status_code=401, detail="Malformed Authorization header")
     payload = verify_token(token)
     _audit_log(request_id, "token parsed; verifying")
     if not payload:
@@ -430,7 +442,9 @@ async def get_history(authorization: str = Header(None)):
     if not authorization:
         raise HTTPException(status_code=401, detail="Missing token")
 
-    token = authorization.replace("Bearer ", "")
+    token = _extract_bearer_token(authorization)
+    if not token:
+        raise HTTPException(status_code=401, detail="Malformed Authorization header")
     payload = verify_token(token)
 
     if not payload:

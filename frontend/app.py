@@ -41,6 +41,16 @@ st.set_page_config(
 API_BASE = "http://13.61.84.162/api"
 API_URL = f"{API_BASE}/audit"
 
+
+def force_logout_and_relogin(message: str):
+    st.error(message)
+    st.session_state["is_logged_out"] = True
+    st.session_state.pop("token", None)
+    if "token" in cookies:
+        del cookies["token"]
+        cookies.save()
+    st.rerun()
+
 # =========================
 # LOGIN PAGE
 # =========================
@@ -192,6 +202,8 @@ if run:
             st.text(response.text)
             st.stop()
         if response.status_code != 200:
+            if response.status_code == 401:
+                force_logout_and_relogin("Session expired. Please login again.")
             st.error(f"Audit failed ({response.status_code})")
             st.write(result.get("detail") or result.get("error") or response.text)
             st.stop()
@@ -381,6 +393,9 @@ if "report" in st.session_state:
 
         qa = res.json()
         st.write("DEBUG QA RESPONSE:", qa)
+
+        if res.status_code == 401:
+            force_logout_and_relogin("Session expired. Please login again.")
 
         if qa.get("mode") == "qa":
 
