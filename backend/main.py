@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from typing import List, Optional
 from backend.ai.audit_engine import extract_case_summary
+from fastapi.responses import JSONResponse
 from fastapi import HTTPException
 from backend.utils.pdf_reader import extract_text_and_images
 from fastapi import Form
@@ -141,13 +142,6 @@ async def audit(
         )
         print("final result",result)
         return result
-
-    if not files:
-        return {"error": "No files received"}
-
-    result = await run_audit(files,guideline)
-    print("final:",result)
-    return result
     # =========================
     # AUTH (KEEP SAME)
     # =========================
@@ -378,7 +372,8 @@ async def audit(
             print("❌ AI RETURNED EMPTY STRUCTURE")
             return {"error": "AI returned empty structured response"}
         print('final result:', result)
-        return result
+        safe_result = json.loads(json.dumps(result, default=str))
+        return safe_result
 
 
 
