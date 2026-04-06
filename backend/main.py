@@ -16,6 +16,8 @@ from backend.utils.pdf_reader import extract_images_from_pdf
 from backend.utils.pdf_reader import extract_text_from_pdf
 from backend.ai.audit_engine import run_audit
 from backend.utils.pdf_generator import generate_pdf
+from backend.utils.pdf_filename import pdf_download_filename
+from starlette.background import BackgroundTask
 from backend.auth import authenticate_user, create_access_token, verify_token
 
 from backend.db.database import SessionLocal
@@ -421,15 +423,28 @@ async def audit(
 # =========================
 # PDF GENERATION
 # =========================
+def _unlink_temp(path: str):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
 @app.post("/generate-pdf")
 async def generate_pdf_api(data: dict):
-    file_path = "audit_report.pdf"
-    generate_pdf(data, file_path)
-
+    download_name = pdf_download_filename(data)
+    fd, tmp_path = tempfile.mkstemp(suffix=".pdf")
+    os.close(fd)
+    try:
+        generate_pdf(data, tmp_path)
+    except Exception:
+        _unlink_temp(tmp_path)
+        raise
     return FileResponse(
-        path=file_path,
-        filename="audit_report.pdf",
-        media_type="application/pdf"
+        path=tmp_path,
+        filename=download_name,
+        media_type="application/pdf",
+        background=BackgroundTask(_unlink_temp, tmp_path),
     )
 
 

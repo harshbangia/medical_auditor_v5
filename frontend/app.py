@@ -1,4 +1,5 @@
 import base64
+import re
 import streamlit as st
 import os
 from datetime import datetime
@@ -25,6 +26,23 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 # PATHS
 # =========================
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, BASE_DIR)
+try:
+    from backend.utils.pdf_filename import pdf_download_filename
+except ImportError:
+
+    def pdf_download_filename(report_data: dict) -> str:
+        raw = (report_data.get("patient_details") or {}).get("name") or ""
+        raw = str(raw).strip()
+        if not raw or raw == "-":
+            return "audit_report.pdf"
+        safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", raw)
+        safe = re.sub(r"\s+", "_", safe).strip("_")
+        safe = safe[:80] if safe else "audit_report"
+        if not safe:
+            safe = "audit_report"
+        return f"{safe}_audit.pdf"
+
 LOGO_PATH = os.path.join(BASE_DIR, "assets", "logo.png")
 GUIDELINE_PATH = os.path.join(BASE_DIR, "data", "guidelines")
 
@@ -424,4 +442,5 @@ if "report" in st.session_state:
     # =========================
     if st.button("Download PDF"):
         res = requests.post(f"{API_BASE}/generate-pdf", json=st.session_state["report"])
-        st.download_button("Download", res.content, "audit_report.pdf")
+        pdf_name = pdf_download_filename(st.session_state["report"])
+        st.download_button("Download", res.content, pdf_name)
