@@ -110,6 +110,9 @@ async def audit(
     session_id: str = Form(None),
     authorization: str = Header(None)
 ):
+    print('hit audit')
+    print('files received:',files)
+    print('guideline received:',guideline)
     # =========================
     # ⚡ FAST QA MODE (NO OCR)
     # =========================
@@ -184,7 +187,6 @@ async def audit(
 
                             s3_url = f"https://{BUCKET_NAME}.s3.amazonaws.com/{s3_key}"
                             print("☁️ Uploaded to S3:", s3_url)
-
                     # ✅ TEXT EXTRACTION
                     # 🔥 SINGLE OCR PASS (TEXT + IMAGES)
                     text, imgs = extract_text_and_images(tmp_path)
@@ -368,7 +370,7 @@ async def audit(
         ]):
             print("❌ AI RETURNED EMPTY STRUCTURE")
             return {"error": "AI returned empty structured response"}
-
+        print('final result:', result)
         return result
 
 
