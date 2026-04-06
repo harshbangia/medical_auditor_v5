@@ -39,7 +39,7 @@ st.set_page_config(
 
 #API_BASE = "http://localhost:8000"
 API_BASE = "http://13.61.84.162"
-API_URL = f"{API_BASE}/audit"
+API_URL = f"{API_BASE}/api/audit"
 
 # =========================
 # LOGIN PAGE
