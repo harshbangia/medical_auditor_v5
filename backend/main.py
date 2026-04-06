@@ -136,7 +136,7 @@ async def audit(
             user_question=question,
             images=images
         )
-
+        print("final result",result)
         return result
     # =========================
     # AUTH (KEEP SAME)
