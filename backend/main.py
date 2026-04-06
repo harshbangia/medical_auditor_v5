@@ -323,7 +323,28 @@ async def audit(
             images=images
         )
 
+        print("🔥 RAW AI RESULT:", result)
 
+        # =========================
+        # 🔥 HARD VALIDATION (FIX)
+        # =========================
+        if not result or not isinstance(result, dict):
+            return {"error": "AI returned empty or invalid response"}
+
+        # Ensure all required keys exist (IMPORTANT)
+        result.setdefault("patient_details", {})
+        result.setdefault("claim_details", {})
+        result.setdefault("clinical_findings", [])
+        result.setdefault("documentation_gaps", [])
+        result.setdefault("timeline", [])
+        result.setdefault("observations", [])
+        result.setdefault("auditor_conclusion", "No conclusion generated")
+        result.setdefault("remarks", "")
+        result.setdefault("qa_section", [])
+
+        # =========================
+        # SESSION STORE
+        # =========================
         session_id = str(uuid4())
 
         GLOBAL_CACHE[session_id] = {
@@ -335,26 +356,21 @@ async def audit(
         }
 
         result["session_id"] = session_id
-        if not result:
-            return {"error": "Empty AI response"}
-
-        if "error" in result:
-            return result
 
         # =========================
-        # SAFETY (PREVENT UI BREAK)
+        # FINAL SAFETY CHECK
         # =========================
-        result.setdefault("patient_details", {})
-        result.setdefault("claim_details", {})
-        result.setdefault("clinical_findings", [])
-        result.setdefault("documentation_gaps", [])
-        result.setdefault("timeline", [])
-        result.setdefault("observations", [])
-        result.setdefault("auditor_conclusion", "")
-        result.setdefault("remarks", "")
-        result.setdefault("qa_section", [])
+        if all([
+            not result.get("patient_details"),
+            not result.get("clinical_findings"),
+            not result.get("observations"),
+            not result.get("auditor_conclusion")
+        ]):
+            print("❌ AI RETURNED EMPTY STRUCTURE")
+            return {"error": "AI returned empty structured response"}
 
         return result
+
 
 
     except Exception as e:
