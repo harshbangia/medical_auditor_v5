@@ -314,6 +314,8 @@ async def audit(
         # =========================
         # RUN AUDIT
         # =========================
+        print('case length:', len(case_text))
+        print('text length:', case_text[:200])
         result = run_audit(
             case_text,
             relevant_guideline,
