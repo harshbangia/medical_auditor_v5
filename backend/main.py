@@ -26,6 +26,7 @@ GLOBAL_CACHE = {}
 
 import boto3
 
+
 USE_S3 = False
 
 s3 = boto3.client("s3")

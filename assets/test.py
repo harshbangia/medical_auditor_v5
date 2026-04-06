@@ -1,5 +1,4 @@
-from passlib.context import CryptContext
+import boto3
+ec2 = boto3.client('ec2',region_name='eu-north-1a')
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-print(pwd_context.hash("1234"))
+ec2.stop_instances(InstanceIds=['i-068da88eeb02c099ae'])
