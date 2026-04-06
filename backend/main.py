@@ -150,7 +150,7 @@ async def audit(
 
     token = authorization.replace("Bearer ", "")
     payload = verify_token(token)
-
+    print('auth header:',authorization)
     if not payload:
         return {"error": "Invalid or expired token"}
 
@@ -372,8 +372,7 @@ async def audit(
             print("❌ AI RETURNED EMPTY STRUCTURE")
             return {"error": "AI returned empty structured response"}
         print('final result:', result)
-        safe_result = json.loads(json.dumps(result, default=str))
-        return safe_result
+        return result
 
 
 
