@@ -191,7 +191,17 @@ if run:
             st.error("Something went wrong")
             st.text(response.text)
             st.stop()
-        #result = response.json()
+        if response.status_code != 200:
+            st.error(f"Audit failed ({response.status_code})")
+            st.write(result.get("detail") or result.get("error") or response.text)
+            st.stop()
+
+        if isinstance(result, dict) and (result.get("error") or result.get("detail")):
+            st.error("Audit did not return a valid report")
+            st.write(result.get("detail") or result.get("error"))
+            st.stop()
+
+        # result = response.json()
 
         # 🔥 THIS LINE IS MISSING (CRITICAL FIX)
         st.session_state["report"] = result

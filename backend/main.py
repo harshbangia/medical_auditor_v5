@@ -37,10 +37,13 @@ BUCKET_NAME = "glowix-medical-auditor"
 
 app = FastAPI()
 logger = logging.getLogger("medical_auditor.audit")
+if not logging.getLogger().handlers:
+    logging.basicConfig(level=logging.INFO)
 
 
 def _audit_log(request_id: str, message: str):
     logger.info("[audit:%s] %s", request_id, message)
+    print(f"[audit:{request_id}] {message}", flush=True)
 
 # =========================
 # CORS
