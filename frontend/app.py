@@ -71,9 +71,11 @@ LOGIN_CSS = """
     [data-testid="stAppViewContainer"] {
         background: linear-gradient(155deg, #1a2744 0%, #2a3f66 28%, #64748b 28%, #e2e8f0 55%, #f1f5f9 100%) !important;
     }
-    [data-testid="stAppViewContainer"] .main .block-container {
-        max-width: 440px !important;
-        padding: 2.25rem 2rem 2.5rem !important;
+    /* Login view only: wide layout defaults to full-width block-container — force a narrow card */
+    [data-testid="stAppViewContainer"] .block-container {
+        max-width: min(400px, calc(100vw - 2rem)) !important;
+        width: 100% !important;
+        padding: 2.25rem 1.75rem 2.5rem !important;
         margin-top: 5vh !important;
         margin-left: auto !important;
         margin-right: auto !important;
@@ -84,35 +86,39 @@ LOGIN_CSS = """
             0 0 0 1px rgba(255, 255, 255, 0.6) inset !important;
         border: 1px solid #e2e8f0 !important;
     }
-    [data-testid="stAppViewContainer"] .main .block-container h1,
-    [data-testid="stAppViewContainer"] .main .block-container h3 {
+    [data-testid="stAppViewContainer"] .block-container h1,
+    [data-testid="stAppViewContainer"] .block-container h3 {
         color: #1a2744 !important;
         font-weight: 700 !important;
         letter-spacing: -0.02em;
     }
-    [data-testid="stAppViewContainer"] .main label,
-    [data-testid="stAppViewContainer"] .main [data-testid="stWidgetLabel"] p {
+    [data-testid="stAppViewContainer"] .block-container label,
+    [data-testid="stAppViewContainer"] .block-container [data-testid="stWidgetLabel"] p {
         color: #334155 !important;
         font-weight: 600 !important;
         font-size: 0.9rem !important;
     }
-    [data-testid="stAppViewContainer"] .main div[data-baseweb="input"] {
+    [data-testid="stAppViewContainer"] .block-container div[data-baseweb="input"] {
         background: #f8fafc !important;
         border-radius: 10px !important;
         border: 1px solid #cbd5e1 !important;
         box-shadow: none !important;
+        max-width: 100% !important;
     }
-    [data-testid="stAppViewContainer"] .main div[data-baseweb="input"]:focus-within {
+    [data-testid="stAppViewContainer"] .block-container div[data-baseweb="input"]:focus-within {
         border-color: #3d6fd8 !important;
         box-shadow: 0 0 0 3px rgba(61, 111, 216, 0.2) !important;
     }
-    [data-testid="stAppViewContainer"] .main div[data-baseweb="input"] input {
+    [data-testid="stAppViewContainer"] .block-container div[data-baseweb="input"] input {
         background: transparent !important;
         color: #0f172a !important;
         -webkit-text-fill-color: #0f172a !important;
         caret-color: #0f172a !important;
     }
-    [data-testid="stAppViewContainer"] .main .stButton > button {
+    [data-testid="stAppViewContainer"] .block-container .stButton > button,
+    [data-testid="stAppViewContainer"] .block-container .stButton button,
+    [data-testid="stAppViewContainer"] .block-container button[kind],
+    [data-testid="stAppViewContainer"] .block-container button[data-testid="baseButton-secondary"] {
         width: 100% !important;
         height: 48px !important;
         border-radius: 12px !important;
@@ -124,11 +130,12 @@ LOGIN_CSS = """
         box-shadow: 0 4px 14px rgba(47, 91, 181, 0.45) !important;
         margin-top: 0.5rem !important;
     }
-    [data-testid="stAppViewContainer"] .main .stButton > button:hover {
+    [data-testid="stAppViewContainer"] .block-container .stButton > button:hover,
+    [data-testid="stAppViewContainer"] .block-container .stButton button:hover {
         filter: brightness(1.06) !important;
         box-shadow: 0 6px 20px rgba(47, 91, 181, 0.5) !important;
     }
-    [data-testid="stAppViewContainer"] .main [data-testid="stImage"] { margin-bottom: 0.5rem; }
+    [data-testid="stAppViewContainer"] .block-container [data-testid="stImage"] { margin-bottom: 0.5rem; }
 </style>
 """
 
