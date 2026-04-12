@@ -59,6 +59,79 @@ st.set_page_config(
 API_BASE = "http://13.61.84.162/api"
 API_URL = f"{API_BASE}/audit"
 
+BASE_FONT_CSS = """
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&display=swap');
+    html, body, [class*="css"] { font-family: 'DM Sans', 'Segoe UI', sans-serif; }
+</style>
+"""
+
+LOGIN_CSS = """
+<style>
+    [data-testid="stAppViewContainer"] {
+        background: linear-gradient(155deg, #1a2744 0%, #2a3f66 28%, #64748b 28%, #e2e8f0 55%, #f1f5f9 100%) !important;
+    }
+    [data-testid="stAppViewContainer"] .main .block-container {
+        max-width: 440px !important;
+        padding: 2.25rem 2rem 2.5rem !important;
+        margin-top: 5vh !important;
+        margin-left: auto !important;
+        margin-right: auto !important;
+        background: #ffffff !important;
+        border-radius: 20px !important;
+        box-shadow:
+            0 25px 50px -12px rgba(26, 39, 68, 0.25),
+            0 0 0 1px rgba(255, 255, 255, 0.6) inset !important;
+        border: 1px solid #e2e8f0 !important;
+    }
+    [data-testid="stAppViewContainer"] .main .block-container h1,
+    [data-testid="stAppViewContainer"] .main .block-container h3 {
+        color: #1a2744 !important;
+        font-weight: 700 !important;
+        letter-spacing: -0.02em;
+    }
+    [data-testid="stAppViewContainer"] .main label,
+    [data-testid="stAppViewContainer"] .main [data-testid="stWidgetLabel"] p {
+        color: #334155 !important;
+        font-weight: 600 !important;
+        font-size: 0.9rem !important;
+    }
+    [data-testid="stAppViewContainer"] .main div[data-baseweb="input"] {
+        background: #f8fafc !important;
+        border-radius: 10px !important;
+        border: 1px solid #cbd5e1 !important;
+        box-shadow: none !important;
+    }
+    [data-testid="stAppViewContainer"] .main div[data-baseweb="input"]:focus-within {
+        border-color: #3d6fd8 !important;
+        box-shadow: 0 0 0 3px rgba(61, 111, 216, 0.2) !important;
+    }
+    [data-testid="stAppViewContainer"] .main div[data-baseweb="input"] input {
+        background: transparent !important;
+        color: #0f172a !important;
+        -webkit-text-fill-color: #0f172a !important;
+        caret-color: #0f172a !important;
+    }
+    [data-testid="stAppViewContainer"] .main .stButton > button {
+        width: 100% !important;
+        height: 48px !important;
+        border-radius: 12px !important;
+        background: linear-gradient(135deg, #3d6fd8 0%, #2f5bb5 100%) !important;
+        color: #ffffff !important;
+        font-weight: 700 !important;
+        font-size: 1rem !important;
+        border: none !important;
+        box-shadow: 0 4px 14px rgba(47, 91, 181, 0.45) !important;
+        margin-top: 0.5rem !important;
+    }
+    [data-testid="stAppViewContainer"] .main .stButton > button:hover {
+        filter: brightness(1.06) !important;
+        box-shadow: 0 6px 20px rgba(47, 91, 181, 0.5) !important;
+    }
+    [data-testid="stAppViewContainer"] .main [data-testid="stImage"] { margin-bottom: 0.5rem; }
+</style>
+"""
+
 
 def force_logout_and_relogin(message: str):
     st.error(message)
@@ -73,26 +146,20 @@ def force_logout_and_relogin(message: str):
 # LOGIN PAGE
 # =========================
 def login_page():
-
-    st.markdown("""
-    <style>
-    .block-container { max-width: 420px; padding-top: 60px; }
-    .custom-label { margin-bottom: 4px; font-size: 15px; font-weight: 500; }
-    div[data-baseweb="input"] > div { height: 42px; border-radius: 8px; }
-    .stButton > button {
-        width: 100%; height: 45px; border-radius: 10px;
-        background-color: #2f63d6; color: white; font-weight: 600; border: none;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+    st.markdown(BASE_FONT_CSS, unsafe_allow_html=True)
+    st.markdown(LOGIN_CSS, unsafe_allow_html=True)
 
     if os.path.exists(LOGO_PATH):
         st.markdown(
-            f"<div style='text-align:center;'><img src='data:image/png;base64,{base64.b64encode(open(LOGO_PATH, 'rb').read()).decode()}' width='120'></div>",
+            f"<div style='text-align:center;padding-bottom:0.5rem;'><img src='data:image/png;base64,{base64.b64encode(open(LOGO_PATH, 'rb').read()).decode()}' width='100' style='border-radius:16px;box-shadow:0 8px 24px rgba(26,39,68,0.12);'></div>",
             unsafe_allow_html=True
         )
 
-    st.markdown("<h3 style='text-align:center;'>Glowix Medical Services Pvt. Ltd.</h3>", unsafe_allow_html=True)
+    st.markdown(
+        "<h3 style='text-align:center;margin:0 0 0.15rem 0;'>Glowix Medical Services Pvt. Ltd.</h3>"
+        "<p style='text-align:center;color:#64748b;font-size:0.92rem;margin:0 0 1.25rem 0;'>Clinical compliance auditor — sign in to continue</p>",
+        unsafe_allow_html=True,
+    )
 
     email = st.text_input("Email")
     password = st.text_input("Password", type="password")
@@ -157,10 +224,51 @@ PAGE_CSS = """
         background: linear-gradient(180deg, #1a2744 0%, #243352 100%) !important;
         border-right: 1px solid rgba(255,255,255,0.08);
     }
-    [data-testid="stSidebar"] .stMarkdown, [data-testid="stSidebar"] label, [data-testid="stSidebar"] span {
+    /* Do NOT blanket-style all spans — it washes out the file uploader on white */
+    [data-testid="stSidebar"] .stMarkdown p,
+    [data-testid="stSidebar"] .stMarkdown li,
+    [data-testid="stSidebar"] .stMarkdown span {
+        color: #e8edf5 !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stWidgetLabel"] p,
+    [data-testid="stSidebar"] label {
         color: #e8edf5 !important;
     }
     [data-testid="stSidebar"] .stSelectbox label { font-weight: 600; }
+    /* File uploader: force dark text + visible primary button on white dropzone */
+    [data-testid="stSidebar"] [data-testid="stFileUploader"] [data-testid="stWidgetLabel"] p,
+    [data-testid="stSidebar"] [data-testid="stFileUploader"] label {
+        color: #e8edf5 !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stFileUploader"] section,
+    [data-testid="stSidebar"] [data-testid="stFileUploader"] span,
+    [data-testid="stSidebar"] [data-testid="stFileUploader"] p,
+    [data-testid="stSidebar"] [data-testid="stFileUploader"] small,
+    [data-testid="stSidebar"] [data-testid="stFileUploader"] div[data-testid="stCaptionContainer"] {
+        color: #1e293b !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] {
+        background: #ffffff !important;
+        border: 2px dashed #64748b !important;
+        border-radius: 12px !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] * {
+        color: #1e293b !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stFileUploader"] button {
+        background: linear-gradient(135deg, #3d6fd8 0%, #2f5bb5 100%) !important;
+        color: #ffffff !important;
+        border: none !important;
+        font-weight: 600 !important;
+        opacity: 1 !important;
+        border-radius: 8px !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stFileUploader"] button:hover {
+        filter: brightness(1.08) !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stFileUploader"] [data-testid="stIconMaterialIcon"] {
+        color: #3d6fd8 !important;
+    }
     [data-testid="stSidebar"] .stButton > button {
         width: 100%; border-radius: 10px; font-weight: 600;
         background: linear-gradient(135deg, #3d6fd8 0%, #2f5bb5 100%);
