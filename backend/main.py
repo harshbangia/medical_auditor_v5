@@ -374,14 +374,24 @@ async def audit(
 
         # Ensure all required keys exist (IMPORTANT)
         result.setdefault("patient_details", {})
+        result.setdefault("insurance_details", {})
+        for _k in ("insurance_company", "policy_number", "policy_period", "claim_incident_number"):
+            result["insurance_details"].setdefault(_k, "")
         result.setdefault("claim_details", {})
         result.setdefault("clinical_findings", [])
         result.setdefault("documentation_gaps", [])
         result.setdefault("timeline", [])
         result.setdefault("observations", [])
+        result.setdefault("inference", "")
         result.setdefault("auditor_conclusion", "No conclusion generated")
         result.setdefault("remarks", "")
         result.setdefault("qa_section", [])
+        inf = (result.get("inference") or "").strip()
+        ac = (result.get("auditor_conclusion") or "").strip()
+        if inf and not ac:
+            result["auditor_conclusion"] = inf
+        elif ac and not inf:
+            result["inference"] = ac
 
         # =========================
         # SESSION STORE
@@ -405,7 +415,7 @@ async def audit(
             not result.get("patient_details"),
             not result.get("clinical_findings"),
             not result.get("observations"),
-            not result.get("auditor_conclusion")
+            not (result.get("auditor_conclusion") or result.get("inference"))
         ]):
             _audit_log(request_id, "AI returned empty structured response")
             raise HTTPException(status_code=502, detail="AI returned empty structured response")

@@ -49,12 +49,28 @@ CASE:
     except:
         return {}
 
+def _select_images_for_audit(images, max_images=8):
+    """Spread samples across the document so clinical photos / scans are less likely to be missed."""
+    if not images:
+        return []
+    n = len(images)
+    if n <= max_images:
+        return images
+    idxs = set()
+    for k in range(max_images):
+        idxs.add(int(k * (n - 1) / max(1, max_images - 1)))
+    idxs.add(0)
+    idxs.add(n - 1)
+    ordered = sorted(idxs)
+    return [images[i] for i in ordered[:max_images]]
+
+
 def run_audit(case_text, guideline_text, user_question=None, images=None):
     print("Running audit engine")
     image_analysis_text = ""
 
     if images:
-        selected_images = images[:2] + images[len(images) // 2:len(images) // 2 + 2] + images[-2:]
+        selected_images = _select_images_for_audit(images, max_images=8)
 
         for img in selected_images:
 
@@ -69,12 +85,13 @@ def run_audit(case_text, guideline_text, user_question=None, images=None):
                                     "type": "input_text",
                                     "text": """You are a clinical medical auditor.
 
-                Analyze this image carefully.
+                Analyze this image carefully (photo of lesion/oral cavity, wound, X-ray, CT, MRI, ultrasound, or document scan).
 
-                - Describe only visible findings
-                - Do NOT hallucinate
-                - Use cautious medical tone
-                - If not relevant → say 'No clinical relevance'
+                - Describe only visible findings (anatomy, lesions, devices, film findings).
+                - Do NOT hallucinate details not visible.
+                - Use cautious medical tone ("appears", "suggestive of").
+                - If the image is clinical/pertinent → state what is seen and possible relevance.
+                - If purely administrative or illegible → say 'No clinical relevance for audit'.
                 """
                                 },
                                 {
@@ -98,8 +115,9 @@ def run_audit(case_text, guideline_text, user_question=None, images=None):
 
                 image_analysis = image_analysis.strip()
 
+                # Must match prompt section "IMAGE ANALYSIS" / "[IMAGE ANALYSIS]" so the model does not flag "missing clinical picture".
                 image_analysis_text += f"""
-    [IMAGE EVIDENCE FOUND - Page {img['page']}]
+    [IMAGE ANALYSIS - Page {img['page']}]
     {image_analysis}
     """
 
@@ -107,7 +125,12 @@ def run_audit(case_text, guideline_text, user_question=None, images=None):
                 image_analysis_text += f"\n[IMAGE ERROR]: {str(e)}\n"
 
     if image_analysis_text.strip():
-        case_text = "[IMAGING PRESENT]\n" + case_text + "\n" + image_analysis_text
+        case_text = (
+            "[IMAGING PRESENT — clinical images were extracted from the case PDFs and analyzed below]\n"
+            + case_text
+            + "\n"
+            + image_analysis_text
+        )
 
     prompt = f"""
     You are a SENIOR MEDICAL AUDITOR working for an insurance audit firm.
@@ -178,19 +201,19 @@ def run_audit(case_text, guideline_text, user_question=None, images=None):
 IMAGE PRESENCE VALIDATION (CRITICAL FIX)
 ----------------------------------------
 
-- If [IMAGE ANALYSIS] sections are present in CASE:
-    ✔ Treat them as AVAILABLE clinical images
-    ✔ DO NOT mark "clinical picture missing"
-    ✔ DO NOT add image-related items in documentation_gaps
+- If ANY line starts with "[IMAGE ANALYSIS" in CASE (including after [IMAGING PRESENT]):
+    ✔ Clinical images WERE provided and analyzed — treat as AVAILABLE imaging/photo evidence
+    ✔ DO NOT state "clinical picture missing", "no photo submitted", or similar
+    ✔ DO NOT add gaps solely because the narrative omits the photo — the [IMAGE ANALYSIS] block IS the evidence
+    ✔ For X-ray/MRI/CT: use both OCR text in case AND [IMAGE ANALYSIS] blocks; do not contradict yourself across sections
 
-- If NO [IMAGE ANALYSIS] is present:
-    ✔ THEN AND ONLY THEN mark images as missing
-
+- If NO "[IMAGE ANALYSIS" appears anywhere AND case text does not clearly describe imaging:
+    ✔ THEN you may note missing imaging documentation in documentation_gaps (one clear item, not duplicated)
 
 - You may receive partial case data due to chunking
 - Infer missing continuity carefully
 - Do NOT assume missing data as absence
-    IMAGE ANALYSIS = EVIDENCE OF IMAGE PROVIDED
+    [IMAGE ANALYSIS ...] = CONFIRMED IMAGE EVIDENCE PROVIDED TO THE AUDITOR
     ----------------------------------------
     FOLLOW-UP QUESTION HANDLING (Q&A)
     ----------------------------------------
@@ -233,10 +256,14 @@ IMAGE PRESENCE VALIDATION (CRITICAL FIX)
       "patient_details": {{
         "name": "",
         "age": "",
-        "sex": "",
-        "claim_number": "",
+        "sex": ""
+      }},
+
+      "insurance_details": {{
+        "insurance_company": "",
         "policy_number": "",
-        "policy_period": ""
+        "policy_period": "",
+        "claim_incident_number": ""
       }},
 
       "claim_details": {{
@@ -337,6 +364,8 @@ IMAGE PRESENCE VALIDATION (CRITICAL FIX)
         - Use cautious interpretation (e.g., "appears to be", "suggestive of")
         - Correlate with diagnosis
         - Mention inconsistencies if any
+    9. Populate "insurance_details" from the case (insurer name, policy no., policy period, claim/incident no.); use "" if not stated.
+    10. "inference" and "auditor_conclusion" must contain the SAME final medico-legal conclusion text (duplicate for compatibility).
 
     ----------------------------------------
 
@@ -454,6 +483,17 @@ IMAGE PRESENCE VALIDATION (CRITICAL FIX)
     for obs in data.get("observations", []):
         if len(obs.get("analysis", "")) < 50:
             obs["analysis"] += " (Further clinical correlation is advised.)"
+
+    data.setdefault("insurance_details", {})
+    for _k in ("insurance_company", "policy_number", "policy_period", "claim_incident_number"):
+        data["insurance_details"].setdefault(_k, "")
+
+    inf = (data.get("inference") or "").strip()
+    ac = (data.get("auditor_conclusion") or "").strip()
+    if inf and not ac:
+        data["auditor_conclusion"] = inf
+    elif ac and not inf:
+        data["inference"] = ac
 
     return data
 

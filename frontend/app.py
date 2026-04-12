@@ -146,10 +146,59 @@ if "token" not in st.session_state:
 
 headers = {"Authorization": f"Bearer {st.session_state['token']}"}
 
+PAGE_CSS = """
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&display=swap');
+    html, body, [class*="css"] { font-family: 'DM Sans', 'Segoe UI', sans-serif; }
+    [data-testid="stAppViewContainer"] {
+        background: linear-gradient(165deg, #f0f4fb 0%, #e8eef8 45%, #f7f9fc 100%);
+    }
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #1a2744 0%, #243352 100%) !important;
+        border-right: 1px solid rgba(255,255,255,0.08);
+    }
+    [data-testid="stSidebar"] .stMarkdown, [data-testid="stSidebar"] label, [data-testid="stSidebar"] span {
+        color: #e8edf5 !important;
+    }
+    [data-testid="stSidebar"] .stSelectbox label { font-weight: 600; }
+    [data-testid="stSidebar"] .stButton > button {
+        width: 100%; border-radius: 10px; font-weight: 600;
+        background: linear-gradient(135deg, #3d6fd8 0%, #2f5bb5 100%);
+        color: white; border: none;
+    }
+    [data-testid="stSidebar"] .stButton > button:hover { filter: brightness(1.08); }
+    .gwx-header-bar {
+        display: flex; align-items: center; gap: 1.25rem;
+        padding: 1rem 1.25rem; margin: 0 -1rem 1.25rem -1rem;
+        background: linear-gradient(90deg, #ffffff 0%, #f8fafc 100%);
+        border-radius: 14px; border: 1px solid #e2e8f0;
+        box-shadow: 0 4px 24px rgba(26, 39, 68, 0.06);
+    }
+    .gwx-header-bar h2 { margin: 0; color: #1a2744; font-size: 1.45rem; font-weight: 700; letter-spacing: -0.02em; }
+    .gwx-header-bar .tagline { color: #64748b; font-size: 0.9rem; margin-top: 0.2rem; }
+    .gwx-card {
+        background: #fff; border-radius: 14px; padding: 1.35rem 1.5rem;
+        border: 1px solid #e2e8f0; box-shadow: 0 2px 16px rgba(26, 39, 68, 0.05);
+        margin-bottom: 1rem;
+    }
+    .gwx-card h3 { margin: 0 0 0.75rem 0; color: #1a2744; font-size: 1.05rem; font-weight: 700; }
+    .gwx-steps ol { margin: 0; padding-left: 1.25rem; color: #334155; line-height: 1.75; }
+    .gwx-steps li { margin-bottom: 0.5rem; }
+    .gwx-ref-pill {
+        display: inline-block; background: #1a2744; color: #fff;
+        padding: 0.35rem 0.85rem; border-radius: 8px; font-size: 0.85rem; font-weight: 600; margin-right: 0.5rem;
+    }
+    .gwx-section-title { color: #1a2744; font-weight: 700; font-size: 1.1rem; margin: 1.25rem 0 0.75rem 0;
+        padding-bottom: 0.35rem; border-bottom: 2px solid #3d6fd8; display: inline-block; }
+    div[data-testid="column"] .stMetric { background: #f8fafc; padding: 0.75rem; border-radius: 10px; border: 1px solid #e2e8f0; }
+</style>
+"""
+st.markdown(PAGE_CSS, unsafe_allow_html=True)
+
 # =========================
 # SIDEBAR
 # =========================
-st.sidebar.title("🧠 Medical Auditor")
+st.sidebar.markdown("### Medical Auditor")
 
 # ✅ GUIDELINE DROPDOWN
 guidelines = os.listdir(GUIDELINE_PATH)
@@ -176,15 +225,50 @@ if st.sidebar.button("Logout"):
 # =========================
 # HEADER
 # =========================
-col1, col2 = st.columns([1, 5])
+logo_b64 = ""
+if os.path.exists(LOGO_PATH):
+    logo_b64 = base64.b64encode(open(LOGO_PATH, "rb").read()).decode()
 
-with col1:
-    if os.path.exists(LOGO_PATH):
-        st.image(LOGO_PATH, width=80)
+st.markdown(
+    f"""
+    <div class="gwx-header-bar">
+        {"<img src='data:image/png;base64," + logo_b64 + "' width='64' style='border-radius:12px'/>" if logo_b64 else ""}
+        <div>
+            <h2>Glowix Medical Services Pvt. Ltd.</h2>
+            <div class="tagline">AI-Powered Clinical Compliance Auditor</div>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
-with col2:
-    st.markdown("## Glowix Medical Services Pvt. Ltd.")
-    st.caption("AI-Powered Clinical Audit System")
+# =========================
+# LANDING (before first audit)
+# =========================
+if "report" not in st.session_state:
+    st.markdown(
+        """
+        <div class="gwx-card gwx-steps">
+            <h3>How to run an audit — step by step</h3>
+            <ol>
+                <li><strong>Select a guideline</strong> in the left sidebar (choose the PDF that matches the clinical context).</li>
+                <li><strong>Upload case documents</strong> as PDFs — discharge summary, clinical notes, imaging reports, and photos (e.g. clinical pictures) if embedded in PDF.</li>
+                <li>Click <strong>Run Audit</strong> and wait while text and images are processed; a structured report will appear here.</li>
+                <li>Review <strong>Inference</strong>, documentation gaps, and observations; use <strong>Ask a question</strong> for follow-ups when needed.</li>
+                <li>Use <strong>Edit report</strong> to correct any field, then <strong>Download PDF</strong> for a shareable file named with the patient when available.</li>
+                <li>Log out from the sidebar when finished on a shared workstation.</li>
+            </ol>
+        </div>
+        <div class="gwx-card">
+            <h3>Tips for best results</h3>
+            <p style="margin:0;color:#475569;line-height:1.7;">
+                Prefer searchable PDFs where possible. If clinical photos or scans are only in image form, ensure they are inside the PDF pages you upload
+                so the system can analyze them. You can always adjust extracted details using <strong>Edit report</strong> before exporting.
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 # =========================
 # RUN AUDIT
@@ -235,6 +319,8 @@ if run:
 
         # 🔥 THIS LINE IS MISSING (CRITICAL FIX)
         st.session_state["report"] = result
+        st.session_state.pop("pdf_blob", None)
+        st.session_state.pop("pdf_name", None)
 
         st.session_state["session_id"] = result.get("session_id")
 
@@ -246,154 +332,230 @@ if run:
     st.success("Audit Completed")
 
 # =========================
-# DISPLAY REPORT (FULL PDF MATCH)
-# =========================
-# =========================
-# DISPLAY REPORT (PREMIUM UI)
+# DISPLAY REPORT
 # =========================
 if "report" in st.session_state:
-
+    if "report_edit_mode" not in st.session_state:
+        st.session_state["report_edit_mode"] = False
 
     data = st.session_state["report"]
     meta = st.session_state.get("audit_meta", {})
+    data.setdefault("patient_details", {})
+    data.setdefault("insurance_details", {})
+    for _k in ("insurance_company", "policy_number", "policy_period", "claim_incident_number"):
+        data["insurance_details"].setdefault(_k, "")
+    data.setdefault("claim_details", {})
 
-    st.markdown("## 📄 Medical Audit Report")
+    st.markdown('<p class="gwx-section-title" style="margin-top:0">Medical audit report</p>', unsafe_allow_html=True)
 
-    # =========================
-    # HEADER
-    # =========================
-    st.markdown(f"""
-    **Guideline:** {data.get('guideline_used','-')}  
-    **Ref No:** {meta.get('audit_id','-')}  
-    **Date:** {meta.get('audit_date','-')}
-    """)
+    c_act, c_edit, c_pdf = st.columns([2, 1, 1])
+    with c_act:
+        st.markdown(
+            f"<span class='gwx-ref-pill'>Ref: {meta.get('audit_id', '-')}</span>"
+            f"<span class='gwx-ref-pill' style='background:#3d6fd8'>Date: {meta.get('audit_date', '-')}</span>",
+            unsafe_allow_html=True,
+        )
+    with c_edit:
+        if st.session_state["report_edit_mode"]:
+            if st.button("Done editing", use_container_width=True):
+                st.session_state["report_edit_mode"] = False
+                st.rerun()
+        else:
+            if st.button("Edit report", use_container_width=True):
+                st.session_state["report_edit_mode"] = True
+                st.rerun()
+    with c_pdf:
+        if st.button("Download PDF", use_container_width=True, type="primary"):
+            pdf_payload = dict(data)
+            pdf_payload["report_ref"] = meta.get("audit_id", "")
+            pdf_payload["report_date"] = meta.get("audit_date", "")
+            res = requests.post(f"{API_BASE}/generate-pdf", json=pdf_payload)
+            if res.status_code == 200:
+                st.session_state["pdf_blob"] = res.content
+                st.session_state["pdf_name"] = pdf_download_filename(data)
+            else:
+                st.error("PDF generation failed")
+                st.session_state.pop("pdf_blob", None)
+                st.session_state.pop("pdf_name", None)
+        if st.session_state.get("pdf_blob"):
+            st.download_button(
+                "Save PDF file",
+                st.session_state["pdf_blob"],
+                file_name=st.session_state.get("pdf_name", "audit_report.pdf"),
+                mime="application/pdf",
+                use_container_width=True,
+                key="gwx_save_pdf",
+            )
 
+    st.caption(f"Guideline referenced: **{data.get('guideline_used', '-') }**")
     st.markdown("---")
 
-    # =========================
-    # PATIENT DETAILS
-    # =========================
-    st.subheader("👤 Patient Details")
-    p = data.get("patient_details", {})
+    if st.session_state["report_edit_mode"]:
+        with st.form("report_edit_form"):
+            st.markdown("**Patient details**")
+            ec1, ec2, ec3 = st.columns(3)
+            pn = ec1.text_input("Name", value=str(data["patient_details"].get("name") or ""))
+            pa = ec2.text_input("Age", value=str(data["patient_details"].get("age") or ""))
+            ps = ec3.text_input("Sex", value=str(data["patient_details"].get("sex") or ""))
 
+            st.markdown("**Insurance details**")
+            ins = data["insurance_details"]
+            i1, i2 = st.columns(2)
+            icomp = i1.text_input("Insurance company", value=str(ins.get("insurance_company") or ""))
+            ipol = i2.text_input("Policy number", value=str(ins.get("policy_number") or ""))
+            i3, i4 = st.columns(2)
+            iper = i3.text_input("Policy period", value=str(ins.get("policy_period") or ""))
+            icl = i4.text_input("Claim / incident number", value=str(ins.get("claim_incident_number") or ""))
+
+            st.markdown("**Claim details**")
+            cc1, cc2 = st.columns(2)
+            ch = cc1.text_input("Hospital", value=str(data["claim_details"].get("hospital") or ""))
+            cdg = cc2.text_input("Diagnosis", value=str(data["claim_details"].get("diagnosis") or ""))
+
+            gl = st.text_input("Guideline (display label)", value=str(data.get("guideline_used") or ""))
+
+            inf_text = st.text_area(
+                "Inference",
+                value=str(data.get("inference") or data.get("auditor_conclusion") or ""),
+                height=120,
+            )
+            rem_text = st.text_area("Remarks", value=str(data.get("remarks") or ""), height=80)
+
+            gaps_lines = "\n".join(str(g) for g in (data.get("documentation_gaps") or []) if g)
+            gaps_text = st.text_area(
+                "Documentation gaps / checklist (one item per line)",
+                value=gaps_lines,
+                height=140,
+            )
+
+            ref_e = st.text_input("Report ref (PDF header)", value=str(meta.get("audit_id") or ""))
+            date_e = st.text_input("Report date (PDF header)", value=str(meta.get("audit_date") or ""))
+
+            if st.form_submit_button("Save changes"):
+                data["patient_details"]["name"] = pn
+                data["patient_details"]["age"] = pa
+                data["patient_details"]["sex"] = ps
+                data["insurance_details"]["insurance_company"] = icomp
+                data["insurance_details"]["policy_number"] = ipol
+                data["insurance_details"]["policy_period"] = iper
+                data["insurance_details"]["claim_incident_number"] = icl
+                data["claim_details"]["hospital"] = ch
+                data["claim_details"]["diagnosis"] = cdg
+                data["guideline_used"] = gl
+                data["inference"] = inf_text
+                data["auditor_conclusion"] = inf_text
+                data["remarks"] = rem_text
+                data["documentation_gaps"] = [ln.strip() for ln in gaps_text.splitlines() if ln.strip()]
+                st.session_state["audit_meta"] = {
+                    **meta,
+                    "audit_id": ref_e or meta.get("audit_id", ""),
+                    "audit_date": date_e or meta.get("audit_date", ""),
+                }
+                st.success("Report updated.")
+                st.session_state["report_edit_mode"] = False
+                st.rerun()
+        st.stop()
+
+    p = data["patient_details"]
+    st.markdown('<p class="gwx-section-title">Patient details</p>', unsafe_allow_html=True)
     col1, col2, col3 = st.columns(3)
-    col1.metric("Name", p.get("name", "-"))
-    col2.metric("Age", p.get("age", "-"))
-    col3.metric("Sex", p.get("sex", "-"))
+    col1.metric("Name", p.get("name") or "—")
+    col2.metric("Age", p.get("age") or "—")
+    col3.metric("Sex", p.get("sex") or "—")
 
-    st.markdown("---")
-
-    # =========================
-    # CLAIM DETAILS
-    # =========================
-    st.subheader("🏥 Claim Details")
-    c = data.get("claim_details", {})
-
-    st.write(f"**Hospital:** {c.get('hospital','-')}")
-    st.write(f"**Diagnosis:** {c.get('diagnosis','-')}")
-
-    st.markdown("---")
-
-    # =========================
-    # IMAGING
-    # =========================
-    if data.get("imaging_findings"):
-        st.subheader("🩻 Imaging Findings")
-
-        for img in data["imaging_findings"]:
-            st.markdown(f"""
-            **Type:** {img.get('type')}  
-            **Finding:** {img.get('finding')}  
-            **Clinical Correlation:** {img.get('clinical_correlation')}  
-            **Consistency:** {img.get('consistency_with_diagnosis')}
-            """)
-            st.markdown("---")
-
-    # =========================
-    # CLINICAL FINDINGS
-    # =========================
-    st.subheader("🧪 Clinical Findings")
-
-    for item in data.get("clinical_findings", []):
-        st.markdown(f"""
-        <div style='padding:12px;border-radius:10px;background:#f8f9fa;margin-bottom:10px'>
-        <b>{item.get('parameter')}</b><br>
-        Value: {item.get('value')}<br>
-        <i>{item.get('comment')}</i>
+    st.markdown('<p class="gwx-section-title">Insurance details</p>', unsafe_allow_html=True)
+    ins = data["insurance_details"]
+    st.markdown(
+        f"""
+        <div class="gwx-card" style="margin-bottom:1rem">
+        <p style="margin:0.25rem 0"><strong>Insurance company:</strong> {ins.get('insurance_company') or '—'}</p>
+        <p style="margin:0.25rem 0"><strong>Policy number:</strong> {ins.get('policy_number') or '—'}</p>
+        <p style="margin:0.25rem 0"><strong>Policy period:</strong> {ins.get('policy_period') or '—'}</p>
+        <p style="margin:0.25rem 0"><strong>Claim / incident number:</strong> {ins.get('claim_incident_number') or '—'}</p>
         </div>
-        """, unsafe_allow_html=True)
+        """,
+        unsafe_allow_html=True,
+    )
 
-    st.markdown("---")
+    c = data["claim_details"]
+    st.markdown('<p class="gwx-section-title">Claim details</p>', unsafe_allow_html=True)
+    st.markdown(
+        f"<div class='gwx-card'><p style='margin:0.25rem 0'><strong>Hospital:</strong> {c.get('hospital') or '—'}</p>"
+        f"<p style='margin:0.25rem 0'><strong>Diagnosis:</strong> {c.get('diagnosis') or '—'}</p></div>",
+        unsafe_allow_html=True,
+    )
 
-    # =========================
-    # DOCUMENTATION GAPS
-    # =========================
-    st.subheader("⚠️ Documentation Gaps")
+    if data.get("imaging_findings"):
+        st.markdown('<p class="gwx-section-title">Imaging findings</p>', unsafe_allow_html=True)
+        for img in data["imaging_findings"]:
+            st.markdown(
+                f"""
+                <div class="gwx-card">
+                <p style="margin:0.2rem 0"><strong>Type:</strong> {img.get('type')}</p>
+                <p style="margin:0.2rem 0"><strong>Finding:</strong> {img.get('finding')}</p>
+                <p style="margin:0.2rem 0"><strong>Clinical correlation:</strong> {img.get('clinical_correlation')}</p>
+                <p style="margin:0.2rem 0"><strong>Consistency:</strong> {img.get('consistency_with_diagnosis')}</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
+    st.markdown('<p class="gwx-section-title">Clinical findings</p>', unsafe_allow_html=True)
+    for item in data.get("clinical_findings", []):
+        st.markdown(
+            f"""
+            <div class="gwx-card" style="padding:12px 14px">
+            <b style="color:#1a2744">{item.get('parameter')}</b><br>
+            <span style="color:#475569">Value:</span> {item.get('value')}<br>
+            <i style="color:#64748b">{item.get('comment')}</i>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    st.markdown('<p class="gwx-section-title">Documentation gaps / checklist</p>', unsafe_allow_html=True)
     for gap in data.get("documentation_gaps", []):
         st.warning(gap)
 
-    st.markdown("---")
-
-    # =========================
-    # TIMELINE
-    # =========================
-    st.subheader("📅 Timeline")
-
+    st.markdown('<p class="gwx-section-title">Timeline</p>', unsafe_allow_html=True)
     for t in data.get("timeline", []):
         st.markdown(f"• **{t.get('date')}** → {t.get('event')}")
 
-    st.markdown("---")
-
-    # =========================
-    # OBSERVATIONS
-    # =========================
-    st.subheader("🔍 Observations")
-
+    st.markdown('<p class="gwx-section-title">Observations</p>', unsafe_allow_html=True)
     for obs in data.get("observations", []):
-        st.markdown(f"""
-        **Q:** {obs.get('question')}  
-        **Analysis:** {obs.get('analysis')}  
-        **Answer:** {obs.get('answer')}
-        """)
-        st.markdown("---")
+        st.markdown(
+            f"""
+            <div class="gwx-card">
+            <p style="margin:0.2rem 0"><strong>Q:</strong> {obs.get('question')}</p>
+            <p style="margin:0.2rem 0"><strong>Analysis:</strong> {obs.get('analysis')}</p>
+            <p style="margin:0.2rem 0"><strong>Answer:</strong> {obs.get('answer')}</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
-    # =========================
-    # CONCLUSION
-    # =========================
-    st.subheader("✅ Conclusion")
-    st.success(data.get("auditor_conclusion"))
+    st.markdown('<p class="gwx-section-title">Inference</p>', unsafe_allow_html=True)
+    conclusion = (data.get("inference") or data.get("auditor_conclusion") or "").strip() or "—"
+    st.success(conclusion)
 
-    # =========================
-    # REMARKS
-    # =========================
-    st.subheader("📝 Remarks")
-    st.info(data.get("remarks"))
+    st.markdown('<p class="gwx-section-title">Remarks</p>', unsafe_allow_html=True)
+    st.info(data.get("remarks") or "—")
 
-    # =========================
-    # Q&A SECTION
-    # =========================
     if data.get("qa_section"):
-        st.subheader("💬 Questions & Answers")
-
+        st.markdown('<p class="gwx-section-title">Questions & answers</p>', unsafe_allow_html=True)
         for qa in data["qa_section"]:
             st.markdown(f"**Q:** {qa.get('question')}")
             st.write(f"**A:** {qa.get('answer')}")
-            st.info(qa.get("justification"))
+            st.info(qa.get("justification") or "")
             st.markdown("---")
 
-    # =========================
-    # ASK QUESTION
-    # =========================
-    question = st.text_input("Ask a question")
+    question = st.text_input("Ask a follow-up question")
 
     if st.button("Ask"):
-
         if not question.strip():
             st.warning("Enter a question")
             st.stop()
 
-        # 🔥 REUSE PREVIOUS FILES + GUIDELINE
         files = [
             ("files", (file.name, file.getvalue(), "application/pdf"))
             for file in uploaded_files
@@ -404,43 +566,32 @@ if "report" in st.session_state:
             data={
                 "question": question,
                 "guideline": selected_guideline,
-                "session_id": st.session_state.get("session_id")  # 🔥 ADD THIS
+                "session_id": st.session_state.get("session_id"),
             },
-            headers=headers
+            headers=headers,
         )
 
         qa = res.json()
-        st.write("DEBUG QA RESPONSE:", qa)
 
         if res.status_code == 401:
             force_logout_and_relogin("Session expired. Please login again.")
 
-        if qa.get("mode") == "qa":
+        if res.status_code != 200:
+            st.error(qa.get("detail") or qa.get("error") or res.text)
+            st.stop()
 
+        if qa.get("mode") == "qa":
             if "qa_section" not in st.session_state["report"]:
                 st.session_state["report"]["qa_section"] = []
 
-            # 🔥 HANDLE BOTH FORMATS
-
             if qa.get("qa_section"):
-                # normal case
                 for item in qa["qa_section"]:
                     st.session_state["report"]["qa_section"].append(item)
-
             else:
-                # 🔥 single QA response (your current case)
                 st.session_state["report"]["qa_section"].append({
                     "question": qa.get("question"),
                     "answer": qa.get("answer"),
-                    "justification": qa.get("justification")
+                    "justification": qa.get("justification"),
                 })
 
             st.rerun()
-
-    # =========================
-    # PDF
-    # =========================
-    if st.button("Download PDF"):
-        res = requests.post(f"{API_BASE}/generate-pdf", json=st.session_state["report"])
-        pdf_name = pdf_download_filename(st.session_state["report"])
-        st.download_button("Download", res.content, pdf_name)
