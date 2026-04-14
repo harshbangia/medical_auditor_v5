@@ -316,10 +316,23 @@ st.markdown(PAGE_CSS, unsafe_allow_html=True)
 st.sidebar.markdown("### Medical Auditor")
 
 # ✅ GUIDELINE DROPDOWN
-guidelines = os.listdir(GUIDELINE_PATH)
+def load_guidelines():
+    try:
+        resp = requests.get(f"{API_BASE}/guidelines", timeout=10)
+        if resp.status_code == 200:
+            payload = resp.json() or {}
+            items = payload.get("guidelines") or []
+            return [g for g in items if isinstance(g, str) and g.strip()]
+    except Exception:
+        pass
+    if os.path.isdir(GUIDELINE_PATH):
+        return [f for f in os.listdir(GUIDELINE_PATH) if f.lower().endswith(".pdf")]
+    return []
+
+guidelines = load_guidelines()
 selected_guideline = st.sidebar.selectbox(
     "📘 Select Guideline",
-    ["-- Select --"] + guidelines
+    ["-- Select --"] + sorted(guidelines)
 )
 
 # Upload

@@ -74,6 +74,33 @@ app.add_middleware(
 def health():
     return {"status": "Backend is running"}
 
+@app.get("/guidelines")
+def list_guidelines():
+    USE_S3_GUIDELINE = True
+    if USE_S3_GUIDELINE:
+        try:
+            response = s3.list_objects_v2(Bucket=BUCKET_NAME, Prefix="guidelines/")
+            names = []
+            for obj in response.get("Contents", []):
+                key = obj.get("Key", "")
+                if not key or key.endswith("/") or not key.lower().endswith(".pdf"):
+                    continue
+                names.append(os.path.basename(key))
+            return {"guidelines": sorted(set(names))}
+        except Exception as e:
+            logger.exception("Failed to list S3 guidelines: %s", e)
+            raise HTTPException(status_code=500, detail="Failed to load guidelines from S3")
+
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    guideline_dir = os.path.join(base_dir, "data", "guidelines")
+    if not os.path.isdir(guideline_dir):
+        return {"guidelines": []}
+    names = [
+        f for f in os.listdir(guideline_dir)
+        if f.lower().endswith(".pdf")
+    ]
+    return {"guidelines": sorted(names)}
+
 
 # =========================
 # LOGIN
