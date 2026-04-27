@@ -64,7 +64,15 @@ def _normalize_timeline(result: dict):
     if not isinstance(timeline, list):
         timeline = []
 
+    def _norm(s: str) -> str:
+        return " ".join(str(s or "").strip().lower().split())
+
+    def _is_unknown_date(s: str) -> bool:
+        val = _norm(s)
+        return (not val) or (val in {"-", "na", "n/a", "not available", "unknown"}) or ("*" in val)
+
     normalized = []
+    seen_signatures = set()
     existing_event_keys = set()
 
     for item in timeline:
@@ -74,9 +82,15 @@ def _normalize_timeline(result: dict):
         event = str(item.get("event") or "").strip()
         if not event and not date:
             continue
+        if _is_unknown_date(date):
+            date = ""
+        signature = (_norm(event), _norm(date))
+        if signature in seen_signatures:
+            continue
         normalized.append({"date": date, "event": event})
+        seen_signatures.add(signature)
         if event:
-            existing_event_keys.add(event.lower())
+            existing_event_keys.add(_norm(event))
 
     required = [
         ("consultation_date", "Consultation date"),
@@ -88,11 +102,32 @@ def _normalize_timeline(result: dict):
 
     for field, label in required:
         value = str(claim.get(field) or "").strip()
-        if not value:
+        if not value or _is_unknown_date(value):
             continue
-        if label.lower() in existing_event_keys:
+        norm_label = _norm(label)
+        norm_value = _norm(value)
+
+        # Skip if the same event label already exists.
+        if norm_label in existing_event_keys:
+            continue
+
+        # Skip if a semantically equivalent event/value pair is already present.
+        duplicate_found = False
+        for item in normalized:
+            e = _norm(item.get("event", ""))
+            d = _norm(item.get("date", ""))
+            if not e and not d:
+                continue
+            if (
+                (norm_label in e or e in norm_label)
+                and (norm_value in e or e in norm_value or norm_value == d)
+            ):
+                duplicate_found = True
+                break
+        if duplicate_found:
             continue
         normalized.append({"date": value, "event": label})
+        seen_signatures.add((norm_label, norm_value))
 
     result["timeline"] = normalized
 
