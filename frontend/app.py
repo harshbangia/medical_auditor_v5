@@ -223,9 +223,28 @@ headers = {"Authorization": f"Bearer {st.session_state['token']}"}
 PAGE_CSS = """
 <style>
     @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&display=swap');
-    html, body, [class*="css"] { font-family: 'DM Sans', 'Segoe UI', sans-serif; }
+    :root {
+        --gwx-bg: #f5f8fd;
+        --gwx-bg-soft: #eef3fb;
+        --gwx-surface: #ffffff;
+        --gwx-border: #dbe4f0;
+        --gwx-text: #14233d;
+        --gwx-text-soft: #51627d;
+        --gwx-primary: #2f5bb5;
+        --gwx-primary-2: #3d6fd8;
+        --gwx-success-bg: #edf9f3;
+        --gwx-info-bg: #eef5ff;
+        --gwx-warning-bg: #fff7e8;
+    }
+    html, body, [class*="css"] {
+        font-family: 'DM Sans', 'Segoe UI', sans-serif;
+        color: var(--gwx-text) !important;
+    }
+    html, body {
+        color-scheme: light;
+    }
     [data-testid="stAppViewContainer"] {
-        background: linear-gradient(165deg, #f0f4fb 0%, #e8eef8 45%, #f7f9fc 100%);
+        background: linear-gradient(165deg, var(--gwx-bg) 0%, var(--gwx-bg-soft) 45%, #fbfdff 100%);
     }
     [data-testid="stSidebar"] {
         background: linear-gradient(180deg, #1a2744 0%, #243352 100%) !important;
@@ -282,18 +301,42 @@ PAGE_CSS = """
         color: white; border: none;
     }
     [data-testid="stSidebar"] .stButton > button:hover { filter: brightness(1.08); }
+    /* Main content readability hardening */
+    [data-testid="stAppViewContainer"] .block-container,
+    [data-testid="stAppViewContainer"] .stMarkdown,
+    [data-testid="stAppViewContainer"] p,
+    [data-testid="stAppViewContainer"] li,
+    [data-testid="stAppViewContainer"] label,
+    [data-testid="stAppViewContainer"] span,
+    [data-testid="stAppViewContainer"] div {
+        color: var(--gwx-text);
+    }
+    [data-testid="stAppViewContainer"] [data-testid="stText"],
+    [data-testid="stAppViewContainer"] [data-testid="stCaptionContainer"] {
+        color: var(--gwx-text-soft) !important;
+    }
+    [data-testid="stAppViewContainer"] hr {
+        border-color: var(--gwx-border) !important;
+    }
+    [data-testid="stAppViewContainer"] h1,
+    [data-testid="stAppViewContainer"] h2,
+    [data-testid="stAppViewContainer"] h3,
+    [data-testid="stAppViewContainer"] h4 {
+        color: #10213b !important;
+        letter-spacing: -0.02em;
+    }
     .gwx-header-bar {
         display: flex; align-items: center; gap: 1.25rem;
         padding: 1rem 1.25rem; margin: 0 -1rem 1.25rem -1rem;
         background: linear-gradient(90deg, #ffffff 0%, #f8fafc 100%);
-        border-radius: 14px; border: 1px solid #e2e8f0;
-        box-shadow: 0 4px 24px rgba(26, 39, 68, 0.06);
+        border-radius: 14px; border: 1px solid var(--gwx-border);
+        box-shadow: 0 6px 30px rgba(26, 39, 68, 0.08);
     }
     .gwx-header-bar h2 { margin: 0; color: #1a2744; font-size: 1.45rem; font-weight: 700; letter-spacing: -0.02em; }
     .gwx-header-bar .tagline { color: #64748b; font-size: 0.9rem; margin-top: 0.2rem; }
     .gwx-card {
-        background: #fff; border-radius: 14px; padding: 1.35rem 1.5rem;
-        border: 1px solid #e2e8f0; box-shadow: 0 2px 16px rgba(26, 39, 68, 0.05);
+        background: var(--gwx-surface); border-radius: 14px; padding: 1.35rem 1.5rem;
+        border: 1px solid var(--gwx-border); box-shadow: 0 4px 20px rgba(26, 39, 68, 0.06);
         margin-bottom: 1rem;
     }
     .gwx-card h3 { margin: 0 0 0.75rem 0; color: #1a2744; font-size: 1.05rem; font-weight: 700; }
@@ -305,7 +348,65 @@ PAGE_CSS = """
     }
     .gwx-section-title { color: #1a2744; font-weight: 700; font-size: 1.1rem; margin: 1.25rem 0 0.75rem 0;
         padding-bottom: 0.35rem; border-bottom: 2px solid #3d6fd8; display: inline-block; }
-    div[data-testid="column"] .stMetric { background: #f8fafc; padding: 0.75rem; border-radius: 10px; border: 1px solid #e2e8f0; }
+    div[data-testid="column"] .stMetric {
+        background: #f8fafc;
+        padding: 0.75rem;
+        border-radius: 10px;
+        border: 1px solid var(--gwx-border);
+    }
+    div[data-testid="column"] .stMetric label,
+    div[data-testid="column"] .stMetric [data-testid="stMetricValue"] {
+        color: var(--gwx-text) !important;
+    }
+    /* Inputs and text areas in edit mode */
+    [data-testid="stAppViewContainer"] div[data-baseweb="input"],
+    [data-testid="stAppViewContainer"] div[data-baseweb="textarea"] {
+        background: #ffffff !important;
+        border: 1px solid #cbd5e1 !important;
+        border-radius: 10px !important;
+    }
+    [data-testid="stAppViewContainer"] div[data-baseweb="input"] input,
+    [data-testid="stAppViewContainer"] div[data-baseweb="textarea"] textarea {
+        color: var(--gwx-text) !important;
+        -webkit-text-fill-color: var(--gwx-text) !important;
+        caret-color: var(--gwx-text) !important;
+        background: transparent !important;
+    }
+    [data-testid="stAppViewContainer"] div[data-baseweb="input"]:focus-within,
+    [data-testid="stAppViewContainer"] div[data-baseweb="textarea"]:focus-within {
+        border-color: var(--gwx-primary-2) !important;
+        box-shadow: 0 0 0 3px rgba(61, 111, 216, 0.15) !important;
+    }
+    /* Buttons in main content */
+    [data-testid="stAppViewContainer"] .stButton > button {
+        border-radius: 10px !important;
+        border: none !important;
+        color: #ffffff !important;
+        background: linear-gradient(135deg, var(--gwx-primary-2) 0%, var(--gwx-primary) 100%) !important;
+        box-shadow: 0 4px 14px rgba(47, 91, 181, 0.28) !important;
+        font-weight: 600 !important;
+    }
+    [data-testid="stAppViewContainer"] .stButton > button:hover {
+        filter: brightness(1.05) !important;
+    }
+    /* Streamlit status boxes */
+    [data-testid="stSuccess"] {
+        background: var(--gwx-success-bg) !important;
+        border: 1px solid #b7e4c7 !important;
+    }
+    [data-testid="stInfo"] {
+        background: var(--gwx-info-bg) !important;
+        border: 1px solid #cfe1ff !important;
+    }
+    [data-testid="stWarning"] {
+        background: var(--gwx-warning-bg) !important;
+        border: 1px solid #f6d7a8 !important;
+    }
+    [data-testid="stSuccess"] *,
+    [data-testid="stInfo"] *,
+    [data-testid="stWarning"] * {
+        color: var(--gwx-text) !important;
+    }
 </style>
 """
 st.markdown(PAGE_CSS, unsafe_allow_html=True)
