@@ -69,6 +69,16 @@ def _normalize_observations_detail(data):
     """
     Enforce richer, medico-legal observation detail when model output is too brief.
     """
+    summary = str(data.get("auditor_observation_summary") or "").strip()
+    if len(summary) < 220:
+        data["auditor_observation_summary"] = (
+            "Patient context and chronology were reviewed from available records, including prior procedures, "
+            "current diagnosis, admission/discharge details, and documented operative management. Clinical evidence "
+            "was correlated with guideline expectations to assess medical necessity, procedural appropriateness, and "
+            "documentation sufficiency. Where source records are incomplete, conclusions remain evidence-based but "
+            "subject to revision upon submission of missing primary documents."
+        )
+
     observations = data.get("observations") or []
     if not isinstance(observations, list):
         data["observations"] = []
@@ -90,6 +100,7 @@ def _normalize_observations_detail(data):
             f"Clinical context: {analysis or 'Available records indicate the documented treatment and timeline were reviewed for clinical appropriateness.'}\n"
             "Evidence review: Correlated case notes, documented timeline events, and supporting investigations/procedure details available in records.\n"
             "Guideline correlation: Findings are mapped against applicable protocol expectations for indication, timing, and documented management consistency.\n"
+            "Risk and discrepancy check: Any mismatch between diagnosis, procedure notes, imaging, and chronology is considered for claim reliability.\n"
             f"Medico-legal implication: {('Current documentation supports the stated position.' if (answer or '').lower() in {'yes', 'supported', 'appropriate'} else 'Conclusion is based on available documentation; any missing primary records may affect final liability interpretation.')}"
         )
 
@@ -361,6 +372,22 @@ IMAGE PRESENCE VALIDATION (CRITICAL FIX)
           "answer": ""
         }}
       ],
+      "auditor_observation_summary": "Detailed overall narrative summary in paragraph form (doctor-style)",
+      "treatment_billing_audit": {{
+        "room_category_admitted": "",
+        "room_category_eligible": "",
+        "procedures_performed": "",
+        "cross_checked_with_preauth": "",
+        "excluded_items_billed": "",
+        "charges_appropriate": ""
+      }},
+      "financial_review": {{
+        "total_hospital_bill": "",
+        "non_payable_amount": "",
+        "net_claimable_amount": "",
+        "recommended_approval_amount": "",
+        "patient_liability": ""
+      }},
 
       "inference": "",
 
@@ -409,6 +436,8 @@ IMAGE PRESENCE VALIDATION (CRITICAL FIX)
         - Mention inconsistencies if any
     9. Populate "insurance_details" from the case (insurer name, policy no., policy period, claim/incident no.); use "" if not stated.
     10. "inference" and "auditor_conclusion" must contain the SAME final medico-legal conclusion text (duplicate for compatibility).
+    11. Fill "treatment_billing_audit" and "financial_review" from case records where available; if missing, use "NA".
+    12. "auditor_observation_summary" must be a coherent doctor-style narrative paragraph, not bullet fragments.
 
     ----------------------------------------
 

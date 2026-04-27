@@ -484,6 +484,26 @@ if "report" in st.session_state:
     ):
         data["claim_details"].setdefault(_k, "")
     data.setdefault("clinical_checklist", [])
+    data.setdefault("auditor_observation_summary", "")
+    data.setdefault("treatment_billing_audit", {})
+    for _k in (
+        "room_category_admitted",
+        "room_category_eligible",
+        "procedures_performed",
+        "cross_checked_with_preauth",
+        "excluded_items_billed",
+        "charges_appropriate",
+    ):
+        data["treatment_billing_audit"].setdefault(_k, "")
+    data.setdefault("financial_review", {})
+    for _k in (
+        "total_hospital_bill",
+        "non_payable_amount",
+        "net_claimable_amount",
+        "recommended_approval_amount",
+        "patient_liability",
+    ):
+        data["financial_review"].setdefault(_k, "")
 
     st.markdown('<p class="gwx-section-title" style="margin-top:0">Medical audit report</p>', unsafe_allow_html=True)
 
@@ -690,11 +710,52 @@ if "report" in st.session_state:
     for gap in data.get("documentation_gaps", []):
         st.warning(gap)
 
+    tba = data.get("treatment_billing_audit") or {}
+    st.markdown('<p class="gwx-section-title">Treatment & billing audit</p>', unsafe_allow_html=True)
+    st.markdown(
+        f"""
+        <div class='gwx-card'>
+        <p style='margin:0.25rem 0'><strong>Room category admitted:</strong> {tba.get('room_category_admitted') or '—'}</p>
+        <p style='margin:0.25rem 0'><strong>Room category eligible (policy):</strong> {tba.get('room_category_eligible') or '—'}</p>
+        <p style='margin:0.25rem 0'><strong>Procedures performed:</strong> {tba.get('procedures_performed') or '—'}</p>
+        <p style='margin:0.25rem 0'><strong>Cross-checked with pre-auth:</strong> {tba.get('cross_checked_with_preauth') or '—'}</p>
+        <p style='margin:0.25rem 0'><strong>Excluded items billed:</strong> {tba.get('excluded_items_billed') or '—'}</p>
+        <p style='margin:0.25rem 0'><strong>Charges appropriate:</strong> {tba.get('charges_appropriate') or '—'}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    fin = data.get("financial_review") or {}
+    st.markdown('<p class="gwx-section-title">Financial review</p>', unsafe_allow_html=True)
+    st.markdown(
+        f"""
+        <div class='gwx-card'>
+        <p style='margin:0.25rem 0'><strong>Total hospital bill:</strong> {fin.get('total_hospital_bill') or '—'}</p>
+        <p style='margin:0.25rem 0'><strong>Non-payable amount:</strong> {fin.get('non_payable_amount') or '—'}</p>
+        <p style='margin:0.25rem 0'><strong>Net claimable amount:</strong> {fin.get('net_claimable_amount') or '—'}</p>
+        <p style='margin:0.25rem 0'><strong>Recommended approval amount:</strong> {fin.get('recommended_approval_amount') or '—'}</p>
+        <p style='margin:0.25rem 0'><strong>Patient liability:</strong> {fin.get('patient_liability') or '—'}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
     st.markdown('<p class="gwx-section-title">Timeline</p>', unsafe_allow_html=True)
     for t in data.get("timeline", []):
         st.markdown(f"• **{t.get('date')}** → {t.get('event')}")
 
     st.markdown('<p class="gwx-section-title">Auditor\'s observations (detailed)</p>', unsafe_allow_html=True)
+    if (data.get("auditor_observation_summary") or "").strip():
+        st.markdown(
+            f"""
+            <div class="gwx-card">
+            <p style="margin:0.2rem 0"><strong>Overall narrative:</strong></p>
+            <p style="margin:0.2rem 0;white-space:pre-line">{data.get('auditor_observation_summary')}</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
     for idx, obs in enumerate(data.get("observations", []), start=1):
         st.markdown(
             f"""

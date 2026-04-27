@@ -124,9 +124,34 @@ def generate_pdf(data, filename="audit_report.pdf"):
     content.append(Spacer(1, 10))
 
     # =========================
+    # TREATMENT & BILLING AUDIT
+    # =========================
+    tba = data.get("treatment_billing_audit") or {}
+    content.append(Paragraph("8. Treatment & Billing Audit", styles["Heading2"]))
+    content.append(Paragraph(f"Room category admitted: {tba.get('room_category_admitted','')}", styles["Normal"]))
+    content.append(Paragraph(f"Room category eligible (policy): {tba.get('room_category_eligible','')}", styles["Normal"]))
+    content.append(Paragraph(f"Procedures performed: {tba.get('procedures_performed','')}", styles["Normal"]))
+    content.append(Paragraph(f"Cross-checked with pre-auth: {tba.get('cross_checked_with_preauth','')}", styles["Normal"]))
+    content.append(Paragraph(f"Excluded items billed: {tba.get('excluded_items_billed','')}", styles["Normal"]))
+    content.append(Paragraph(f"Charges appropriate: {tba.get('charges_appropriate','')}", styles["Normal"]))
+    content.append(Spacer(1, 10))
+
+    # =========================
+    # FINANCIAL REVIEW
+    # =========================
+    fin = data.get("financial_review") or {}
+    content.append(Paragraph("9. Financial Review", styles["Heading2"]))
+    content.append(Paragraph(f"Total hospital bill: {fin.get('total_hospital_bill','')}", styles["Normal"]))
+    content.append(Paragraph(f"Non-payable amount: {fin.get('non_payable_amount','')}", styles["Normal"]))
+    content.append(Paragraph(f"Net claimable amount: {fin.get('net_claimable_amount','')}", styles["Normal"]))
+    content.append(Paragraph(f"Recommended approval amount: {fin.get('recommended_approval_amount','')}", styles["Normal"]))
+    content.append(Paragraph(f"Patient liability: {fin.get('patient_liability','')}", styles["Normal"]))
+    content.append(Spacer(1, 10))
+
+    # =========================
     # TIMELINE
     # =========================
-    content.append(Paragraph("8. Timeline", styles["Heading2"]))
+    content.append(Paragraph("10. Timeline", styles["Heading2"]))
 
     for t in data.get("timeline", []):
         content.append(Paragraph(f"{t.get('date')} - {t.get('event')}", styles["Normal"]))
@@ -136,7 +161,10 @@ def generate_pdf(data, filename="audit_report.pdf"):
     # =========================
     # OBSERVATIONS
     # =========================
-    content.append(Paragraph("9. Auditor's Observations (Detailed)", styles["Heading2"]))
+    content.append(Paragraph("11. Auditor's Observations (Detailed)", styles["Heading2"]))
+    if data.get("auditor_observation_summary"):
+        content.append(Paragraph(f"Overall narrative: {data.get('auditor_observation_summary')}", styles["Normal"]))
+        content.append(Spacer(1, 5))
 
     for idx, obs in enumerate(data.get("observations", []), start=1):
         content.append(Paragraph(f"Q{idx}: {obs.get('question')}", styles["Normal"]))
@@ -149,7 +177,7 @@ def generate_pdf(data, filename="audit_report.pdf"):
     # =========================
     # CONCLUSION
     # =========================
-    content.append(Paragraph("10. Inference", styles["Heading2"]))
+    content.append(Paragraph("12. Inference", styles["Heading2"]))
     conclusion = (data.get("inference") or data.get("auditor_conclusion") or "").strip()
     content.append(Paragraph(conclusion, styles["Normal"]))
     content.append(Spacer(1, 10))
@@ -157,7 +185,7 @@ def generate_pdf(data, filename="audit_report.pdf"):
     # =========================
     # REMARKS
     # =========================
-    content.append(Paragraph("11. Remarks", styles["Heading2"]))
+    content.append(Paragraph("13. Remarks", styles["Heading2"]))
     content.append(Paragraph(data.get("remarks", ""), styles["Normal"]))
     content.append(Spacer(1, 10))
 
@@ -165,7 +193,7 @@ def generate_pdf(data, filename="audit_report.pdf"):
     # Q&A SECTION (🔥 NEW)
     # =========================
     if "qa_section" in data and data["qa_section"]:
-        content.append(Paragraph("12. Questions & Answers", styles["Heading2"]))
+        content.append(Paragraph("14. Questions & Answers", styles["Heading2"]))
 
         for qa in data["qa_section"]:
             content.append(Paragraph(f"Q: {qa.get('question')}", styles["Normal"]))

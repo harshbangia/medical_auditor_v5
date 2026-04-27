@@ -493,6 +493,26 @@ async def audit(
         result.setdefault("clinical_findings", [])
         result.setdefault("documentation_gaps", [])
         result.setdefault("clinical_checklist", [])
+        result.setdefault("auditor_observation_summary", "")
+        result.setdefault("treatment_billing_audit", {})
+        for _k in (
+            "room_category_admitted",
+            "room_category_eligible",
+            "procedures_performed",
+            "cross_checked_with_preauth",
+            "excluded_items_billed",
+            "charges_appropriate",
+        ):
+            result["treatment_billing_audit"].setdefault(_k, "")
+        result.setdefault("financial_review", {})
+        for _k in (
+            "total_hospital_bill",
+            "non_payable_amount",
+            "net_claimable_amount",
+            "recommended_approval_amount",
+            "patient_liability",
+        ):
+            result["financial_review"].setdefault(_k, "")
         result.setdefault("timeline", [])
         result.setdefault("observations", [])
         result.setdefault("inference", "")
