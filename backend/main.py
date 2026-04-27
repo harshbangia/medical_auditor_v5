@@ -56,6 +56,46 @@ def _extract_bearer_token(authorization: Optional[str]) -> Optional[str]:
         return None
     return parts[1].strip()
 
+
+def _normalize_timeline(result: dict):
+    """Ensure key medico-legal events always appear in timeline when available."""
+    claim = result.get("claim_details") or {}
+    timeline = result.get("timeline") or []
+    if not isinstance(timeline, list):
+        timeline = []
+
+    normalized = []
+    existing_event_keys = set()
+
+    for item in timeline:
+        if not isinstance(item, dict):
+            continue
+        date = str(item.get("date") or "").strip()
+        event = str(item.get("event") or "").strip()
+        if not event and not date:
+            continue
+        normalized.append({"date": date, "event": event})
+        if event:
+            existing_event_keys.add(event.lower())
+
+    required = [
+        ("consultation_date", "Consultation date"),
+        ("date_of_admission", "Date of admission"),
+        ("date_of_discharge", "Date of discharge"),
+        ("procedure_or_surgery", "Procedure / surgery done"),
+        ("nature_of_admission", "Nature of admission"),
+    ]
+
+    for field, label in required:
+        value = str(claim.get(field) or "").strip()
+        if not value:
+            continue
+        if label.lower() in existing_event_keys:
+            continue
+        normalized.append({"date": value, "event": label})
+
+    result["timeline"] = normalized
+
 # =========================
 # CORS
 # =========================
@@ -405,8 +445,19 @@ async def audit(
         for _k in ("insurance_company", "policy_number", "policy_period", "claim_incident_number"):
             result["insurance_details"].setdefault(_k, "")
         result.setdefault("claim_details", {})
+        for _k in (
+            "hospital",
+            "consultation_date",
+            "date_of_admission",
+            "date_of_discharge",
+            "nature_of_admission",
+            "procedure_or_surgery",
+            "diagnosis",
+        ):
+            result["claim_details"].setdefault(_k, "")
         result.setdefault("clinical_findings", [])
         result.setdefault("documentation_gaps", [])
+        result.setdefault("clinical_checklist", [])
         result.setdefault("timeline", [])
         result.setdefault("observations", [])
         result.setdefault("inference", "")
@@ -419,6 +470,8 @@ async def audit(
             result["auditor_conclusion"] = inf
         elif ac and not inf:
             result["inference"] = ac
+
+        _normalize_timeline(result)
 
         # =========================
         # SESSION STORE

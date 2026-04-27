@@ -473,6 +473,17 @@ if "report" in st.session_state:
     for _k in ("insurance_company", "policy_number", "policy_period", "claim_incident_number"):
         data["insurance_details"].setdefault(_k, "")
     data.setdefault("claim_details", {})
+    for _k in (
+        "hospital",
+        "consultation_date",
+        "date_of_admission",
+        "date_of_discharge",
+        "nature_of_admission",
+        "procedure_or_surgery",
+        "diagnosis",
+    ):
+        data["claim_details"].setdefault(_k, "")
+    data.setdefault("clinical_checklist", [])
 
     st.markdown('<p class="gwx-section-title" style="margin-top:0">Medical audit report</p>', unsafe_allow_html=True)
 
@@ -539,6 +550,13 @@ if "report" in st.session_state:
             cc1, cc2 = st.columns(2)
             ch = cc1.text_input("Hospital", value=str(data["claim_details"].get("hospital") or ""))
             cdg = cc2.text_input("Diagnosis", value=str(data["claim_details"].get("diagnosis") or ""))
+            cc3, cc4 = st.columns(2)
+            consult_date = cc3.text_input("Consult date", value=str(data["claim_details"].get("consultation_date") or ""))
+            admission_date = cc4.text_input("Date of admission", value=str(data["claim_details"].get("date_of_admission") or ""))
+            cc5, cc6 = st.columns(2)
+            discharge_date = cc5.text_input("Date of discharge", value=str(data["claim_details"].get("date_of_discharge") or ""))
+            admission_nature = cc6.text_input("Nature of admission", value=str(data["claim_details"].get("nature_of_admission") or ""))
+            procedure_done = st.text_input("Procedure / surgery done", value=str(data["claim_details"].get("procedure_or_surgery") or ""))
 
             gl = st.text_input("Guideline (display label)", value=str(data.get("guideline_used") or ""))
 
@@ -569,6 +587,11 @@ if "report" in st.session_state:
                 data["insurance_details"]["claim_incident_number"] = icl
                 data["claim_details"]["hospital"] = ch
                 data["claim_details"]["diagnosis"] = cdg
+                data["claim_details"]["consultation_date"] = consult_date
+                data["claim_details"]["date_of_admission"] = admission_date
+                data["claim_details"]["date_of_discharge"] = discharge_date
+                data["claim_details"]["nature_of_admission"] = admission_nature
+                data["claim_details"]["procedure_or_surgery"] = procedure_done
                 data["guideline_used"] = gl
                 data["inference"] = inf_text
                 data["auditor_conclusion"] = inf_text
@@ -609,6 +632,11 @@ if "report" in st.session_state:
     st.markdown('<p class="gwx-section-title">Claim details</p>', unsafe_allow_html=True)
     st.markdown(
         f"<div class='gwx-card'><p style='margin:0.25rem 0'><strong>Hospital:</strong> {c.get('hospital') or '—'}</p>"
+        f"<p style='margin:0.25rem 0'><strong>Consult date:</strong> {c.get('consultation_date') or '—'}</p>"
+        f"<p style='margin:0.25rem 0'><strong>Date of admission:</strong> {c.get('date_of_admission') or '—'}</p>"
+        f"<p style='margin:0.25rem 0'><strong>Date of discharge:</strong> {c.get('date_of_discharge') or '—'}</p>"
+        f"<p style='margin:0.25rem 0'><strong>Nature of admission:</strong> {c.get('nature_of_admission') or '—'}</p>"
+        f"<p style='margin:0.25rem 0'><strong>Procedure / surgery done:</strong> {c.get('procedure_or_surgery') or '—'}</p>"
         f"<p style='margin:0.25rem 0'><strong>Diagnosis:</strong> {c.get('diagnosis') or '—'}</p></div>",
         unsafe_allow_html=True,
     )
@@ -641,7 +669,24 @@ if "report" in st.session_state:
             unsafe_allow_html=True,
         )
 
-    st.markdown('<p class="gwx-section-title">Documentation gaps / checklist</p>', unsafe_allow_html=True)
+    st.markdown('<p class="gwx-section-title">Documentation checklist</p>', unsafe_allow_html=True)
+    checklist = data.get("clinical_checklist") or []
+    if checklist:
+        for row in checklist:
+            st.markdown(
+                f"""
+                <div class="gwx-card" style="padding:12px 14px">
+                <b style="color:#1a2744">{row.get('area') or 'Area'}</b><br>
+                <span style="color:#475569">Available:</span> {row.get('available') or '—'}<br>
+                <i style="color:#64748b">{row.get('remarks') or ''}</i>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+    else:
+        st.info("No checklist details available.")
+
+    st.markdown('<p class="gwx-section-title">Documentation gaps</p>', unsafe_allow_html=True)
     for gap in data.get("documentation_gaps", []):
         st.warning(gap)
 
@@ -649,12 +694,12 @@ if "report" in st.session_state:
     for t in data.get("timeline", []):
         st.markdown(f"• **{t.get('date')}** → {t.get('event')}")
 
-    st.markdown('<p class="gwx-section-title">Observations</p>', unsafe_allow_html=True)
-    for obs in data.get("observations", []):
+    st.markdown('<p class="gwx-section-title">Auditor\'s observations (detailed)</p>', unsafe_allow_html=True)
+    for idx, obs in enumerate(data.get("observations", []), start=1):
         st.markdown(
             f"""
             <div class="gwx-card">
-            <p style="margin:0.2rem 0"><strong>Q:</strong> {obs.get('question')}</p>
+            <p style="margin:0.2rem 0"><strong>Q{idx}:</strong> {obs.get('question')}</p>
             <p style="margin:0.2rem 0"><strong>Analysis:</strong> {obs.get('analysis')}</p>
             <p style="margin:0.2rem 0"><strong>Answer:</strong> {obs.get('answer')}</p>
             </div>

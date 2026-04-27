@@ -271,6 +271,8 @@ IMAGE PRESENCE VALIDATION (CRITICAL FIX)
         "consultation_date": "",
         "date_of_admission": "",
         "date_of_discharge": "",
+        "nature_of_admission": "",
+        "procedure_or_surgery": "",
         "diagnosis": ""
       }},
         - Populate "imaging_findings" using IMAGE ANALYSIS if available.
@@ -310,6 +312,12 @@ IMAGE PRESENCE VALIDATION (CRITICAL FIX)
           "event": ""
         }}
       ],
+      // Timeline must include these events when available:
+      // 1) Consultation date
+      // 2) Date of admission
+      // 3) Date of discharge
+      // 4) Procedure / surgery done
+      // 5) Nature of admission
 
       "observations": [
         {{

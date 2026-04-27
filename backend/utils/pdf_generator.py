@@ -55,6 +55,11 @@ def generate_pdf(data, filename="audit_report.pdf"):
     c = data.get("claim_details", {})
 
     content.append(Paragraph(f"Hospital: {c.get('hospital','')}", styles["Normal"]))
+    content.append(Paragraph(f"Consultation date: {c.get('consultation_date','')}", styles["Normal"]))
+    content.append(Paragraph(f"Date of admission: {c.get('date_of_admission','')}", styles["Normal"]))
+    content.append(Paragraph(f"Date of discharge: {c.get('date_of_discharge','')}", styles["Normal"]))
+    content.append(Paragraph(f"Nature of admission: {c.get('nature_of_admission','')}", styles["Normal"]))
+    content.append(Paragraph(f"Procedure / surgery done: {c.get('procedure_or_surgery','')}", styles["Normal"]))
     content.append(Paragraph(f"Diagnosis: {c.get('diagnosis','')}", styles["Normal"]))
     content.append(Spacer(1, 10))
 
@@ -95,9 +100,23 @@ def generate_pdf(data, filename="audit_report.pdf"):
     content.append(Spacer(1, 10))
 
     # =========================
+    # DOCUMENTATION CHECKLIST
+    # =========================
+    content.append(Paragraph("6. Documentation Checklist", styles["Heading2"]))
+    for item in data.get("clinical_checklist", []):
+        area = item.get("area", "")
+        available = item.get("available", "")
+        remarks = item.get("remarks", "")
+        content.append(Paragraph(f"{area}: {available}", styles["Normal"]))
+        if remarks:
+            content.append(Paragraph(f"Remarks: {remarks}", styles["Normal"]))
+        content.append(Spacer(1, 3))
+    content.append(Spacer(1, 8))
+
+    # =========================
     # DOCUMENTATION GAPS
     # =========================
-    content.append(Paragraph("6. Documentation Gaps / Checklist", styles["Heading2"]))
+    content.append(Paragraph("7. Documentation Gaps", styles["Heading2"]))
 
     for gap in data.get("documentation_gaps", []):
         content.append(Paragraph(f"- {gap}", styles["Normal"]))
@@ -107,7 +126,7 @@ def generate_pdf(data, filename="audit_report.pdf"):
     # =========================
     # TIMELINE
     # =========================
-    content.append(Paragraph("7. Timeline", styles["Heading2"]))
+    content.append(Paragraph("8. Timeline", styles["Heading2"]))
 
     for t in data.get("timeline", []):
         content.append(Paragraph(f"{t.get('date')} - {t.get('event')}", styles["Normal"]))
@@ -117,10 +136,10 @@ def generate_pdf(data, filename="audit_report.pdf"):
     # =========================
     # OBSERVATIONS
     # =========================
-    content.append(Paragraph("8. Observations", styles["Heading2"]))
+    content.append(Paragraph("9. Auditor's Observations (Detailed)", styles["Heading2"]))
 
-    for obs in data.get("observations", []):
-        content.append(Paragraph(f"Q: {obs.get('question')}", styles["Normal"]))
+    for idx, obs in enumerate(data.get("observations", []), start=1):
+        content.append(Paragraph(f"Q{idx}: {obs.get('question')}", styles["Normal"]))
         content.append(Paragraph(f"Analysis: {obs.get('analysis')}", styles["Normal"]))
         content.append(Paragraph(f"Answer: {obs.get('answer')}", styles["Normal"]))
         content.append(Spacer(1, 5))
@@ -130,7 +149,7 @@ def generate_pdf(data, filename="audit_report.pdf"):
     # =========================
     # CONCLUSION
     # =========================
-    content.append(Paragraph("9. Inference", styles["Heading2"]))
+    content.append(Paragraph("10. Inference", styles["Heading2"]))
     conclusion = (data.get("inference") or data.get("auditor_conclusion") or "").strip()
     content.append(Paragraph(conclusion, styles["Normal"]))
     content.append(Spacer(1, 10))
@@ -138,7 +157,7 @@ def generate_pdf(data, filename="audit_report.pdf"):
     # =========================
     # REMARKS
     # =========================
-    content.append(Paragraph("10. Remarks", styles["Heading2"]))
+    content.append(Paragraph("11. Remarks", styles["Heading2"]))
     content.append(Paragraph(data.get("remarks", ""), styles["Normal"]))
     content.append(Spacer(1, 10))
 
@@ -146,7 +165,7 @@ def generate_pdf(data, filename="audit_report.pdf"):
     # Q&A SECTION (🔥 NEW)
     # =========================
     if "qa_section" in data and data["qa_section"]:
-        content.append(Paragraph("11. Questions & Answers", styles["Heading2"]))
+        content.append(Paragraph("12. Questions & Answers", styles["Heading2"]))
 
         for qa in data["qa_section"]:
             content.append(Paragraph(f"Q: {qa.get('question')}", styles["Normal"]))
