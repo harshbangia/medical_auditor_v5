@@ -294,21 +294,28 @@ PAGE_CSS = """
         font-weight: 600 !important;
     }
 
-    /* Selectbox in sidebar */
-    [data-testid="stSidebar"] div[data-baseweb="select"] > div {
-        background: rgba(255, 255, 255, 0.08) !important;
-        border: 1px solid rgba(255, 255, 255, 0.18) !important;
+    /* Selectbox in sidebar — light field on dark sidebar for readable selected value */
+    [data-testid="stSidebar"] [data-testid="stSelectbox"] div[data-baseweb="select"] > div {
+        background: #ffffff !important;
+        border: 1px solid #cbd5e1 !important;
         border-radius: 10px !important;
-        color: var(--gwx-sidebar-text) !important;
+        color: var(--gwx-text) !important;
     }
-    [data-testid="stSidebar"] div[data-baseweb="select"] span,
-    [data-testid="stSidebar"] div[data-baseweb="select"] svg {
-        color: var(--gwx-sidebar-text) !important;
-        fill: var(--gwx-sidebar-text) !important;
+    [data-testid="stSidebar"] [data-testid="stSelectbox"] div[data-baseweb="select"] span,
+    [data-testid="stSidebar"] [data-testid="stSelectbox"] div[data-baseweb="select"] p,
+    [data-testid="stSidebar"] [data-testid="stSelectbox"] div[data-baseweb="select"] div {
+        color: var(--gwx-text) !important;
+        -webkit-text-fill-color: var(--gwx-text) !important;
     }
-    [data-testid="stSidebar"] div[data-baseweb="select"] input {
-        color: var(--gwx-sidebar-text) !important;
-        -webkit-text-fill-color: var(--gwx-sidebar-text) !important;
+    [data-testid="stSidebar"] [data-testid="stSelectbox"] div[data-baseweb="select"] svg {
+        color: var(--gwx-text-soft) !important;
+        fill: var(--gwx-text-soft) !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stSelectbox"] div[data-baseweb="select"] input {
+        color: var(--gwx-text) !important;
+        -webkit-text-fill-color: var(--gwx-text) !important;
+        caret-color: var(--gwx-text) !important;
+        background: transparent !important;
     }
 
     /* File uploader in sidebar */
