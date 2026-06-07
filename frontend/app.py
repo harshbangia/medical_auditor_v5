@@ -69,11 +69,13 @@ BASE_FONT_CSS = """
 LOGIN_CSS = """
 <style>
     [data-testid="stAppViewContainer"] {
-        background: linear-gradient(155deg, #1a2744 0%, #2a3f66 28%, #64748b 28%, #e2e8f0 55%, #f1f5f9 100%) !important;
+        background:
+            radial-gradient(ellipse 80% 60% at 10% 20%, rgba(56, 189, 248, 0.18) 0%, transparent 55%),
+            radial-gradient(ellipse 70% 50% at 90% 80%, rgba(37, 99, 235, 0.12) 0%, transparent 50%),
+            linear-gradient(160deg, #0f172a 0%, #1e293b 35%, #f1f5f9 35%, #f8fafc 100%) !important;
     }
-    /* Login view only: wide layout defaults to full-width block-container — force a narrow card */
     [data-testid="stAppViewContainer"] .block-container {
-        max-width: min(400px, calc(100vw - 2rem)) !important;
+        max-width: min(420px, calc(100vw - 2rem)) !important;
         width: 100% !important;
         padding: 2.25rem 1.75rem 2.5rem !important;
         margin-top: 5vh !important;
@@ -82,13 +84,13 @@ LOGIN_CSS = """
         background: #ffffff !important;
         border-radius: 20px !important;
         box-shadow:
-            0 25px 50px -12px rgba(26, 39, 68, 0.25),
-            0 0 0 1px rgba(255, 255, 255, 0.6) inset !important;
+            0 25px 50px -12px rgba(15, 23, 42, 0.22),
+            0 0 0 1px rgba(255, 255, 255, 0.8) inset !important;
         border: 1px solid #e2e8f0 !important;
     }
     [data-testid="stAppViewContainer"] .block-container h1,
     [data-testid="stAppViewContainer"] .block-container h3 {
-        color: #1a2744 !important;
+        color: #0f172a !important;
         font-weight: 700 !important;
         letter-spacing: -0.02em;
     }
@@ -106,8 +108,8 @@ LOGIN_CSS = """
         max-width: 100% !important;
     }
     [data-testid="stAppViewContainer"] .block-container div[data-baseweb="input"]:focus-within {
-        border-color: #3d6fd8 !important;
-        box-shadow: 0 0 0 3px rgba(61, 111, 216, 0.2) !important;
+        border-color: #2563eb !important;
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18) !important;
     }
     [data-testid="stAppViewContainer"] .block-container div[data-baseweb="input"] input {
         background: transparent !important;
@@ -122,20 +124,21 @@ LOGIN_CSS = """
         width: 100% !important;
         height: 48px !important;
         border-radius: 12px !important;
-        background: linear-gradient(135deg, #3d6fd8 0%, #2f5bb5 100%) !important;
+        background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%) !important;
         color: #ffffff !important;
         font-weight: 700 !important;
         font-size: 1rem !important;
         border: none !important;
-        box-shadow: 0 4px 14px rgba(47, 91, 181, 0.45) !important;
+        box-shadow: 0 4px 14px rgba(37, 99, 235, 0.35) !important;
         margin-top: 0.5rem !important;
     }
     [data-testid="stAppViewContainer"] .block-container .stButton > button:hover,
     [data-testid="stAppViewContainer"] .block-container .stButton button:hover {
-        filter: brightness(1.06) !important;
-        box-shadow: 0 6px 20px rgba(47, 91, 181, 0.5) !important;
+        filter: brightness(1.05) !important;
+        box-shadow: 0 6px 20px rgba(37, 99, 235, 0.4) !important;
     }
     [data-testid="stAppViewContainer"] .block-container [data-testid="stImage"] { margin-bottom: 0.5rem; }
+    .gwx-login-subtitle { text-align: center; color: #475569; font-size: 0.92rem; margin: 0 0 1.25rem 0; }
 </style>
 """
 
@@ -164,7 +167,7 @@ def login_page():
 
     st.markdown(
         "<h3 style='text-align:center;margin:0 0 0.15rem 0;'>Glowix Medical Services Pvt. Ltd.</h3>"
-        "<p style='text-align:center;color:#64748b;font-size:0.92rem;margin:0 0 1.25rem 0;'>Clinical compliance auditor — sign in to continue</p>",
+        "<p class='gwx-login-subtitle'>Clinical compliance auditor — sign in to continue</p>",
         unsafe_allow_html=True,
     )
 
@@ -222,67 +225,113 @@ headers = {"Authorization": f"Bearer {st.session_state['token']}"}
 
 PAGE_CSS = """
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap');
     :root {
-        --gwx-bg: #f5f8fd;
-        --gwx-bg-soft: #eef3fb;
+        --gwx-bg: #f1f5f9;
+        --gwx-bg-soft: #e2e8f0;
         --gwx-surface: #ffffff;
-        --gwx-border: #dbe4f0;
-        --gwx-text: #14233d;
-        --gwx-text-soft: #51627d;
-        --gwx-primary: #2f5bb5;
-        --gwx-primary-2: #3d6fd8;
-        --gwx-success-bg: #edf9f3;
-        --gwx-info-bg: #eef5ff;
-        --gwx-warning-bg: #fff7e8;
+        --gwx-border: #e2e8f0;
+        --gwx-text: #0f172a;
+        --gwx-text-soft: #475569;
+        --gwx-text-muted: #64748b;
+        --gwx-primary: #2563eb;
+        --gwx-primary-2: #3b82f6;
+        --gwx-accent: #38bdf8;
+        --gwx-sidebar-from: #0f172a;
+        --gwx-sidebar-to: #1e293b;
+        --gwx-sidebar-text: #f8fafc;
+        --gwx-sidebar-muted: #94a3b8;
+        --gwx-success-bg: #ecfdf5;
+        --gwx-success-text: #047857;
+        --gwx-info-bg: #eff6ff;
+        --gwx-info-text: #1d4ed8;
+        --gwx-warning-bg: #fffbeb;
+        --gwx-warning-text: #b45309;
     }
     html, body, [class*="css"] {
         font-family: 'DM Sans', 'Segoe UI', sans-serif;
         color: var(--gwx-text) !important;
     }
-    html, body {
-        color-scheme: light;
-    }
+    html, body { color-scheme: light; }
+
+    /* ── Main canvas ── */
     [data-testid="stAppViewContainer"] {
-        background: linear-gradient(165deg, var(--gwx-bg) 0%, var(--gwx-bg-soft) 45%, #fbfdff 100%);
+        background:
+            radial-gradient(ellipse 60% 40% at 100% 0%, rgba(56, 189, 248, 0.08) 0%, transparent 60%),
+            linear-gradient(165deg, var(--gwx-bg) 0%, #f8fafc 50%, #ffffff 100%);
     }
+
+    /* ── Sidebar ── */
     [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #1a2744 0%, #243352 100%) !important;
-        border-right: 1px solid rgba(255,255,255,0.08);
+        background: linear-gradient(180deg, var(--gwx-sidebar-from) 0%, var(--gwx-sidebar-to) 100%) !important;
+        border-right: 1px solid rgba(255, 255, 255, 0.08);
     }
-    /* Do NOT blanket-style all spans — it washes out the file uploader on white */
+    [data-testid="stSidebar"] > div:first-child {
+        background: transparent !important;
+    }
+    .gwx-sidebar-brand {
+        display: flex; align-items: center; gap: 0.6rem;
+        padding: 0.25rem 0 1.25rem 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        margin-bottom: 0.5rem;
+    }
+    .gwx-sidebar-brand-icon { font-size: 1.4rem; line-height: 1; }
+    .gwx-sidebar-brand-text {
+        color: var(--gwx-sidebar-text) !important;
+        font-size: 1.15rem; font-weight: 700; letter-spacing: -0.02em;
+    }
+    [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2,
+    [data-testid="stSidebar"] h3, [data-testid="stSidebar"] h4 {
+        color: var(--gwx-sidebar-text) !important;
+    }
     [data-testid="stSidebar"] .stMarkdown p,
-    [data-testid="stSidebar"] .stMarkdown li,
-    [data-testid="stSidebar"] .stMarkdown span {
-        color: #e8edf5 !important;
+    [data-testid="stSidebar"] .stMarkdown li {
+        color: var(--gwx-sidebar-text) !important;
     }
     [data-testid="stSidebar"] [data-testid="stWidgetLabel"] p,
     [data-testid="stSidebar"] label {
-        color: #e8edf5 !important;
+        color: var(--gwx-sidebar-text) !important;
+        font-weight: 600 !important;
     }
-    [data-testid="stSidebar"] .stSelectbox label { font-weight: 600; }
-    /* File uploader: force dark text + visible primary button on white dropzone */
+
+    /* Selectbox in sidebar */
+    [data-testid="stSidebar"] div[data-baseweb="select"] > div {
+        background: rgba(255, 255, 255, 0.08) !important;
+        border: 1px solid rgba(255, 255, 255, 0.18) !important;
+        border-radius: 10px !important;
+        color: var(--gwx-sidebar-text) !important;
+    }
+    [data-testid="stSidebar"] div[data-baseweb="select"] span,
+    [data-testid="stSidebar"] div[data-baseweb="select"] svg {
+        color: var(--gwx-sidebar-text) !important;
+        fill: var(--gwx-sidebar-text) !important;
+    }
+    [data-testid="stSidebar"] div[data-baseweb="select"] input {
+        color: var(--gwx-sidebar-text) !important;
+        -webkit-text-fill-color: var(--gwx-sidebar-text) !important;
+    }
+
+    /* File uploader in sidebar */
     [data-testid="stSidebar"] [data-testid="stFileUploader"] [data-testid="stWidgetLabel"] p,
     [data-testid="stSidebar"] [data-testid="stFileUploader"] label {
-        color: #e8edf5 !important;
-    }
-    [data-testid="stSidebar"] [data-testid="stFileUploader"] section,
-    [data-testid="stSidebar"] [data-testid="stFileUploader"] span,
-    [data-testid="stSidebar"] [data-testid="stFileUploader"] p,
-    [data-testid="stSidebar"] [data-testid="stFileUploader"] small,
-    [data-testid="stSidebar"] [data-testid="stFileUploader"] div[data-testid="stCaptionContainer"] {
-        color: #1e293b !important;
+        color: var(--gwx-sidebar-text) !important;
     }
     [data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] {
-        background: #ffffff !important;
-        border: 2px dashed #64748b !important;
+        background: rgba(255, 255, 255, 0.06) !important;
+        border: 2px dashed rgba(255, 255, 255, 0.25) !important;
         border-radius: 12px !important;
     }
-    [data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] * {
-        color: #1e293b !important;
+    [data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] span,
+    [data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] p,
+    [data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] small,
+    [data-testid="stSidebar"] [data-testid="stFileDropzoneInstructions"] div,
+    [data-testid="stSidebar"] [data-testid="stFileDropzoneInstructions"] span,
+    [data-testid="stSidebar"] [data-testid="stFileDropzoneInstructions"] small {
+        color: var(--gwx-sidebar-muted) !important;
     }
+    [data-testid="stSidebar"] [data-testid="stFileUploader"] button[data-testid="stBaseButton-secondary"],
     [data-testid="stSidebar"] [data-testid="stFileUploader"] button {
-        background: linear-gradient(135deg, #3d6fd8 0%, #2f5bb5 100%) !important;
+        background: linear-gradient(135deg, var(--gwx-primary-2) 0%, var(--gwx-primary) 100%) !important;
         color: #ffffff !important;
         border: none !important;
         font-weight: 600 !important;
@@ -292,23 +341,53 @@ PAGE_CSS = """
     [data-testid="stSidebar"] [data-testid="stFileUploader"] button:hover {
         filter: brightness(1.08) !important;
     }
-    [data-testid="stSidebar"] [data-testid="stFileUploader"] [data-testid="stIconMaterialIcon"] {
-        color: #3d6fd8 !important;
+    /* Uploaded file chips */
+    [data-testid="stSidebar"] [data-testid="stFileChip"] {
+        background: rgba(255, 255, 255, 0.12) !important;
+        border: 1px solid rgba(255, 255, 255, 0.18) !important;
+        border-radius: 8px !important;
     }
+    [data-testid="stSidebar"] [data-testid="stFileChipName"],
+    [data-testid="stSidebar"] [data-testid="stFileChip"] span,
+    [data-testid="stSidebar"] [data-testid="stFileChip"] p {
+        color: var(--gwx-sidebar-text) !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stFileChipDeleteBtn"] {
+        color: var(--gwx-accent) !important;
+    }
+    /* Legacy file chip selectors (older Streamlit versions) */
+    [data-testid="stSidebar"] [data-testid="stFileUploaderFile"],
+    [data-testid="stSidebar"] [data-testid="stFileUploaderFileName"] {
+        color: var(--gwx-sidebar-text) !important;
+    }
+
+    /* Sidebar buttons */
     [data-testid="stSidebar"] .stButton > button {
         width: 100%; border-radius: 10px; font-weight: 600;
-        background: linear-gradient(135deg, #3d6fd8 0%, #2f5bb5 100%);
-        color: white; border: none;
+        background: linear-gradient(135deg, var(--gwx-primary-2) 0%, var(--gwx-primary) 100%);
+        color: #ffffff !important; border: none;
+        box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+        transition: filter 0.15s ease, box-shadow 0.15s ease;
     }
-    [data-testid="stSidebar"] .stButton > button:hover { filter: brightness(1.08); }
-    /* Main content readability hardening */
-    [data-testid="stAppViewContainer"] .block-container,
-    [data-testid="stAppViewContainer"] .stMarkdown,
-    [data-testid="stAppViewContainer"] p,
-    [data-testid="stAppViewContainer"] li,
-    [data-testid="stAppViewContainer"] label,
-    [data-testid="stAppViewContainer"] span,
-    [data-testid="stAppViewContainer"] div {
+    [data-testid="stSidebar"] .stButton > button:hover {
+        filter: brightness(1.06);
+        box-shadow: 0 6px 16px rgba(37, 99, 235, 0.38);
+    }
+    [data-testid="stSidebar"] .stButton:last-child > button {
+        background: transparent !important;
+        border: 1px solid rgba(255, 255, 255, 0.28) !important;
+        color: var(--gwx-sidebar-text) !important;
+        box-shadow: none !important;
+    }
+    [data-testid="stSidebar"] .stButton:last-child > button:hover {
+        background: rgba(255, 255, 255, 0.08) !important;
+        filter: none !important;
+    }
+
+    /* ── Main content text ── */
+    [data-testid="stAppViewContainer"] .block-container p,
+    [data-testid="stAppViewContainer"] .block-container li,
+    [data-testid="stAppViewContainer"] .block-container label {
         color: var(--gwx-text);
     }
     [data-testid="stAppViewContainer"] [data-testid="stText"],
@@ -322,90 +401,146 @@ PAGE_CSS = """
     [data-testid="stAppViewContainer"] h2,
     [data-testid="stAppViewContainer"] h3,
     [data-testid="stAppViewContainer"] h4 {
-        color: #10213b !important;
+        color: var(--gwx-text) !important;
         letter-spacing: -0.02em;
     }
+
+    /* ── Custom components ── */
     .gwx-header-bar {
         display: flex; align-items: center; gap: 1.25rem;
-        padding: 1rem 1.25rem; margin: 0 -1rem 1.25rem -1rem;
+        padding: 1.1rem 1.35rem; margin: 0 -1rem 1.25rem -1rem;
         background: linear-gradient(90deg, #ffffff 0%, #f8fafc 100%);
         border-radius: 14px; border: 1px solid var(--gwx-border);
-        box-shadow: 0 6px 30px rgba(26, 39, 68, 0.08);
+        border-left: 4px solid var(--gwx-accent);
+        box-shadow: 0 4px 24px rgba(15, 23, 42, 0.07);
     }
-    .gwx-header-bar h2 { margin: 0; color: #1a2744; font-size: 1.45rem; font-weight: 700; letter-spacing: -0.02em; }
-    .gwx-header-bar .tagline { color: #64748b; font-size: 0.9rem; margin-top: 0.2rem; }
+    .gwx-header-bar h2 {
+        margin: 0; color: var(--gwx-text); font-size: 1.45rem;
+        font-weight: 700; letter-spacing: -0.02em;
+    }
+    .gwx-header-bar .tagline { color: var(--gwx-text-soft); font-size: 0.9rem; margin-top: 0.2rem; }
+
     .gwx-card {
         background: var(--gwx-surface); border-radius: 14px; padding: 1.35rem 1.5rem;
-        border: 1px solid var(--gwx-border); box-shadow: 0 4px 20px rgba(26, 39, 68, 0.06);
-        margin-bottom: 1rem;
-    }
-    .gwx-card h3 { margin: 0 0 0.75rem 0; color: #1a2744; font-size: 1.05rem; font-weight: 700; }
-    .gwx-steps ol { margin: 0; padding-left: 1.25rem; color: #334155; line-height: 1.75; }
-    .gwx-steps li { margin-bottom: 0.5rem; }
-    .gwx-ref-pill {
-        display: inline-block; background: #1a2744; color: #fff;
-        padding: 0.35rem 0.85rem; border-radius: 8px; font-size: 0.85rem; font-weight: 600; margin-right: 0.5rem;
-    }
-    .gwx-section-title { color: #1a2744; font-weight: 700; font-size: 1.1rem; margin: 1.25rem 0 0.75rem 0;
-        padding-bottom: 0.35rem; border-bottom: 2px solid #3d6fd8; display: inline-block; }
-    div[data-testid="column"] .stMetric {
-        background: #f8fafc;
-        padding: 0.75rem;
-        border-radius: 10px;
         border: 1px solid var(--gwx-border);
+        box-shadow: 0 2px 12px rgba(15, 23, 42, 0.05);
+        margin-bottom: 1rem;
+        transition: box-shadow 0.2s ease, transform 0.2s ease;
     }
-    div[data-testid="column"] .stMetric label,
+    .gwx-card:hover {
+        box-shadow: 0 6px 24px rgba(15, 23, 42, 0.09);
+        transform: translateY(-1px);
+    }
+    .gwx-card h3 { margin: 0 0 0.75rem 0; color: var(--gwx-text); font-size: 1.05rem; font-weight: 700; }
+    .gwx-card-compact { padding: 12px 14px; }
+    .gwx-steps ol { margin: 0; padding-left: 1.25rem; color: var(--gwx-text-soft); line-height: 1.75; }
+    .gwx-steps li { margin-bottom: 0.5rem; }
+
+    .gwx-ref-pill {
+        display: inline-block; background: #1e293b; color: #ffffff !important;
+        padding: 0.35rem 0.85rem; border-radius: 999px; font-size: 0.85rem;
+        font-weight: 600; margin-right: 0.5rem;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    .gwx-ref-pill *, .gwx-ref-pill span { color: #ffffff !important; }
+    .gwx-ref-pill-accent { background: linear-gradient(135deg, var(--gwx-primary-2), var(--gwx-primary)); }
+
+    .gwx-section-title {
+        color: var(--gwx-text); font-weight: 700; font-size: 1.1rem;
+        margin: 1.25rem 0 0.75rem 0; padding-bottom: 0.35rem;
+        border-bottom: 2px solid var(--gwx-primary-2); display: inline-block;
+    }
+
+    .gwx-text-muted { color: var(--gwx-text-muted) !important; }
+    .gwx-text-soft { color: var(--gwx-text-soft) !important; }
+    .gwx-field-title { color: var(--gwx-text); font-weight: 700; }
+    .gwx-row { margin: 0.25rem 0; }
+    .gwx-row-tight { margin: 0.2rem 0; }
+    .gwx-comment { color: var(--gwx-text-muted); font-style: italic; }
+
+    /* Metrics */
+    div[data-testid="column"] .stMetric {
+        background: linear-gradient(135deg, #f8fafc 0%, #ffffff 100%);
+        padding: 0.85rem 1rem;
+        border-radius: 12px;
+        border: 1px solid var(--gwx-border);
+        box-shadow: 0 1px 4px rgba(15, 23, 42, 0.04);
+    }
+    div[data-testid="column"] .stMetric label {
+        color: var(--gwx-text-soft) !important;
+        font-weight: 600 !important;
+        font-size: 0.82rem !important;
+    }
     div[data-testid="column"] .stMetric [data-testid="stMetricValue"] {
         color: var(--gwx-text) !important;
+        font-weight: 700 !important;
     }
-    /* Inputs and text areas in edit mode */
+
+    /* Inputs and text areas */
     [data-testid="stAppViewContainer"] div[data-baseweb="input"],
-    [data-testid="stAppViewContainer"] div[data-baseweb="textarea"] {
+    [data-testid="stAppViewContainer"] div[data-baseweb="textarea"],
+    [data-testid="stAppViewContainer"] div[data-baseweb="select"] > div {
         background: #ffffff !important;
         border: 1px solid #cbd5e1 !important;
         border-radius: 10px !important;
     }
     [data-testid="stAppViewContainer"] div[data-baseweb="input"] input,
-    [data-testid="stAppViewContainer"] div[data-baseweb="textarea"] textarea {
+    [data-testid="stAppViewContainer"] div[data-baseweb="textarea"] textarea,
+    [data-testid="stAppViewContainer"] div[data-baseweb="select"] span {
         color: var(--gwx-text) !important;
         -webkit-text-fill-color: var(--gwx-text) !important;
+    }
+    [data-testid="stAppViewContainer"] div[data-baseweb="input"] input {
         caret-color: var(--gwx-text) !important;
         background: transparent !important;
     }
     [data-testid="stAppViewContainer"] div[data-baseweb="input"]:focus-within,
-    [data-testid="stAppViewContainer"] div[data-baseweb="textarea"]:focus-within {
-        border-color: var(--gwx-primary-2) !important;
-        box-shadow: 0 0 0 3px rgba(61, 111, 216, 0.15) !important;
+    [data-testid="stAppViewContainer"] div[data-baseweb="textarea"]:focus-within,
+    [data-testid="stAppViewContainer"] div[data-baseweb="select"]:focus-within > div {
+        border-color: var(--gwx-primary) !important;
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14) !important;
     }
-    /* Buttons in main content */
+
+    /* Main buttons */
     [data-testid="stAppViewContainer"] .stButton > button {
         border-radius: 10px !important;
         border: none !important;
         color: #ffffff !important;
         background: linear-gradient(135deg, var(--gwx-primary-2) 0%, var(--gwx-primary) 100%) !important;
-        box-shadow: 0 4px 14px rgba(47, 91, 181, 0.28) !important;
+        box-shadow: 0 3px 10px rgba(37, 99, 235, 0.28) !important;
         font-weight: 600 !important;
+        transition: filter 0.15s ease !important;
     }
     [data-testid="stAppViewContainer"] .stButton > button:hover {
         filter: brightness(1.05) !important;
     }
-    /* Streamlit status boxes */
+
+    /* Status boxes */
     [data-testid="stSuccess"] {
         background: var(--gwx-success-bg) !important;
-        border: 1px solid #b7e4c7 !important;
+        border: 1px solid #6ee7b7 !important;
+        border-radius: 10px !important;
     }
     [data-testid="stInfo"] {
         background: var(--gwx-info-bg) !important;
-        border: 1px solid #cfe1ff !important;
+        border: 1px solid #93c5fd !important;
+        border-radius: 10px !important;
     }
     [data-testid="stWarning"] {
         background: var(--gwx-warning-bg) !important;
-        border: 1px solid #f6d7a8 !important;
+        border: 1px solid #fcd34d !important;
+        border-radius: 10px !important;
     }
-    [data-testid="stSuccess"] *,
-    [data-testid="stInfo"] *,
-    [data-testid="stWarning"] * {
-        color: var(--gwx-text) !important;
+    [data-testid="stSuccess"] * { color: var(--gwx-success-text) !important; }
+    [data-testid="stInfo"] * { color: var(--gwx-info-text) !important; }
+    [data-testid="stWarning"] * { color: var(--gwx-warning-text) !important; }
+    [data-testid="stException"], [data-testid="stError"] {
+        background: #fef2f2 !important;
+        border: 1px solid #fca5a5 !important;
+        border-radius: 10px !important;
+    }
+    [data-testid="stException"] *, [data-testid="stError"] * {
+        color: #b91c1c !important;
     }
 </style>
 """
@@ -414,7 +549,13 @@ st.markdown(PAGE_CSS, unsafe_allow_html=True)
 # =========================
 # SIDEBAR
 # =========================
-st.sidebar.markdown("### Medical Auditor")
+st.sidebar.markdown(
+    '<div class="gwx-sidebar-brand">'
+    '<span class="gwx-sidebar-brand-icon">🧠</span>'
+    '<span class="gwx-sidebar-brand-text">Medical Auditor</span>'
+    '</div>',
+    unsafe_allow_html=True,
+)
 
 # ✅ GUIDELINE DROPDOWN
 def load_guidelines():
@@ -490,7 +631,7 @@ if "report" not in st.session_state:
         </div>
         <div class="gwx-card">
             <h3>Tips for best results</h3>
-            <p style="margin:0;color:#475569;line-height:1.7;">
+            <p style="margin:0;line-height:1.7;" class="gwx-text-soft">
                 Prefer searchable PDFs where possible. If clinical photos or scans are only in image form, ensure they are inside the PDF pages you upload
                 so the system can analyze them. You can always adjust extracted details using <strong>Edit report</strong> before exporting.
             </p>
@@ -612,7 +753,7 @@ if "report" in st.session_state:
     with c_act:
         st.markdown(
             f"<span class='gwx-ref-pill'>Ref: {meta.get('audit_id', '-')}</span>"
-            f"<span class='gwx-ref-pill' style='background:#3d6fd8'>Date: {meta.get('audit_date', '-')}</span>",
+            f"<span class='gwx-ref-pill gwx-ref-pill-accent'>Date: {meta.get('audit_date', '-')}</span>",
             unsafe_allow_html=True,
         )
     with c_edit:
@@ -740,10 +881,10 @@ if "report" in st.session_state:
     st.markdown(
         f"""
         <div class="gwx-card" style="margin-bottom:1rem">
-        <p style="margin:0.25rem 0"><strong>Insurance company:</strong> {ins.get('insurance_company') or '—'}</p>
-        <p style="margin:0.25rem 0"><strong>Policy number:</strong> {ins.get('policy_number') or '—'}</p>
-        <p style="margin:0.25rem 0"><strong>Policy period:</strong> {ins.get('policy_period') or '—'}</p>
-        <p style="margin:0.25rem 0"><strong>Claim / incident number:</strong> {ins.get('claim_incident_number') or '—'}</p>
+        <p class="gwx-row"><strong>Insurance company:</strong> {ins.get('insurance_company') or '—'}</p>
+        <p class="gwx-row"><strong>Policy number:</strong> {ins.get('policy_number') or '—'}</p>
+        <p class="gwx-row"><strong>Policy period:</strong> {ins.get('policy_period') or '—'}</p>
+        <p class="gwx-row"><strong>Claim / incident number:</strong> {ins.get('claim_incident_number') or '—'}</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -752,13 +893,13 @@ if "report" in st.session_state:
     c = data["claim_details"]
     st.markdown('<p class="gwx-section-title">Claim details</p>', unsafe_allow_html=True)
     st.markdown(
-        f"<div class='gwx-card'><p style='margin:0.25rem 0'><strong>Hospital:</strong> {c.get('hospital') or '—'}</p>"
-        f"<p style='margin:0.25rem 0'><strong>Consult date:</strong> {c.get('consultation_date') or '—'}</p>"
-        f"<p style='margin:0.25rem 0'><strong>Date of admission:</strong> {c.get('date_of_admission') or '—'}</p>"
-        f"<p style='margin:0.25rem 0'><strong>Date of discharge:</strong> {c.get('date_of_discharge') or '—'}</p>"
-        f"<p style='margin:0.25rem 0'><strong>Nature of admission:</strong> {c.get('nature_of_admission') or '—'}</p>"
-        f"<p style='margin:0.25rem 0'><strong>Procedure / surgery done:</strong> {c.get('procedure_or_surgery') or '—'}</p>"
-        f"<p style='margin:0.25rem 0'><strong>Diagnosis:</strong> {c.get('diagnosis') or '—'}</p></div>",
+        f"<div class='gwx-card'><p class='gwx-row'><strong>Hospital:</strong> {c.get('hospital') or '—'}</p>"
+        f"<p class='gwx-row'><strong>Consult date:</strong> {c.get('consultation_date') or '—'}</p>"
+        f"<p class='gwx-row'><strong>Date of admission:</strong> {c.get('date_of_admission') or '—'}</p>"
+        f"<p class='gwx-row'><strong>Date of discharge:</strong> {c.get('date_of_discharge') or '—'}</p>"
+        f"<p class='gwx-row'><strong>Nature of admission:</strong> {c.get('nature_of_admission') or '—'}</p>"
+        f"<p class='gwx-row'><strong>Procedure / surgery done:</strong> {c.get('procedure_or_surgery') or '—'}</p>"
+        f"<p class='gwx-row'><strong>Diagnosis:</strong> {c.get('diagnosis') or '—'}</p></div>",
         unsafe_allow_html=True,
     )
 
@@ -768,10 +909,10 @@ if "report" in st.session_state:
             st.markdown(
                 f"""
                 <div class="gwx-card">
-                <p style="margin:0.2rem 0"><strong>Type:</strong> {img.get('type')}</p>
-                <p style="margin:0.2rem 0"><strong>Finding:</strong> {img.get('finding')}</p>
-                <p style="margin:0.2rem 0"><strong>Clinical correlation:</strong> {img.get('clinical_correlation')}</p>
-                <p style="margin:0.2rem 0"><strong>Consistency:</strong> {img.get('consistency_with_diagnosis')}</p>
+                <p class="gwx-row-tight"><strong>Type:</strong> {img.get('type')}</p>
+                <p class="gwx-row-tight"><strong>Finding:</strong> {img.get('finding')}</p>
+                <p class="gwx-row-tight"><strong>Clinical correlation:</strong> {img.get('clinical_correlation')}</p>
+                <p class="gwx-row-tight"><strong>Consistency:</strong> {img.get('consistency_with_diagnosis')}</p>
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -781,10 +922,10 @@ if "report" in st.session_state:
     for item in data.get("clinical_findings", []):
         st.markdown(
             f"""
-            <div class="gwx-card" style="padding:12px 14px">
-            <b style="color:#1a2744">{item.get('parameter')}</b><br>
-            <span style="color:#475569">Value:</span> {item.get('value')}<br>
-            <i style="color:#64748b">{item.get('comment')}</i>
+            <div class="gwx-card gwx-card-compact">
+            <b class="gwx-field-title">{item.get('parameter')}</b><br>
+            <span class="gwx-text-soft">Value:</span> {item.get('value')}<br>
+            <i class="gwx-comment">{item.get('comment')}</i>
             </div>
             """,
             unsafe_allow_html=True,
@@ -796,10 +937,10 @@ if "report" in st.session_state:
         for row in checklist:
             st.markdown(
                 f"""
-                <div class="gwx-card" style="padding:12px 14px">
-                <b style="color:#1a2744">{row.get('area') or 'Area'}</b><br>
-                <span style="color:#475569">Available:</span> {row.get('available') or '—'}<br>
-                <i style="color:#64748b">{row.get('remarks') or ''}</i>
+                <div class="gwx-card gwx-card-compact">
+                <b class="gwx-field-title">{row.get('area') or 'Area'}</b><br>
+                <span class="gwx-text-soft">Available:</span> {row.get('available') or '—'}<br>
+                <i class="gwx-comment">{row.get('remarks') or ''}</i>
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -816,12 +957,12 @@ if "report" in st.session_state:
     st.markdown(
         f"""
         <div class='gwx-card'>
-        <p style='margin:0.25rem 0'><strong>Room category admitted:</strong> {tba.get('room_category_admitted') or '—'}</p>
-        <p style='margin:0.25rem 0'><strong>Room category eligible (policy):</strong> {tba.get('room_category_eligible') or '—'}</p>
-        <p style='margin:0.25rem 0'><strong>Procedures performed:</strong> {tba.get('procedures_performed') or '—'}</p>
-        <p style='margin:0.25rem 0'><strong>Cross-checked with pre-auth:</strong> {tba.get('cross_checked_with_preauth') or '—'}</p>
-        <p style='margin:0.25rem 0'><strong>Excluded items billed:</strong> {tba.get('excluded_items_billed') or '—'}</p>
-        <p style='margin:0.25rem 0'><strong>Charges appropriate:</strong> {tba.get('charges_appropriate') or '—'}</p>
+        <p class='gwx-row'><strong>Room category admitted:</strong> {tba.get('room_category_admitted') or '—'}</p>
+        <p class='gwx-row'><strong>Room category eligible (policy):</strong> {tba.get('room_category_eligible') or '—'}</p>
+        <p class='gwx-row'><strong>Procedures performed:</strong> {tba.get('procedures_performed') or '—'}</p>
+        <p class='gwx-row'><strong>Cross-checked with pre-auth:</strong> {tba.get('cross_checked_with_preauth') or '—'}</p>
+        <p class='gwx-row'><strong>Excluded items billed:</strong> {tba.get('excluded_items_billed') or '—'}</p>
+        <p class='gwx-row'><strong>Charges appropriate:</strong> {tba.get('charges_appropriate') or '—'}</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -832,11 +973,11 @@ if "report" in st.session_state:
     st.markdown(
         f"""
         <div class='gwx-card'>
-        <p style='margin:0.25rem 0'><strong>Total hospital bill:</strong> {fin.get('total_hospital_bill') or '—'}</p>
-        <p style='margin:0.25rem 0'><strong>Non-payable amount:</strong> {fin.get('non_payable_amount') or '—'}</p>
-        <p style='margin:0.25rem 0'><strong>Net claimable amount:</strong> {fin.get('net_claimable_amount') or '—'}</p>
-        <p style='margin:0.25rem 0'><strong>Recommended approval amount:</strong> {fin.get('recommended_approval_amount') or '—'}</p>
-        <p style='margin:0.25rem 0'><strong>Patient liability:</strong> {fin.get('patient_liability') or '—'}</p>
+        <p class='gwx-row'><strong>Total hospital bill:</strong> {fin.get('total_hospital_bill') or '—'}</p>
+        <p class='gwx-row'><strong>Non-payable amount:</strong> {fin.get('non_payable_amount') or '—'}</p>
+        <p class='gwx-row'><strong>Net claimable amount:</strong> {fin.get('net_claimable_amount') or '—'}</p>
+        <p class='gwx-row'><strong>Recommended approval amount:</strong> {fin.get('recommended_approval_amount') or '—'}</p>
+        <p class='gwx-row'><strong>Patient liability:</strong> {fin.get('patient_liability') or '—'}</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -851,8 +992,8 @@ if "report" in st.session_state:
         st.markdown(
             f"""
             <div class="gwx-card">
-            <p style="margin:0.2rem 0"><strong>Overall narrative:</strong></p>
-            <p style="margin:0.2rem 0;white-space:pre-line">{data.get('auditor_observation_summary')}</p>
+            <p class="gwx-row-tight"><strong>Overall narrative:</strong></p>
+            <p class="gwx-row-tight" style="white-space:pre-line">{data.get('auditor_observation_summary')}</p>
             </div>
             """,
             unsafe_allow_html=True,
@@ -861,9 +1002,9 @@ if "report" in st.session_state:
         st.markdown(
             f"""
             <div class="gwx-card">
-            <p style="margin:0.2rem 0"><strong>Q{idx}:</strong> {obs.get('question')}</p>
-            <p style="margin:0.2rem 0"><strong>Analysis:</strong> {obs.get('analysis')}</p>
-            <p style="margin:0.2rem 0"><strong>Answer:</strong> {obs.get('answer')}</p>
+            <p class="gwx-row-tight"><strong>Q{idx}:</strong> {obs.get('question')}</p>
+            <p class="gwx-row-tight"><strong>Analysis:</strong> {obs.get('analysis')}</p>
+            <p class="gwx-row-tight"><strong>Answer:</strong> {obs.get('answer')}</p>
             </div>
             """,
             unsafe_allow_html=True,
