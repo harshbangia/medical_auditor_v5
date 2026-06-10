@@ -2,6 +2,7 @@ import base64
 import re
 import streamlit as st
 import os
+import time
 from datetime import datetime
 import uuid
 import requests
@@ -220,7 +221,8 @@ def login_page():
             json={
                 "email": email,
                 "password": password
-            }
+            },
+            timeout=30,
         )
 
         if response.status_code != 200:
@@ -605,9 +607,10 @@ st.sidebar.markdown(
 )
 
 # ✅ GUIDELINE DROPDOWN
-def load_guidelines():
+def load_guidelines(force_refresh=False):
     try:
-        resp = requests.get(f"{API_BASE}/guidelines", timeout=10)
+        params = {"refresh": "true"} if force_refresh else {}
+        resp = requests.get(f"{API_BASE}/guidelines", params=params, timeout=30)
         if resp.status_code == 200:
             payload = resp.json() or {}
             items = payload.get("guidelines") or []
@@ -618,10 +621,23 @@ def load_guidelines():
         return [f for f in os.listdir(GUIDELINE_PATH) if f.lower().endswith(".pdf")]
     return []
 
-guidelines = load_guidelines()
-selected_guideline = st.sidebar.selectbox(
+
+if "guidelines_list" not in st.session_state:
+    st.session_state["guidelines_list"] = load_guidelines()
+
+gcol1, gcol2 = st.sidebar.columns([3, 1])
+with gcol2:
+    if st.button("↻", help="Refresh guidelines from S3"):
+        st.session_state["guidelines_list"] = load_guidelines(force_refresh=True)
+        st.rerun()
+
+guidelines = st.session_state["guidelines_list"]
+if not guidelines:
+    st.sidebar.warning("No guidelines loaded. Click ↻ to retry.")
+
+selected_guideline = gcol1.selectbox(
     "📘 Select Guideline",
-    ["-- Select --"] + sorted(guidelines)
+    ["-- Select --"] + sorted(guidelines),
 )
 
 # Upload
@@ -700,41 +716,87 @@ if run:
         st.error("Upload case documents")
         st.stop()
 
-    with st.spinner("Running audit..."):
+    progress_bar = st.progress(0, text="Starting audit…")
+    status_line = st.empty()
 
-        files = [
-            ("files", (file.name, file.getvalue(), "application/pdf"))
-            for file in uploaded_files
-        ]
+    files = [
+        ("files", (file.name, file.getvalue(), "application/pdf"))
+        for file in uploaded_files
+    ]
 
+    try:
         response = requests.post(
             API_URL,
             files=files,
             data={"guideline": selected_guideline},
             headers=headers,
-            timeout=1800,
+            timeout=600,
         )
+    except requests.exceptions.Timeout:
+        st.error("Upload timed out. Try fewer or smaller PDF files.")
+        st.stop()
 
-        result = _handle_api_response(response, "Audit")
-
-        if isinstance(result, dict) and (result.get("error") or result.get("detail")):
-            st.error("Audit did not return a valid report")
-            st.write(result.get("detail") or result.get("error"))
+    if response.status_code == 202:
+        try:
+            payload = response.json()
+        except Exception:
+            st.error("Server returned an invalid job response.")
+            st.stop()
+        job_id = payload.get("job_id")
+        if not job_id:
+            st.error("Audit job was not created.")
             st.stop()
 
-        # result = response.json()
+        result = None
+        while True:
+            time.sleep(2)
+            try:
+                poll = requests.get(
+                    f"{API_BASE}/audit/status/{job_id}",
+                    headers=headers,
+                    timeout=30,
+                )
+            except requests.exceptions.RequestException as exc:
+                status_line.warning(f"Connection blip — retrying… ({exc})")
+                continue
 
-        # 🔥 THIS LINE IS MISSING (CRITICAL FIX)
-        st.session_state["report"] = result
-        st.session_state.pop("pdf_blob", None)
-        st.session_state.pop("pdf_name", None)
+            if poll.status_code == 401:
+                force_logout_and_relogin("Session expired. Please login again.")
 
-        st.session_state["session_id"] = result.get("session_id")
+            if poll.status_code != 200:
+                st.error(f"Status check failed ({poll.status_code})")
+                st.stop()
 
-        st.session_state["audit_meta"] = {
-            "audit_id": f"GMS-{datetime.now().strftime('%Y%m%d')}-{str(uuid.uuid4())[:6]}",
-            "audit_date": datetime.now().strftime("%d/%m/%Y")
-        }
+            data = poll.json()
+            pct = max(0, min(100, int(data.get("progress") or 0)))
+            phase = data.get("phase") or data.get("status") or "working"
+            msg = data.get("message") or phase
+            progress_bar.progress(pct / 100, text=f"{msg} ({pct}%)")
+
+            if data.get("status") == "completed":
+                result = data.get("result")
+                break
+            if data.get("status") == "failed":
+                st.error(data.get("error") or data.get("message") or "Audit failed")
+                st.stop()
+
+        progress_bar.progress(1.0, text="Audit complete")
+    else:
+        result = _handle_api_response(response, "Audit")
+
+    if isinstance(result, dict) and (result.get("error") or result.get("detail")):
+        st.error("Audit did not return a valid report")
+        st.write(result.get("detail") or result.get("error"))
+        st.stop()
+
+    st.session_state["report"] = result
+    st.session_state.pop("pdf_blob", None)
+    st.session_state.pop("pdf_name", None)
+    st.session_state["session_id"] = result.get("session_id")
+    st.session_state["audit_meta"] = {
+        "audit_id": f"GMS-{datetime.now().strftime('%Y%m%d')}-{str(uuid.uuid4())[:6]}",
+        "audit_date": datetime.now().strftime("%d/%m/%Y"),
+    }
 
     st.success("Audit Completed")
 

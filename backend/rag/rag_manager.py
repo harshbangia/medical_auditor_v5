@@ -1,54 +1,99 @@
+import hashlib
 import os
+import pickle
+import tempfile
+
+import faiss
+
 from backend.utils.pdf_reader import extract_text_from_pdf
 from backend.rag.vector_store import build_vector_store
-import boto3
-import tempfile
+from backend.services.s3_utils import download_guideline
 
 RAG_CACHE = {}
 
-def get_or_create_index(guideline_file):
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+DISK_CACHE_DIR = os.path.join(BASE_DIR, ".rag_cache")
 
-    # ✅ HANDLE BOTH CASES (filename OR full path)
-    if os.path.isabs(guideline_file):
-        guideline_path = guideline_file
-        cache_key = os.path.basename(guideline_file)
+
+def _disk_paths(cache_key: str):
+    safe = hashlib.sha256(cache_key.encode("utf-8")).hexdigest()[:32]
+    folder = os.path.join(DISK_CACHE_DIR, safe)
+    return (
+        folder,
+        os.path.join(folder, "index.faiss"),
+        os.path.join(folder, "chunks.pkl"),
+    )
+
+
+def _load_disk(cache_key: str):
+    folder, index_path, chunks_path = _disk_paths(cache_key)
+    if not os.path.isfile(index_path) or not os.path.isfile(chunks_path):
+        return None
+    try:
+        index = faiss.read_index(index_path)
+        with open(chunks_path, "rb") as fh:
+            chunks = pickle.load(fh)
+        print(f"💾 Loaded RAG from disk: {cache_key}")
+        return index, chunks
+    except Exception as exc:
+        print(f"⚠️ Disk RAG load failed ({cache_key}): {exc}")
+        return None
+
+
+def _save_disk(cache_key: str, index, chunks) -> None:
+    folder, index_path, chunks_path = _disk_paths(cache_key)
+    try:
+        os.makedirs(folder, exist_ok=True)
+        faiss.write_index(index, index_path)
+        with open(chunks_path, "wb") as fh:
+            pickle.dump(chunks, fh)
+        print(f"💾 Saved RAG to disk: {cache_key}")
+    except Exception as exc:
+        print(f"⚠️ Disk RAG save failed ({cache_key}): {exc}")
+
+
+def get_or_create_index(guideline_file, cache_key=None):
+    """
+    Build or reuse FAISS index for a guideline PDF.
+    cache_key MUST be the stable guideline filename (not a temp path).
+    """
+    if cache_key:
+        key = cache_key.strip()
+    elif os.path.isabs(guideline_file):
+        key = os.path.basename(guideline_file)
     else:
-        BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        USE_S3_GUIDELINE = True
+        key = guideline_file.strip()
 
-        if USE_S3_GUIDELINE:
+    if key in RAG_CACHE:
+        print(f"⚡ Using in-memory RAG: {key}")
+        return RAG_CACHE[key]
 
-            s3 = boto3.client("s3")
-            BUCKET_NAME = "glowix-medical-auditor"
+    disk = _load_disk(key)
+    if disk:
+        RAG_CACHE[key] = disk
+        return disk
 
-            key = f"guidelines/{guideline_file}"
+    if os.path.isabs(guideline_file) and os.path.exists(guideline_file):
+        guideline_path = guideline_file
+    else:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            download_guideline(key, tmp.name)
+            guideline_path = tmp.name
 
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                s3.download_file(BUCKET_NAME, key, tmp.name)
-                guideline_path = tmp.name
-
-        else:
-            BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            guideline_path = os.path.join(BASE_DIR, "data", "guidelines", guideline_file)
-        cache_key = guideline_file
-
-    print("📂 USING PATH:", guideline_path)
-
+    print(f"📂 USING PATH: {guideline_path}")
     if not os.path.exists(guideline_path):
-        raise Exception(f"Guideline not found at path: {guideline_path}")
+        raise FileNotFoundError(f"Guideline not found: {key}")
 
-    # ✅ CACHE FIX
-    if cache_key in RAG_CACHE:
-        print("⚡ Using cached RAG")
-        return RAG_CACHE[cache_key]
-
-    print(f"📘 Building RAG for: {guideline_path}")
-
-    text = extract_text_from_pdf(guideline_path)
-    text = text[:300000]
-
+    print(f"📘 Building RAG for: {key}")
+    text = extract_text_from_pdf(guideline_path)[:300000]
     index, chunks = build_vector_store(text)
+    RAG_CACHE[key] = (index, chunks)
+    _save_disk(key, index, chunks)
 
-    RAG_CACHE[cache_key] = (index, chunks)
+    if guideline_path != guideline_file and os.path.exists(guideline_path):
+        try:
+            os.remove(guideline_path)
+        except OSError:
+            pass
 
     return index, chunks

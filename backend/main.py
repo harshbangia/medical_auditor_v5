@@ -1,19 +1,13 @@
 from fastapi import FastAPI, UploadFile, File, Form, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-from typing import List, Optional
-from backend.ai.audit_engine import extract_case_summary
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi import HTTPException
-from backend.utils.pdf_reader import extract_text_and_images
-from fastapi import Form
+from typing import List, Optional
 from uuid import uuid4
 import os
-import tempfile
 import json
+import tempfile
 import traceback
-from backend.utils.pdf_reader import extract_images_from_pdf
-from backend.utils.pdf_reader import extract_text_from_pdf
 from backend.ai.audit_engine import run_audit
 from backend.utils.pdf_generator import generate_pdf
 from backend.utils.pdf_filename import pdf_download_filename
@@ -21,21 +15,17 @@ from starlette.background import BackgroundTask
 from backend.auth import authenticate_user, create_access_token, verify_token
 
 from backend.db.database import SessionLocal
-from backend.db.models import AuditReport, User
+from backend.db.models import AuditReport
 
-from backend.rag.rag_manager import get_or_create_index
 from backend.rag.vector_store import search
+from backend.services.s3_utils import guidelines_cache
+from backend.services.audit_jobs import create_job, get_job, run_job_in_background
+from backend.services.audit_pipeline import run_job_audit
+
 GLOBAL_CACHE = {}
 
-import boto3
 import logging
 import time
-
-
-USE_S3 = False
-
-s3 = boto3.client("s3")
-BUCKET_NAME = "glowix-medical-auditor"
 
 app = FastAPI()
 logger = logging.getLogger("medical_auditor.audit")
@@ -149,32 +139,55 @@ app.add_middleware(
 def health():
     return {"status": "Backend is running"}
 
-@app.get("/guidelines")
-def list_guidelines():
-    USE_S3_GUIDELINE = True
-    if USE_S3_GUIDELINE:
-        try:
-            response = s3.list_objects_v2(Bucket=BUCKET_NAME, Prefix="guidelines/")
-            names = []
-            for obj in response.get("Contents", []):
-                key = obj.get("Key", "")
-                if not key or key.endswith("/") or not key.lower().endswith(".pdf"):
-                    continue
-                names.append(os.path.basename(key))
-            return {"guidelines": sorted(set(names))}
-        except Exception as e:
-            logger.exception("Failed to list S3 guidelines: %s", e)
-            raise HTTPException(status_code=500, detail="Failed to load guidelines from S3")
+@app.on_event("startup")
+def warm_guidelines_cache():
+    try:
+        names = guidelines_cache.get()
+        logger.info("Guidelines cache warmed (%d PDFs)", len(names))
+    except Exception as exc:
+        logger.warning("Guidelines cache warm-up failed: %s", exc)
 
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    guideline_dir = os.path.join(base_dir, "data", "guidelines")
-    if not os.path.isdir(guideline_dir):
-        return {"guidelines": []}
-    names = [
-        f for f in os.listdir(guideline_dir)
-        if f.lower().endswith(".pdf")
-    ]
-    return {"guidelines": sorted(names)}
+
+@app.get("/guidelines")
+def list_guidelines(refresh: bool = False):
+    try:
+        names = guidelines_cache.get(force_refresh=refresh)
+        return {"guidelines": names, "cached": not refresh}
+    except Exception as e:
+        logger.exception("Failed to list S3 guidelines: %s", e)
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        guideline_dir = os.path.join(base_dir, "data", "guidelines")
+        if os.path.isdir(guideline_dir):
+            names = [f for f in os.listdir(guideline_dir) if f.lower().endswith(".pdf")]
+            if names:
+                return {"guidelines": sorted(names), "cached": False, "fallback": "local"}
+        raise HTTPException(status_code=503, detail="Failed to load guidelines. Try again shortly.")
+
+
+@app.get("/audit/status/{job_id}")
+def audit_status(job_id: str, authorization: str = Header(None)):
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Missing token")
+    token = _extract_bearer_token(authorization)
+    if not token or not verify_token(token):
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    payload = {
+        "job_id": job.job_id,
+        "status": job.status,
+        "phase": job.phase,
+        "progress": job.progress,
+        "message": job.message,
+    }
+    if job.status == "completed" and job.result:
+        payload["result"] = job.result
+    if job.status == "failed":
+        payload["error"] = job.error or job.message
+    return payload
 
 
 # =========================
@@ -290,285 +303,47 @@ async def audit(
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
     try:
-        case_text = ""
-        images = []
+        if not files:
+            raise HTTPException(status_code=400, detail="Upload case documents")
 
-        # =========================
-        # FILE PROCESSING (UPDATED)
-        # =========================
-        case_texts = []
+        file_items = []
+        seen_names = set()
+        for file in files:
+            await file.seek(0)
+            file_bytes = await file.read()
+            if not file_bytes:
+                continue
+            name = file.filename or "upload.pdf"
+            if name in seen_names:
+                continue
+            seen_names.add(name)
+            file_items.append((name, file_bytes))
 
-        if files:
-            file_phase_start = time.time()
-            for file in files:
+        if not file_items:
+            raise HTTPException(status_code=400, detail="No valid PDF files uploaded")
 
-                await file.seek(0)
-                file_bytes = await file.read()
-
-                if not file_bytes:
-                    print("❌ EMPTY FILE:", file.filename)
-                    continue
-
-                tmp_path = None
-
-                try:
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                        tmp.write(file_bytes)
-                        tmp.flush()
-                        tmp_path = tmp.name
-                        s3 = boto3.client("s3")
-                        BUCKET_NAME = "glowix-medical-auditor"
-                        if USE_S3:
-                            s3_key = f"uploads/{uuid4()}.pdf"
-                            s3.upload_file(tmp_path, BUCKET_NAME, s3_key)
-
-                            s3_url = f"https://{BUCKET_NAME}.s3.amazonaws.com/{s3_key}"
-                            print("☁️ Uploaded to S3:", s3_url)
-                    # ✅ TEXT EXTRACTION
-                    # 🔥 SINGLE OCR PASS (TEXT + IMAGES)
-                    text, imgs = extract_text_and_images(tmp_path)
-
-                    if text.strip():
-                        case_texts.append(text)
-                    else:
-                        print("⚠️ No text extracted from:", file.filename)
-
-                    images.extend(imgs)
-
-                    # # ✅ IMAGE EXTRACTION
-                    # imgs = extract_images_from_pdf(tmp_path)
-                    # images.extend(imgs)
-
-                except Exception as e:
-                    print("❌ File processing failed:", str(e))
-
-                finally:
-                    if tmp_path and os.path.exists(tmp_path):
-                        os.remove(tmp_path)
-
-        # ✅ FINAL MERGE (NO LIMIT)
-        case_text = "\n\n".join(case_texts)
-
-        if files:
-            _audit_log(
-                request_id,
-                f"file processing done in {time.time() - file_phase_start:.1f}s",
-            )
-
-        _audit_log(request_id, f"total extracted case length={len(case_text)}")
-        _audit_log(request_id, f"total extracted images={len(images)}")
-
-        if len(case_text.strip()) < 50:
-            _audit_log(request_id, "no meaningful text extracted from uploaded files")
-            raise HTTPException(status_code=400, detail="No meaningful text extracted")
-
-        # =========================
-        # GUIDELINE (RAG)
-        # =========================
-
-        from backend.ai.guideline_selector import select_guideline
-
-        if not guideline:
-            _audit_log(request_id, "auto-selecting guideline")
-            guideline = select_guideline(case_text)
-
-        # ✅ CLEAN AGAIN (extra safety)
-        guideline = guideline.strip().replace('"', '').replace("'", "")
-
-        _audit_log(request_id, f"final guideline={guideline}")
-
-        USE_S3_GUIDELINE = True  # toggle
-
-        if USE_S3_GUIDELINE:
-
-
-            s3 = boto3.client("s3")
-            BUCKET_NAME = "glowix-medical-auditor"
-
-            key = f"guidelines/{guideline}"
-
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                s3.download_file(BUCKET_NAME, key, tmp.name)
-                guideline_path = tmp.name
-
-        else:
-            BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            guideline_path = os.path.join(BASE_DIR, "data", "guidelines", guideline)
-
-        _audit_log(request_id, f"guideline path resolved={guideline_path}")
-
-        if not os.path.exists(guideline_path):
-            _audit_log(request_id, f"guideline not found at {guideline_path}")
-            raise HTTPException(status_code=404, detail=f"Guideline not found: {guideline}")
-
-        user_question = question
-        _audit_log(request_id, f"user question provided={bool(user_question)}")
-
-        rag_start = time.time()
-        index, chunks = get_or_create_index(guideline_path)
-        _audit_log(request_id, f"RAG ready in {time.time() - rag_start:.1f}s")
-
-        query = case_text[:5000]
-
-
-
-        if user_question:
-            _audit_log(request_id, "QA mode: focused retrieval")
-
-            # 🔥 Use question itself for retrieval
-            query_text = (user_question or "") + "\n" + case_text[:3000]
-
-            relevant_guideline = search(
-                index,
-                chunks,
-                query_text,
-                top_k=10
-            )
-
-        else:
-            _audit_log(request_id, "audit mode: smart RAG retrieval")
-
-            relevant_guideline = search(
-                index,
-                chunks,
-                query,
-                top_k=6
-            )
-
-        _audit_log(request_id, f"retrieved guideline chars={len(relevant_guideline)}")
-
-        if not relevant_guideline.strip():
-            _audit_log(request_id, "guideline retrieval returned empty text")
-            raise HTTPException(status_code=500, detail="Guideline retrieval failed")
-
-        # =========================
-        # LIMIT SIZE (CRITICAL)
-        # =========================
-        def limit_text(text, max_chars):
-            return text[:max_chars] if len(text) > max_chars else text
-
-        if user_question:
-            case_text = case_text[:20000]  # more context for QA
-        else:
-            case_text = case_text[:20000]
-
-        relevant_guideline = limit_text(relevant_guideline, 10000)
-
-
-        # =========================
-        # RUN AUDIT
-        # =========================
-        _audit_log(request_id, f"run_audit input case length={len(case_text)}")
-        audit_start = time.time()
-        result = run_audit(
-            case_text,
-            relevant_guideline,
-            user_question=user_question,
-            images=images
+        _audit_log(request_id, f"queued {len(file_items)} unique PDF(s) for async audit")
+        job = create_job()
+        run_job_in_background(
+            job,
+            lambda j: run_job_audit(
+                j, file_items, guideline, question, GLOBAL_CACHE
+            ),
         )
-        _audit_log(request_id, f"run_audit finished in {time.time() - audit_start:.1f}s")
-
-        _audit_log(
-            request_id,
-            f"raw AI result type={type(result)} keys={list(result.keys()) if isinstance(result, dict) else 'N/A'}"
+        return JSONResponse(
+            status_code=202,
+            content={
+                "job_id": job.job_id,
+                "status": "queued",
+                "message": "Audit started. Poll /audit/status/{job_id} for progress.",
+            },
         )
 
-        # =========================
-        # 🔥 HARD VALIDATION (FIX)
-        # =========================
-        if not result or not isinstance(result, dict):
-            _audit_log(request_id, "AI returned empty or invalid response object")
-            raise HTTPException(status_code=502, detail="AI returned empty or invalid response")
-
-        # Ensure all required keys exist (IMPORTANT)
-        result.setdefault("patient_details", {})
-        result.setdefault("insurance_details", {})
-        for _k in ("insurance_company", "policy_number", "policy_period", "claim_incident_number"):
-            result["insurance_details"].setdefault(_k, "")
-        result.setdefault("claim_details", {})
-        for _k in (
-            "hospital",
-            "consultation_date",
-            "date_of_admission",
-            "date_of_discharge",
-            "nature_of_admission",
-            "procedure_or_surgery",
-            "diagnosis",
-        ):
-            result["claim_details"].setdefault(_k, "")
-        result.setdefault("clinical_findings", [])
-        result.setdefault("documentation_gaps", [])
-        result.setdefault("clinical_checklist", [])
-        result.setdefault("auditor_observation_summary", "")
-        result.setdefault("treatment_billing_audit", {})
-        for _k in (
-            "room_category_admitted",
-            "room_category_eligible",
-            "procedures_performed",
-            "cross_checked_with_preauth",
-            "excluded_items_billed",
-            "charges_appropriate",
-        ):
-            result["treatment_billing_audit"].setdefault(_k, "")
-        result.setdefault("financial_review", {})
-        for _k in (
-            "total_hospital_bill",
-            "non_payable_amount",
-            "net_claimable_amount",
-            "recommended_approval_amount",
-            "patient_liability",
-        ):
-            result["financial_review"].setdefault(_k, "")
-        result.setdefault("timeline", [])
-        result.setdefault("observations", [])
-        result.setdefault("inference", "")
-        result.setdefault("auditor_conclusion", "No conclusion generated")
-        result.setdefault("remarks", "")
-        result.setdefault("qa_section", [])
-        inf = (result.get("inference") or "").strip()
-        ac = (result.get("auditor_conclusion") or "").strip()
-        if inf and not ac:
-            result["auditor_conclusion"] = inf
-        elif ac and not inf:
-            result["inference"] = ac
-
-        _normalize_timeline(result)
-
-        # =========================
-        # SESSION STORE
-        # =========================
-        session_id = str(uuid4())
-
-        GLOBAL_CACHE[session_id] = {
-            "case_text": case_text,
-            "images": images,
-            "guideline": guideline,
-            "index": index,
-            "chunks": chunks
-        }
-
-        result["session_id"] = session_id
-
-        # =========================
-        # FINAL SAFETY CHECK
-        # =========================
-        if all([
-            not result.get("patient_details"),
-            not result.get("clinical_findings"),
-            not result.get("observations"),
-            not (result.get("auditor_conclusion") or result.get("inference"))
-        ]):
-            _audit_log(request_id, "AI returned empty structured response")
-            raise HTTPException(status_code=502, detail="AI returned empty structured response")
-        _audit_log(request_id, f"audit success in {time.time() - started_at:.2f}s")
-        return result
-
-
-
+    except HTTPException:
+        raise
     except Exception as e:
-
         _audit_log(request_id, f"audit failed after {time.time() - started_at:.2f}s: {str(e)}")
-        traceback.print_exc()  # keep traceback with exact failing line
+        traceback.print_exc()
         raise
 
 # =========================

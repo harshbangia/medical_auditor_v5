@@ -1,25 +1,17 @@
 from openai import OpenAI
 import os
-import boto3
 from dotenv import load_dotenv
 
 load_dotenv()
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+from backend.services.s3_utils import guidelines_cache
+
+
 def _list_guidelines():
     try:
-        s3 = boto3.client("s3")
-        bucket_name = "glowix-medical-auditor"
-        response = s3.list_objects_v2(Bucket=bucket_name, Prefix="guidelines/")
-        files = []
-        for obj in response.get("Contents", []):
-            key = obj.get("Key", "")
-            if not key or key.endswith("/") or not key.lower().endswith(".pdf"):
-                continue
-            files.append(os.path.basename(key))
-        if files:
-            return sorted(set(files))
+        return guidelines_cache.get()
     except Exception:
         pass
     if os.path.isdir("data/guidelines"):

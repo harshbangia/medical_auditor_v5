@@ -1,27 +1,40 @@
 import base64
+import os
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 
-import fitz  # PyMuPDF
-from pdf2image import convert_from_path
+import fitz
 import pytesseract
-
-# pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+from pdf2image import convert_from_path
 
 MIN_NATIVE_TEXT = 1000
 LOW_PAGE_TEXT = 80
-MAX_VISION_IMAGES = 20
+MAX_VISION_IMAGES = 8
+OCR_WORKERS = int(os.getenv("OCR_WORKERS", "4"))
 
 
-def _page_to_b64(pil_image, quality=85):
+def _page_to_b64(pil_image, quality=75):
     buffered = BytesIO()
     pil_image.save(buffered, format="JPEG", quality=quality)
     return base64.b64encode(buffered.getvalue()).decode()
 
 
-def extract_text_from_pdf(pdf_path):
-    """Extract guideline/case text; OCR only when native text is sparse."""
-    text = ""
+def _ocr_image(img):
+    return pytesseract.image_to_string(img)
 
+
+def _parallel_ocr(pil_pages):
+    if not pil_pages:
+        return []
+    workers = min(OCR_WORKERS, len(pil_pages))
+    if workers <= 1:
+        return [_ocr_image(p) for p in pil_pages]
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return list(pool.map(_ocr_image, pil_pages))
+
+
+def extract_text_from_pdf(pdf_path):
+    text = ""
     try:
         doc = fitz.open(pdf_path)
         for page in doc:
@@ -36,116 +49,134 @@ def extract_text_from_pdf(pdf_path):
 
     print("⚠️ Low native text detected → running OCR...")
     try:
-        images = convert_from_path(pdf_path)
-        ocr_text = ""
-        for i, img in enumerate(images):
-            print(f"🧠 OCR page {i + 1}/{len(images)}")
-            ocr_text += pytesseract.image_to_string(img)
-        return text + "\n" + ocr_text
+        pages = convert_from_path(pdf_path)
+        print(f"🧠 OCR {len(pages)} pages (parallel x{min(OCR_WORKERS, len(pages))})")
+        ocr_parts = _parallel_ocr(pages)
+        return text + "\n" + "\n".join(ocr_parts)
     except Exception as e:
         print("❌ OCR FAILED:", str(e))
-
     return text
 
 
-def extract_images_from_pdf(pdf_path, limit=3):
-    images_base64 = []
-
-    try:
-        doc = fitz.open(pdf_path)
-        for page in doc:
-            for img in page.get_images(full=True):
+def _extract_embedded_images(doc, limit=MAX_VISION_IMAGES):
+    images = []
+    for page_num, page in enumerate(doc, start=1):
+        for img in page.get_images(full=True):
+            if len(images) >= limit:
+                return images
+            try:
                 xref = img[0]
                 base_image = doc.extract_image(xref)
-                image_bytes = base_image["image"]
-                images_base64.append(base64.b64encode(image_bytes).decode())
-        doc.close()
-    except Exception as e:
-        print("Image extraction failed:", e)
-
-    print(f"🖼️ Extracted {len(images_base64)} embedded images")
-    return images_base64[:limit]
+                if len(base_image.get("image") or b"") < 5000:
+                    continue
+                images.append(
+                    {
+                        "base64": base64.b64encode(base_image["image"]).decode(),
+                        "page": page_num,
+                    }
+                )
+            except Exception:
+                continue
+    return images
 
 
 def extract_text_and_images(pdf_path):
     """
-    Fast path for text-native PDFs; OCR + page renders only when needed.
-    Returns (text, images) where each image is {"base64": str, "page": int}.
+    Fast path for text-native PDFs; parallel OCR for scans.
+    Vision images: embedded photos only when text is sufficient.
     """
     text_parts = []
-    pages_needing_render = set()
+    low_text_page_nums = []
+    clinical_render_pages = []
     page_count = 0
 
-    try:
-        doc = fitz.open(pdf_path)
-        page_count = len(doc)
+    doc = fitz.open(pdf_path)
+    page_count = len(doc)
 
-        for i, page in enumerate(doc):
-            page_text = page.get_text() or ""
-            text_parts.append(page_text)
-
-            has_embedded = bool(page.get_images(full=True))
-            if len(page_text.strip()) < LOW_PAGE_TEXT or has_embedded:
-                pages_needing_render.add(i)
-
-        doc.close()
-    except Exception as e:
-        print("⚠️ PyMuPDF failed:", str(e))
+    for i, page in enumerate(doc):
+        page_text = page.get_text() or ""
+        text_parts.append(page_text)
+        if len(page_text.strip()) < LOW_PAGE_TEXT:
+            low_text_page_nums.append(i + 1)
+            imgs_on_page = page.get_images(full=True)
+            if imgs_on_page and len(imgs_on_page) >= 2:
+                clinical_render_pages.append(i + 1)
 
     full_text = "\n".join(text_parts)
     native_len = len(full_text.strip())
 
     if native_len < MIN_NATIVE_TEXT:
-        print(f"⚠️ Low native text ({native_len} chars) — running OCR...")
-        try:
-            rendered_pages = convert_from_path(pdf_path)
-            ocr_parts = []
-            for i, img in enumerate(rendered_pages):
-                print(f"🧠 OCR page {i + 1}/{len(rendered_pages)}")
-                ocr_parts.append(pytesseract.image_to_string(img))
-                pages_needing_render.add(i)
-            full_text = full_text + "\n" + "\n".join(ocr_parts)
-        except Exception as e:
-            print("❌ OCR FAILED:", str(e))
+        if native_len > 200 and low_text_page_nums:
+            print(f"⚠️ Partial native text ({native_len} chars) → OCR on {len(low_text_page_nums)} pages")
+            try:
+                ocr_parts = []
+                for page_num in low_text_page_nums:
+                    rendered = convert_from_path(
+                        pdf_path, first_page=page_num, last_page=page_num
+                    )
+                    if rendered:
+                        ocr_parts.append(_ocr_image(rendered[0]))
+                full_text = full_text + "\n" + "\n".join(ocr_parts)
+            except Exception as e:
+                print("❌ Selective OCR failed:", e)
+        else:
+            print(f"⚠️ Low native text ({native_len} chars) → full parallel OCR")
+            try:
+                rendered_pages = convert_from_path(pdf_path)
+                print(f"🧠 OCR {len(rendered_pages)} pages (parallel x{min(OCR_WORKERS, len(rendered_pages))})")
+                ocr_parts = _parallel_ocr(rendered_pages)
+                full_text = full_text + "\n" + "\n".join(ocr_parts)
+                clinical_render_pages = low_text_page_nums[:MAX_VISION_IMAGES]
+            except Exception as e:
+                print("❌ OCR FAILED:", e)
     else:
-        print(f"✅ Skipping full-document OCR ({native_len} chars of native text)")
+        print(f"✅ Skipping OCR ({native_len} chars native text)")
 
-    images = []
-    embedded = extract_images_from_pdf(pdf_path, limit=MAX_VISION_IMAGES)
-    for idx, b64 in enumerate(embedded):
-        images.append({"base64": b64, "page": idx + 1})
-
-    if pages_needing_render:
-        try:
-            for page_idx in sorted(pages_needing_render):
-                page_num = page_idx + 1
-                page_imgs = convert_from_path(
+    if native_len >= MIN_NATIVE_TEXT:
+        images = _extract_embedded_images(doc, limit=MAX_VISION_IMAGES)
+    else:
+        images = _extract_embedded_images(doc, limit=MAX_VISION_IMAGES)
+        seen = {img["page"] for img in images}
+        for page_num in clinical_render_pages[:MAX_VISION_IMAGES]:
+            if page_num in seen:
+                continue
+            try:
+                rendered = convert_from_path(
                     pdf_path, first_page=page_num, last_page=page_num
                 )
-                if not page_imgs:
-                    continue
-                images.append({"base64": _page_to_b64(page_imgs[0]), "page": page_num})
-        except Exception as e:
-            print("❌ Page render for vision failed:", str(e))
+                if rendered:
+                    images.append({"base64": _page_to_b64(rendered[0]), "page": page_num})
+                    seen.add(page_num)
+            except Exception as e:
+                print(f"⚠️ Page render failed p{page_num}:", e)
 
-    # Deduplicate by page, cap total
-    seen_pages = set()
-    unique_images = []
-    for img in images:
-        key = img["page"]
-        if key in seen_pages:
-            continue
-        seen_pages.add(key)
-        unique_images.append(img)
+    doc.close()
 
-    if len(unique_images) > MAX_VISION_IMAGES:
-        step = len(unique_images) / MAX_VISION_IMAGES
-        unique_images = [
-            unique_images[int(i * step)] for i in range(MAX_VISION_IMAGES)
-        ]
+    if len(images) > MAX_VISION_IMAGES:
+        step = len(images) / MAX_VISION_IMAGES
+        images = [images[int(i * step)] for i in range(MAX_VISION_IMAGES)]
 
-    print(
-        f"📄 Done: {len(full_text)} chars, "
-        f"{len(unique_images)} images for vision ({page_count} pages)"
-    )
-    return full_text, unique_images
+    print(f"📄 Done: {len(full_text)} chars, {len(images)} vision images ({page_count} pages)")
+    return full_text, images
+
+
+def process_pdf_file(file_bytes: bytes, filename: str = "upload.pdf"):
+    """Process one uploaded PDF (for parallel workers)."""
+    import tempfile
+
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            tmp.write(file_bytes)
+            tmp.flush()
+            tmp_path = tmp.name
+        text, imgs = extract_text_and_images(tmp_path)
+        return {"filename": filename, "text": text, "images": imgs, "error": None}
+    except Exception as exc:
+        return {"filename": filename, "text": "", "images": [], "error": str(exc)}
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass

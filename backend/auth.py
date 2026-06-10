@@ -1,91 +1,39 @@
 from jose import JWTError, ExpiredSignatureError, jwt
 from datetime import datetime, timedelta
-from passlib.context import CryptContext
 from dotenv import load_dotenv
 import os
 from backend.db.database import SessionLocal
 from backend.db.models import User
 
-# =========================
-# LOAD ENV VARIABLES
-# =========================
 load_dotenv()
 
-SECRET_KEY = os.getenv("SECRET_KEY", "fallback_dev_key")  # use .env in production
+SECRET_KEY = os.getenv("SECRET_KEY", "fallback_dev_key")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "480"))
 
-# =========================
-# PASSWORD HASHING
-# =========================
-#pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-# =========================
-# TEMP USER (REPLACE WITH DB LATER)
-# =========================
-# fake_user = {
-#     "email": "admin@glowix.com",
-#     "hashed_password": pwd_context.hash("1234")
-# }
-
-# =========================
-# VERIFY PASSWORD
-# =========================
-# def verify_password(plain_password: str, hashed_password: str) -> bool:
-#     return pwd_context.verify(plain_password, hashed_password)
-
-# =========================
-# AUTHENTICATE USER
-# =========================
 
 def authenticate_user(email: str, password: str):
     db = SessionLocal()
-    print("Login attempt:", email, password)
-    user = db.query(User).filter(User.email == email).first()
-    print("User found", user)
-
-    if not user:
+    try:
+        user = db.query(User).filter(User.email == email).first()
+        if not user or password != user.password:
+            return None
+        return {"email": user.email}
+    finally:
         db.close()
-        return None
 
-    print("DB pwd:", user.password)
 
-    # if not verify_password(password, user.password):
-    if password != user.password:
-        print("Pwd mismatch")
-        db.close()
-        return None
-    print("Login success")
-
-    db.close()
-    return {"email": user.email}
-
-# =========================
-# CREATE JWT TOKEN
-# =========================
 def create_access_token(data: dict):
     to_encode = data.copy()
-
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
-    return encoded_jwt
-
-# =========================
-# VERIFY TOKEN (IMPORTANT)
-# =========================
 def verify_token(token: str):
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        return payload
+        return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
     except ExpiredSignatureError:
-        print("Token verification failed: token expired")
         return None
     except JWTError:
-        print("Token verification failed: invalid signature or malformed token")
         return None
-
-
-
