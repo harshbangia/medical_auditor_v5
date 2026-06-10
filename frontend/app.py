@@ -143,6 +143,46 @@ LOGIN_CSS = """
 """
 
 
+def _handle_api_response(response, action_label="Request"):
+    """Parse API response; show clear message for nginx 504 HTML errors."""
+    if response.status_code == 401:
+        force_logout_and_relogin("Session expired. Please login again.")
+
+    content_type = (response.headers.get("content-type") or "").lower()
+    is_json = "application/json" in content_type
+
+    if response.status_code == 504 or (
+        not is_json and response.status_code >= 500
+    ):
+        st.error(
+            f"{action_label} timed out (HTTP {response.status_code}). "
+            "The server took too long processing your documents — this often happens on "
+            "**new guidelines** (first-time index build) or **large/scanned PDFs** (OCR + image analysis). "
+            "Ask your admin to increase nginx `proxy_read_timeout` (see `deploy/nginx-api.conf`) "
+            "and redeploy the latest backend optimizations."
+        )
+        if not is_json and response.text:
+            with st.expander("Raw server response"):
+                st.code(response.text[:2000])
+        st.stop()
+
+    try:
+        result = response.json() if response.text else {}
+    except Exception:
+        st.error(f"{action_label} failed — server returned a non-JSON response.")
+        if response.text:
+            with st.expander("Raw server response"):
+                st.code(response.text[:2000])
+        st.stop()
+
+    if response.status_code != 200:
+        st.error(f"{action_label} failed ({response.status_code})")
+        st.write(result.get("detail") or result.get("error") or response.text)
+        st.stop()
+
+    return result
+
+
 def force_logout_and_relogin(message: str):
     st.error(message)
     st.session_state["is_logged_out"] = True
@@ -671,21 +711,11 @@ if run:
             API_URL,
             files=files,
             data={"guideline": selected_guideline},
-            headers=headers
+            headers=headers,
+            timeout=1800,
         )
 
-        try:
-            result = response.json()
-        except Exception:
-            st.error("Something went wrong")
-            st.text(response.text)
-            st.stop()
-        if response.status_code != 200:
-            if response.status_code == 401:
-                force_logout_and_relogin("Session expired. Please login again.")
-            st.error(f"Audit failed ({response.status_code})")
-            st.write(result.get("detail") or result.get("error") or response.text)
-            st.stop()
+        result = _handle_api_response(response, "Audit")
 
         if isinstance(result, dict) and (result.get("error") or result.get("detail")):
             st.error("Audit did not return a valid report")

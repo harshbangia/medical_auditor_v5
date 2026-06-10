@@ -4,11 +4,64 @@ from dotenv import load_dotenv
 import os
 import fitz
 import base64
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 load_dotenv()
 
 api_key = os.getenv("OPENAI_API_KEY")
 client = OpenAI(api_key=api_key)
+
+_VISION_PROMPT = """You are a clinical medical auditor.
+
+Analyze this image carefully (photo of lesion/oral cavity, wound, X-ray, CT, MRI, ultrasound, or document scan).
+
+- Describe only visible findings (anatomy, lesions, devices, film findings).
+- Do NOT hallucinate details not visible.
+- Use cautious medical tone ("appears", "suggestive of").
+- If the image is clinical/pertinent → state what is seen and possible relevance.
+- If purely administrative or illegible → say 'No clinical relevance for audit'.
+"""
+
+
+def _normalize_image(img, fallback_page=1):
+    if isinstance(img, dict):
+        return {
+            "base64": img.get("base64") or img.get("image_base64") or "",
+            "page": img.get("page") or fallback_page,
+        }
+    return {"base64": str(img), "page": fallback_page}
+
+
+def _analyze_single_image(img_dict):
+    page = img_dict["page"]
+    try:
+        response = client.responses.create(
+            model="gpt-4o",
+            input=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": _VISION_PROMPT},
+                        {
+                            "type": "input_image",
+                            "image_base64": img_dict["base64"],
+                        },
+                    ],
+                }
+            ],
+        )
+
+        image_analysis = ""
+        if hasattr(response, "output") and response.output:
+            for item in response.output:
+                if hasattr(item, "content"):
+                    for c in item.content:
+                        if hasattr(c, "text"):
+                            image_analysis += c.text
+
+        return page, image_analysis.strip()
+    except Exception as e:
+        return page, f"[IMAGE ERROR]: {str(e)}"
 
 def extract_case_summary(case_text):
     import json
@@ -116,59 +169,29 @@ def run_audit(case_text, guideline_text, user_question=None, images=None):
     image_analysis_text = ""
 
     if images:
-        selected_images = _select_images_for_audit(images, max_images=8)
+        selected_images = [
+            _normalize_image(img, i + 1)
+            for i, img in enumerate(_select_images_for_audit(images, max_images=8))
+        ]
+        selected_images = [img for img in selected_images if img.get("base64")]
 
-        for img in selected_images:
+        page_analyses = {}
+        if selected_images:
+            workers = min(4, len(selected_images))
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {
+                    pool.submit(_analyze_single_image, img): img["page"]
+                    for img in selected_images
+                }
+                for future in as_completed(futures):
+                    page, analysis = future.result()
+                    page_analyses[page] = analysis
 
-            try:
-                response = client.responses.create(
-                    model="gpt-4o",
-                    input=[
-                        {
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "input_text",
-                                    "text": """You are a clinical medical auditor.
-
-                Analyze this image carefully (photo of lesion/oral cavity, wound, X-ray, CT, MRI, ultrasound, or document scan).
-
-                - Describe only visible findings (anatomy, lesions, devices, film findings).
-                - Do NOT hallucinate details not visible.
-                - Use cautious medical tone ("appears", "suggestive of").
-                - If the image is clinical/pertinent → state what is seen and possible relevance.
-                - If purely administrative or illegible → say 'No clinical relevance for audit'.
-                """
-                                },
-                                {
-                                    "type": "input_image",
-                                    "image_base64": img["base64"]
-                                }
-                            ]
-                        }
-                    ]
-                )
-
-                # ✅ IMPORTANT FIX — READ ONCE
-                image_analysis = ""
-
-                if hasattr(response, "output") and response.output:
-                    for item in response.output:
-                        if hasattr(item, "content"):
-                            for c in item.content:
-                                if hasattr(c, "text"):
-                                    image_analysis += c.text
-
-                image_analysis = image_analysis.strip()
-
-                # Must match prompt section "IMAGE ANALYSIS" / "[IMAGE ANALYSIS]" so the model does not flag "missing clinical picture".
-                image_analysis_text += f"""
-    [IMAGE ANALYSIS - Page {img['page']}]
-    {image_analysis}
+        for page in sorted(page_analyses):
+            image_analysis_text += f"""
+    [IMAGE ANALYSIS - Page {page}]
+    {page_analyses[page]}
     """
-
-            except Exception as e:
-                image_analysis_text += f"\n[IMAGE ERROR]: {str(e)}\n"
 
     if image_analysis_text.strip():
         case_text = (

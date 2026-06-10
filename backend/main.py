@@ -299,6 +299,7 @@ async def audit(
         case_texts = []
 
         if files:
+            file_phase_start = time.time()
             for file in files:
 
                 await file.seek(0)
@@ -348,6 +349,12 @@ async def audit(
         # ✅ FINAL MERGE (NO LIMIT)
         case_text = "\n\n".join(case_texts)
 
+        if files:
+            _audit_log(
+                request_id,
+                f"file processing done in {time.time() - file_phase_start:.1f}s",
+            )
+
         _audit_log(request_id, f"total extracted case length={len(case_text)}")
         _audit_log(request_id, f"total extracted images={len(images)}")
 
@@ -391,18 +398,15 @@ async def audit(
         _audit_log(request_id, f"guideline path resolved={guideline_path}")
 
         if not os.path.exists(guideline_path):
-            available = os.listdir(os.path.join(BASE_DIR, "data", "guidelines"))
-            _audit_log(request_id, f"guideline not found. available={available}")
+            _audit_log(request_id, f"guideline not found at {guideline_path}")
             raise HTTPException(status_code=404, detail=f"Guideline not found: {guideline}")
 
-        # =========================
-        # GET QUESTION FROM BODY (IMPORTANT)
-        # =========================
-        # body = await request.json() if request else {}
         user_question = question
         _audit_log(request_id, f"user question provided={bool(user_question)}")
 
-        index, chunks = get_or_create_index(guideline)
+        rag_start = time.time()
+        index, chunks = get_or_create_index(guideline_path)
+        _audit_log(request_id, f"RAG ready in {time.time() - rag_start:.1f}s")
 
         query = case_text[:5000]
 
@@ -455,12 +459,14 @@ async def audit(
         # RUN AUDIT
         # =========================
         _audit_log(request_id, f"run_audit input case length={len(case_text)}")
+        audit_start = time.time()
         result = run_audit(
             case_text,
             relevant_guideline,
             user_question=user_question,
             images=images
         )
+        _audit_log(request_id, f"run_audit finished in {time.time() - audit_start:.1f}s")
 
         _audit_log(
             request_id,
