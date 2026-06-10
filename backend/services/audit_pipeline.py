@@ -1,7 +1,6 @@
 import os
 import tempfile
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, List, Optional
 from uuid import uuid4
 
@@ -134,8 +133,8 @@ def _ensure_result_shape(result: dict) -> dict:
     return result
 
 
-def _process_files_parallel(file_items: List[tuple], progress: ProgressFn) -> tuple:
-    """file_items: list of (filename, bytes). Returns (case_text, images)."""
+def _process_files_sequential(file_items: List[tuple], progress: ProgressFn) -> tuple:
+    """Process PDFs one at a time to avoid OOM on small EC2 instances."""
     if not file_items:
         return "", []
 
@@ -145,30 +144,22 @@ def _process_files_parallel(file_items: List[tuple], progress: ProgressFn) -> tu
             unique[name] = data
     file_items = list(unique.items())
 
-    progress("extracting", 10, f"Processing {len(file_items)} PDF(s)…")
+    total = len(file_items)
+    progress("extracting", 10, f"Processing {total} PDF(s)…")
     case_texts = []
     images = []
-    workers = min(4, len(file_items))
 
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {
-            pool.submit(process_pdf_file, data, name): name
-            for name, data in file_items
-        }
-        done = 0
-        total = len(futures)
-        for fut in as_completed(futures):
-            done += 1
-            name = futures[fut]
-            pct = 10 + int(50 * done / total)
-            progress("extracting", pct, f"Extracted {done}/{total}: {name}")
-            res = fut.result()
-            if res.get("error"):
-                print(f"❌ File processing failed ({name}): {res['error']}")
-                continue
-            if res.get("text", "").strip():
-                case_texts.append(res["text"])
-            images.extend(res.get("images") or [])
+    for idx, (name, data) in enumerate(file_items):
+        pct = 10 + int(55 * idx / max(total, 1))
+        progress("extracting", pct, f"Processing PDF {idx + 1}/{total}: {name}")
+        res = process_pdf_file(data, name)
+        if res.get("error"):
+            raise RuntimeError(f"Failed to read {name}: {res['error']}")
+        if res.get("text", "").strip():
+            case_texts.append(res["text"])
+        images.extend(res.get("images") or [])
+        pct_done = 10 + int(55 * (idx + 1) / total)
+        progress("extracting", pct_done, f"Finished {idx + 1}/{total}: {name}")
 
     return "\n\n".join(case_texts), images
 
@@ -181,10 +172,10 @@ def run_full_audit(
     progress: ProgressFn = _noop_progress,
 ) -> dict:
     started = time.time()
-    case_text, images = _process_files_parallel(file_items, progress)
+    case_text, images = _process_files_sequential(file_items, progress)
 
     if len(case_text.strip()) < 50:
-        raise HTTPException(status_code=400, detail="No meaningful text extracted")
+        raise RuntimeError("No meaningful text extracted from uploaded PDFs")
 
     progress("guideline", 65, "Loading clinical guideline…")
     if not guideline:
@@ -207,7 +198,7 @@ def run_full_audit(
             relevant_guideline = search(index, chunks, query, top_k=6)
 
         if not relevant_guideline.strip():
-            raise HTTPException(status_code=500, detail="Guideline retrieval failed")
+            raise RuntimeError("Guideline retrieval failed")
 
         case_text = case_text[:20000]
         relevant_guideline = relevant_guideline[:10000]
@@ -216,7 +207,7 @@ def run_full_audit(
         result = run_audit(case_text, relevant_guideline, user_question=user_question, images=images)
 
         if not result or not isinstance(result, dict):
-            raise HTTPException(status_code=502, detail="AI returned empty or invalid response")
+            raise RuntimeError("AI returned empty or invalid response")
 
         result = _ensure_result_shape(result)
 
@@ -226,7 +217,7 @@ def run_full_audit(
             not result.get("observations"),
             not (result.get("auditor_conclusion") or result.get("inference")),
         ]):
-            raise HTTPException(status_code=502, detail="AI returned empty structured response")
+            raise RuntimeError("AI returned empty structured response")
 
         session_id = str(uuid4())
         global_cache[session_id] = {

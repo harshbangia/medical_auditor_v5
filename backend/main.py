@@ -139,6 +139,27 @@ app.add_middleware(
 def health():
     return {"status": "Backend is running"}
 
+
+@app.get("/health/db")
+def health_db():
+    from sqlalchemy import text
+    from sqlalchemy.exc import SQLAlchemyError
+    from backend.db.database import SessionLocal, _missing
+
+    if _missing:
+        return {"db": "misconfigured", "missing_env": _missing}
+
+    db = SessionLocal()
+    try:
+        count = db.execute(text("SELECT COUNT(*) FROM users")).scalar()
+        return {"db": "ok", "users": count}
+    except SQLAlchemyError as exc:
+        logger.exception("DB health check failed")
+        return {"db": "error", "detail": str(exc)}
+    finally:
+        db.close()
+
+
 @app.on_event("startup")
 def warm_guidelines_cache():
     try:
@@ -201,7 +222,16 @@ class LoginRequest(BaseModel):
 
 @app.post("/login")
 def login(data: LoginRequest):
-    user = authenticate_user(data.email, data.password)
+    from sqlalchemy.exc import SQLAlchemyError
+
+    try:
+        user = authenticate_user(data.email, data.password)
+    except SQLAlchemyError:
+        logger.exception("Login database error")
+        raise HTTPException(
+            status_code=503,
+            detail="Database unavailable. Check .env and RDS connection on the server.",
+        )
 
     if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials")

@@ -226,7 +226,12 @@ def login_page():
         )
 
         if response.status_code != 200:
-            st.error(response.text)
+            try:
+                err = response.json()
+                detail = err.get("detail", response.text)
+            except Exception:
+                detail = response.text
+            st.error(detail if isinstance(detail, str) else "Login failed")
             return
         else:
             data = response.json()
@@ -748,13 +753,15 @@ if run:
             st.stop()
 
         result = None
+        transient_errors = 0
+        max_transient = 30  # ~60s of retries while backend restarts under OCR load
         while True:
             time.sleep(2)
             try:
                 poll = requests.get(
                     f"{API_BASE}/audit/status/{job_id}",
                     headers=headers,
-                    timeout=30,
+                    timeout=60,
                 )
             except requests.exceptions.RequestException as exc:
                 status_line.warning(f"Connection blip — retrying… ({exc})")
@@ -762,6 +769,22 @@ if run:
 
             if poll.status_code == 401:
                 force_logout_and_relogin("Session expired. Please login again.")
+
+            if poll.status_code in (502, 503, 504):
+                transient_errors += 1
+                if transient_errors > max_transient:
+                    st.error(
+                        f"Server unavailable ({poll.status_code}) while processing PDFs. "
+                        "The backend may have run out of memory — try fewer/smaller files."
+                    )
+                    st.stop()
+                status_line.warning(
+                    f"Server busy processing PDFs ({poll.status_code}) — retrying… "
+                    f"({transient_errors}/{max_transient})"
+                )
+                continue
+
+            transient_errors = 0
 
             if poll.status_code != 200:
                 st.error(f"Status check failed ({poll.status_code})")

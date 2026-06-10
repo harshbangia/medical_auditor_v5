@@ -1,18 +1,32 @@
+from urllib.parse import quote_plus
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-import os
-from dotenv import load_dotenv
+from backend.config import env
 
-load_dotenv()
+DB_USER = env("DB_USER")
+DB_PASSWORD = env("DB_PASSWORD")
+DB_HOST = env("DB_HOST")
+DB_PORT = env("DB_PORT", "5432")
+DB_NAME = env("DB_NAME")
 
-DB_USER = os.getenv("DB_USER")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
-DB_HOST = os.getenv("DB_HOST")
-DB_PORT = os.getenv("DB_PORT")
-DB_NAME = os.getenv("DB_NAME")
+_missing = [k for k, v in {
+    "DB_USER": DB_USER, "DB_PASSWORD": DB_PASSWORD,
+    "DB_HOST": DB_HOST, "DB_NAME": DB_NAME,
+}.items() if not v]
 
-DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+if _missing:
+    import logging
+    logging.getLogger("medical_auditor.db").warning(
+        "Missing DB env vars: %s — login will fail until .env is configured.", _missing
+    )
+    DATABASE_URL = "postgresql://localhost/placeholder"
+else:
+    DATABASE_URL = (
+        f"postgresql://{quote_plus(DB_USER)}:{quote_plus(DB_PASSWORD)}"
+        f"@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+    )
 
 engine = create_engine(
     DATABASE_URL,
@@ -26,5 +40,5 @@ engine = create_engine(
 SessionLocal = sessionmaker(
     autocommit=False,
     autoflush=False,
-    bind=engine
+    bind=engine,
 )
