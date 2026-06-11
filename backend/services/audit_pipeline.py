@@ -1,15 +1,15 @@
 import os
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, List, Optional
 from uuid import uuid4
 
-from fastapi import HTTPException
-
-from backend.ai.audit_engine import run_audit
+from backend.ai.audit_engine import analyze_case_images, run_audit
+from backend.ai.case_profiler import extract_case_profile
 from backend.ai.guideline_selector import select_guideline
+from backend.rag.guideline_retriever import retrieve_guideline_sections
 from backend.rag.rag_manager import get_or_create_index
-from backend.rag.vector_store import search
 from backend.services.audit_jobs import AuditJob
 from backend.services.s3_utils import download_guideline
 from backend.utils.pdf_reader import process_pdf_file
@@ -104,6 +104,10 @@ def _ensure_result_shape(result: dict) -> dict:
     result.setdefault("clinical_findings", [])
     result.setdefault("documentation_gaps", [])
     result.setdefault("clinical_checklist", [])
+    result.setdefault("guideline_deviations", [])
+    result.setdefault("challenge_points", [])
+    result.setdefault("compliance_verdict", "")
+    result.setdefault("imaging_findings", [])
     result.setdefault("auditor_observation_summary", "")
     result.setdefault("treatment_billing_audit", {})
     for _k in (
@@ -187,24 +191,41 @@ def run_full_audit(
         guideline_path = tmp.name
 
     try:
-        progress("rag", 72, "Preparing guideline search index…")
-        index, chunks = get_or_create_index(guideline_path, cache_key=guideline)
+        progress("profile", 62, "Extracting case facts & loading guideline…")
 
-        query = case_text[:5000]
-        if user_question:
-            query_text = (user_question or "") + "\n" + case_text[:3000]
-            relevant_guideline = search(index, chunks, query_text, top_k=10)
-        else:
-            relevant_guideline = search(index, chunks, query, top_k=6)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            fut_profile = pool.submit(extract_case_profile, case_text[:16000])
+            fut_index = pool.submit(get_or_create_index, guideline_path, cache_key=guideline)
+            case_profile = fut_profile.result()
+            index, chunks = fut_index.result()
+
+        case_hint = (
+            f"{case_profile.get('diagnosis', '')} | "
+            f"{', '.join(case_profile.get('procedures') or [])}"
+        )
+
+        progress("rag", 72, "Retrieving relevant guideline criteria…")
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            fut_rag = pool.submit(
+                retrieve_guideline_sections, index, chunks, case_profile, case_text
+            )
+            fut_vision = pool.submit(analyze_case_images, images, case_hint)
+            relevant_guideline = fut_rag.result()
+            image_analysis = fut_vision.result()
 
         if not relevant_guideline.strip():
             raise RuntimeError("Guideline retrieval failed")
 
-        case_text = case_text[:20000]
-        relevant_guideline = relevant_guideline[:10000]
-
-        progress("ai_audit", 80, "Running AI medical audit…")
-        result = run_audit(case_text, relevant_guideline, user_question=user_question, images=images)
+        progress("ai_audit", 82, "Running adversarial medical audit…")
+        result = run_audit(
+            case_text,
+            relevant_guideline,
+            user_question=user_question,
+            images=images,
+            case_profile=case_profile,
+            guideline_name=guideline,
+            image_analysis_text=image_analysis,
+        )
 
         if not result or not isinstance(result, dict):
             raise RuntimeError("AI returned empty or invalid response")

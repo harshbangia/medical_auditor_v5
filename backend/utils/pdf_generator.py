@@ -64,7 +64,39 @@ def generate_pdf(data, filename="audit_report.pdf"):
     content.append(Spacer(1, 10))
 
     # =========================
-    # IMAGING FINDINGS (NEW)
+    # COMPLIANCE & CHALLENGES
+    # =========================
+    verdict = (data.get("compliance_verdict") or "").strip()
+    if verdict:
+        content.append(Paragraph("Compliance Verdict", styles["Heading2"]))
+        content.append(Paragraph(verdict, styles["Normal"]))
+        content.append(Spacer(1, 8))
+
+    deviations = data.get("guideline_deviations") or []
+    if deviations:
+        content.append(Paragraph("Guideline Deviations", styles["Heading2"]))
+        for dev in deviations:
+            if isinstance(dev, dict):
+                content.append(Paragraph(
+                    f"{dev.get('issue','')} [{dev.get('severity','')}] — "
+                    f"Guideline: {dev.get('guideline_expectation','')} — "
+                    f"Evidence: {dev.get('case_evidence','')}",
+                    styles["Normal"],
+                ))
+            else:
+                content.append(Paragraph(f"- {dev}", styles["Normal"]))
+            content.append(Spacer(1, 3))
+        content.append(Spacer(1, 8))
+
+    challenges = data.get("challenge_points") or []
+    if challenges:
+        content.append(Paragraph("Hospital Must Justify", styles["Heading2"]))
+        for pt in challenges:
+            content.append(Paragraph(f"- {pt}", styles["Normal"]))
+        content.append(Spacer(1, 10))
+
+    # =========================
+    # IMAGING FINDINGS
     # =========================
     if data.get("imaging_findings"):
         content.append(Paragraph("4. Imaging Findings", styles["Heading2"]))

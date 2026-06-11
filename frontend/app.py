@@ -1025,6 +1025,44 @@ if "report" in st.session_state:
         unsafe_allow_html=True,
     )
 
+    verdict = (data.get("compliance_verdict") or "").strip()
+    if verdict:
+        v_lower = verdict.lower()
+        if "non" in v_lower or "not" in v_lower:
+            st.error(f"**Compliance verdict:** {verdict}")
+        elif "partial" in v_lower:
+            st.warning(f"**Compliance verdict:** {verdict}")
+        elif "compliant" in v_lower and "partial" not in v_lower:
+            st.success(f"**Compliance verdict:** {verdict}")
+        else:
+            st.info(f"**Compliance verdict:** {verdict}")
+
+    deviations = data.get("guideline_deviations") or []
+    if deviations:
+        st.markdown('<p class="gwx-section-title">Guideline deviations</p>', unsafe_allow_html=True)
+        for dev in deviations:
+            if isinstance(dev, dict):
+                sev = dev.get("severity") or "—"
+                st.markdown(
+                    f"""
+                    <div class="gwx-card" style="border-left:4px solid #dc2626;">
+                    <p class="gwx-row-tight"><strong>{dev.get('issue') or 'Deviation'}</strong>
+                    <span class="gwx-ref-pill">{sev}</span></p>
+                    <p class="gwx-row-tight"><strong>Guideline expects:</strong> {dev.get('guideline_expectation') or '—'}</p>
+                    <p class="gwx-row-tight"><strong>Case evidence:</strong> {dev.get('case_evidence') or '—'}</p>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+            elif dev:
+                st.warning(str(dev))
+
+    challenges = data.get("challenge_points") or []
+    if challenges:
+        st.markdown('<p class="gwx-section-title">Points the hospital must justify</p>', unsafe_allow_html=True)
+        for pt in challenges:
+            st.markdown(f"- **Challenge:** {pt}")
+
     if data.get("imaging_findings"):
         st.markdown('<p class="gwx-section-title">Imaging findings</p>', unsafe_allow_html=True)
         for img in data["imaging_findings"]:
@@ -1121,12 +1159,22 @@ if "report" in st.session_state:
             unsafe_allow_html=True,
         )
     for idx, obs in enumerate(data.get("observations", []), start=1):
+        answer = str(obs.get("answer") or "").strip()
+        ans_lower = answer.lower()
+        if "not supported" in ans_lower:
+            ans_style = "color:#b91c1c;font-weight:600;"
+        elif "partial" in ans_lower or "insufficient" in ans_lower:
+            ans_style = "color:#b45309;font-weight:600;"
+        elif "supported" in ans_lower:
+            ans_style = "color:#047857;font-weight:600;"
+        else:
+            ans_style = ""
         st.markdown(
             f"""
             <div class="gwx-card">
             <p class="gwx-row-tight"><strong>Q{idx}:</strong> {obs.get('question')}</p>
             <p class="gwx-row-tight"><strong>Analysis:</strong> {obs.get('analysis')}</p>
-            <p class="gwx-row-tight"><strong>Answer:</strong> {obs.get('answer')}</p>
+            <p class="gwx-row-tight"><strong>Answer:</strong> <span style="{ans_style}">{answer or '—'}</span></p>
             </div>
             """,
             unsafe_allow_html=True,

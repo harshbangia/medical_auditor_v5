@@ -1,5 +1,6 @@
 import base64
 import os
+import re
 from io import BytesIO
 
 import fitz
@@ -8,11 +9,18 @@ from pdf2image import convert_from_path
 
 MIN_NATIVE_TEXT = 1000
 LOW_PAGE_TEXT = 80
-MAX_VISION_IMAGES = 8
-# Keep low on EC2 — parallel OCR across files + pages causes OOM (502 on status polls)
+MAX_VISION_IMAGES = int(os.getenv("MAX_VISION_IMAGES", "12"))
 OCR_WORKERS = max(1, min(int(os.getenv("OCR_WORKERS", "2")), 2))
 MAX_OCR_PAGES = int(os.getenv("MAX_OCR_PAGES", "30"))
 PDF_DPI = int(os.getenv("PDF_DPI", "150"))
+
+_CLINICAL_KEYWORDS = re.compile(
+    r"\b(x-?ray|radiograph|ct\s|mri|ultrasound|usg|ecg|ekg|echo|histopath|biopsy|"
+    r"specimen|wound|lesion|ulcer|fracture|scan|impression|film|mammogram|"
+    r"doppler|endoscopy|colonoscopy|laparoscop|operative photo|clinical photo|"
+    r"pre-?op|post-?op|specimen|gram stain|cytology)\b",
+    re.I,
+)
 
 
 def _page_to_b64(pil_image, quality=70):
@@ -47,7 +55,151 @@ def _convert_pages(pdf_path, first_page=None, last_page=None):
     return convert_from_path(pdf_path, **kwargs)
 
 
+def _vision_score(page_text: str, image_count: int, page_area: float) -> int:
+    score = 0
+    text_len = len((page_text or "").strip())
+    if text_len < LOW_PAGE_TEXT:
+        score += 3
+    if image_count > 0:
+        score += 2 + min(image_count, 3)
+    if _CLINICAL_KEYWORDS.search(page_text or ""):
+        score += 4
+    if page_area > 400000:
+        score += 1
+    return score
+
+
+def _extract_embedded_images(doc, page_num, limit=3):
+    """Extract up to `limit` embedded images from one page."""
+    images = []
+    page = doc[page_num - 1]
+    for img in page.get_images(full=True):
+        if len(images) >= limit:
+            break
+        try:
+            base_image = doc.extract_image(img[0])
+            raw = base_image.get("image") or b""
+            if len(raw) < 3000:
+                continue
+            images.append(
+                {
+                    "base64": base64.b64encode(raw).decode(),
+                    "page": page_num,
+                    "kind": "embedded",
+                }
+            )
+        except Exception:
+            continue
+    return images
+
+
+def _render_page_image(pdf_path, page_num):
+    rendered = _convert_pages(pdf_path, page_num, page_num)
+    if not rendered:
+        return None
+    return {"base64": _page_to_b64(rendered[0]), "page": page_num, "kind": "render"}
+
+
+def extract_text_and_images(pdf_path, source_name: str = ""):
+    text_parts = []
+    page_meta = []
+    page_count = 0
+
+    doc = fitz.open(pdf_path)
+    page_count = len(doc)
+
+    for i, page in enumerate(doc):
+        page_num = i + 1
+        page_text = page.get_text() or ""
+        text_parts.append(page_text)
+        img_count = len(page.get_images(full=True))
+        page_meta.append(
+            {
+                "page": page_num,
+                "text": page_text,
+                "image_count": img_count,
+                "score": _vision_score(page_text, img_count, page.rect.width * page.rect.height),
+            }
+        )
+
+    full_text = "\n".join(text_parts)
+    native_len = len(full_text.strip())
+    doc.close()
+
+    if native_len < MIN_NATIVE_TEXT:
+        if native_len > 200:
+            low_pages = [m["page"] for m in page_meta if len(m["text"].strip()) < LOW_PAGE_TEXT]
+            print(f"⚠️ Partial native text ({native_len} chars) → selective OCR on {len(low_pages)} pages")
+            try:
+                ocr_parts = []
+                for page_num in low_pages[:MAX_OCR_PAGES]:
+                    rendered = _convert_pages(pdf_path, page_num, page_num)
+                    if rendered:
+                        ocr_parts.append(_ocr_image(rendered[0]))
+                        del rendered
+                full_text = full_text + "\n" + "\n".join(ocr_parts)
+            except Exception as e:
+                print("❌ Selective OCR failed:", e)
+        else:
+            print(f"⚠️ Low native text ({native_len} chars) → full OCR")
+            try:
+                rendered_pages = _convert_pages(pdf_path)
+                print(f"🧠 OCR {len(rendered_pages)} pages (workers={OCR_WORKERS})")
+                ocr_parts = _parallel_ocr(rendered_pages)
+                del rendered_pages
+                full_text = full_text + "\n" + "\n".join(ocr_parts)
+            except Exception as e:
+                print("❌ OCR FAILED:", e)
+    else:
+        print(f"✅ Skipping OCR ({native_len} chars native text)")
+
+    # Vision candidates: rank pages by clinical relevance
+    ranked_pages = sorted(page_meta, key=lambda m: m["score"], reverse=True)
+    images = []
+    seen_pages = set()
+
+    doc = fitz.open(pdf_path)
+    for meta in ranked_pages:
+        if len(images) >= MAX_VISION_IMAGES:
+            break
+        page_num = meta["page"]
+        if page_num in seen_pages:
+            continue
+
+        embedded = _extract_embedded_images(doc, page_num, limit=2)
+        for img in embedded:
+            if len(images) >= MAX_VISION_IMAGES:
+                break
+            img["source"] = source_name
+            images.append(img)
+            seen_pages.add(page_num)
+
+        # Render page if high-score but no usable embedded image, or scan-like page
+        needs_render = meta["score"] >= 4 and not embedded
+        if needs_render and len(images) < MAX_VISION_IMAGES:
+            try:
+                rendered = _render_page_image(pdf_path, page_num)
+                if rendered:
+                    rendered["source"] = source_name
+                    images.append(rendered)
+                    seen_pages.add(page_num)
+            except Exception as e:
+                print(f"⚠️ Page render failed p{page_num}:", e)
+
+    doc.close()
+
+    if len(images) > MAX_VISION_IMAGES:
+        images = images[:MAX_VISION_IMAGES]
+
+    print(
+        f"📄 {source_name or pdf_path}: {len(full_text)} chars, "
+        f"{len(images)} vision images ({page_count} pages)"
+    )
+    return full_text, images
+
+
 def extract_text_from_pdf(pdf_path):
+    """Text-only extraction for guideline indexing (no vision pass)."""
     text = ""
     try:
         doc = fitz.open(pdf_path)
@@ -73,105 +225,6 @@ def extract_text_from_pdf(pdf_path):
     return text
 
 
-def _extract_embedded_images(doc, limit=MAX_VISION_IMAGES):
-    images = []
-    for page_num, page in enumerate(doc, start=1):
-        for img in page.get_images(full=True):
-            if len(images) >= limit:
-                return images
-            try:
-                xref = img[0]
-                base_image = doc.extract_image(xref)
-                if len(base_image.get("image") or b"") < 5000:
-                    continue
-                images.append(
-                    {
-                        "base64": base64.b64encode(base_image["image"]).decode(),
-                        "page": page_num,
-                    }
-                )
-            except Exception:
-                continue
-    return images
-
-
-def extract_text_and_images(pdf_path):
-    text_parts = []
-    low_text_page_nums = []
-    clinical_render_pages = []
-    page_count = 0
-
-    doc = fitz.open(pdf_path)
-    page_count = len(doc)
-
-    for i, page in enumerate(doc):
-        page_text = page.get_text() or ""
-        text_parts.append(page_text)
-        if len(page_text.strip()) < LOW_PAGE_TEXT:
-            low_text_page_nums.append(i + 1)
-            if len(page.get_images(full=True)) >= 2:
-                clinical_render_pages.append(i + 1)
-
-    full_text = "\n".join(text_parts)
-    native_len = len(full_text.strip())
-
-    # Release PDF handle before heavy OCR / rendering
-    embedded_images = _extract_embedded_images(doc, limit=MAX_VISION_IMAGES)
-    doc.close()
-    doc = None
-
-    if native_len < MIN_NATIVE_TEXT:
-        if native_len > 200 and low_text_page_nums:
-            print(f"⚠️ Partial native text ({native_len} chars) → OCR on {len(low_text_page_nums)} pages")
-            try:
-                ocr_parts = []
-                for page_num in low_text_page_nums[:MAX_OCR_PAGES]:
-                    rendered = _convert_pages(pdf_path, page_num, page_num)
-                    if rendered:
-                        ocr_parts.append(_ocr_image(rendered[0]))
-                        del rendered
-                full_text = full_text + "\n" + "\n".join(ocr_parts)
-            except Exception as e:
-                print("❌ Selective OCR failed:", e)
-        else:
-            print(f"⚠️ Low native text ({native_len} chars) → full OCR")
-            try:
-                rendered_pages = _convert_pages(pdf_path)
-                print(f"🧠 OCR {len(rendered_pages)} pages (workers={OCR_WORKERS})")
-                ocr_parts = _parallel_ocr(rendered_pages)
-                del rendered_pages
-                full_text = full_text + "\n" + "\n".join(ocr_parts)
-                clinical_render_pages = low_text_page_nums[:MAX_VISION_IMAGES]
-            except Exception as e:
-                print("❌ OCR FAILED:", e)
-    else:
-        print(f"✅ Skipping OCR ({native_len} chars native text)")
-
-    if native_len >= MIN_NATIVE_TEXT:
-        images = embedded_images
-    else:
-        images = list(embedded_images)
-        seen = {img["page"] for img in images}
-        for page_num in clinical_render_pages[:MAX_VISION_IMAGES]:
-            if page_num in seen:
-                continue
-            try:
-                rendered = _convert_pages(pdf_path, page_num, page_num)
-                if rendered:
-                    images.append({"base64": _page_to_b64(rendered[0]), "page": page_num})
-                    seen.add(page_num)
-                    del rendered
-            except Exception as e:
-                print(f"⚠️ Page render failed p{page_num}:", e)
-
-    if len(images) > MAX_VISION_IMAGES:
-        step = len(images) / MAX_VISION_IMAGES
-        images = [images[int(i * step)] for i in range(MAX_VISION_IMAGES)]
-
-    print(f"📄 Done: {len(full_text)} chars, {len(images)} vision images ({page_count} pages)")
-    return full_text, images
-
-
 def process_pdf_file(file_bytes: bytes, filename: str = "upload.pdf"):
     import tempfile
 
@@ -181,7 +234,7 @@ def process_pdf_file(file_bytes: bytes, filename: str = "upload.pdf"):
             tmp.write(file_bytes)
             tmp.flush()
             tmp_path = tmp.name
-        text, imgs = extract_text_and_images(tmp_path)
+        text, imgs = extract_text_and_images(tmp_path, source_name=filename)
         return {"filename": filename, "text": text, "images": imgs, "error": None}
     except Exception as exc:
         return {"filename": filename, "text": "", "images": [], "error": str(exc)}
