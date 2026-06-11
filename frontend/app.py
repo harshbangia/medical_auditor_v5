@@ -798,6 +798,9 @@ if run:
 
             if data.get("status") == "completed":
                 result = data.get("result")
+                if isinstance(result, dict) and result.get("error"):
+                    st.error(f"Audit failed: {result.get('error')}")
+                    st.stop()
                 break
             if data.get("status") == "failed":
                 st.error(data.get("error") or data.get("message") or "Audit failed")

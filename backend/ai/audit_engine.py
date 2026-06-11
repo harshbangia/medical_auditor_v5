@@ -7,10 +7,11 @@ from typing import Optional
 
 import backend.config  # noqa: F401 — load .env before OpenAI client
 
+from backend.ai.llm_helpers import extract_response_text, image_input_part
 from backend.ai.case_profiler import normalize_str_list, profile_to_audit_context
 from backend.llm_client import get_openai_client
 
-_VISION_BATCH_SIZE = int(os.getenv("VISION_BATCH_SIZE", "3"))
+_VISION_BATCH_SIZE = 1  # one image per API call — avoids multimodal 400 errors
 _VISION_MODEL = os.getenv("VISION_MODEL", "gpt-4o-mini")
 _AUDIT_MODEL = os.getenv("AUDIT_MODEL", "gpt-4o")
 
@@ -82,30 +83,33 @@ def _select_images_for_audit(images, max_images=12):
 
 
 def _analyze_image_batch(batch, case_hint: str = "") -> str:
-    content = [{"type": "input_text", "text": _VISION_PROMPT}]
-    if case_hint:
-        content.append({"type": "input_text", "text": f"Case context: {case_hint[:800]}"})
-
+    """Analyze images one per request — reliable format for Responses API vision."""
+    parts = []
     for img in batch:
+        b64 = (img.get("base64") or "").strip()
+        if not b64:
+            continue
         label = f"Page {img['page']}"
         if img.get("source"):
             label += f" ({img['source']})"
+        content = [
+            {"type": "input_text", "text": _VISION_PROMPT},
+        ]
+        if case_hint:
+            content.append({"type": "input_text", "text": f"Case context: {case_hint[:800]}"})
         content.append({"type": "input_text", "text": label})
-        content.append({"type": "input_image", "image_base64": img["base64"]})
-
-    try:
-        response = get_openai_client().responses.create(model=_VISION_MODEL, input=[{"role": "user", "content": content}])
-        text = ""
-        if hasattr(response, "output") and response.output:
-            for item in response.output:
-                if hasattr(item, "content"):
-                    for c in item.content:
-                        if hasattr(c, "text"):
-                            text += c.text
-        return text.strip()
-    except Exception as exc:
-        pages = ", ".join(str(i["page"]) for i in batch)
-        return f"[VISION ERROR pages {pages}]: {exc}"
+        content.append(image_input_part(b64, detail="low"))
+        try:
+            response = get_openai_client().responses.create(
+                model=_VISION_MODEL,
+                input=[{"role": "user", "content": content}],
+            )
+            text = extract_response_text(response)
+            if text:
+                parts.append(text)
+        except Exception as exc:
+            parts.append(f"[VISION ERROR page {img['page']}]: {exc}")
+    return "\n\n".join(parts).strip()
 
 
 def analyze_case_images(images, case_hint: str = "") -> str:
@@ -294,6 +298,32 @@ GUIDELINE EXCERPTS ({guideline_name}):
 """
 
 
+def _call_audit_llm(prompt: str) -> str:
+    """Call audit model with JSON output; fall back to Chat Completions if needed."""
+    client = get_openai_client()
+
+    try:
+        response = client.responses.create(
+            model=_AUDIT_MODEL,
+            input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
+            text={"format": {"type": "json_object"}},
+        )
+        text = extract_response_text(response)
+        if text:
+            return text
+        print("⚠️ Responses audit returned empty text; trying chat completions fallback")
+    except Exception as exc:
+        print(f"⚠️ Responses audit error: {exc}; trying chat completions fallback")
+
+    response = client.chat.completions.create(
+        model=_AUDIT_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        response_format={"type": "json_object"},
+        temperature=0.2,
+    )
+    return (response.choices[0].message.content or "").strip()
+
+
 def run_audit(
     case_text,
     guideline_text,
@@ -334,22 +364,15 @@ def run_audit(
         user_question,
     )
 
-    response = get_openai_client().responses.create(
-        model=_AUDIT_MODEL,
-        input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
-    )
+    raw_output = _call_audit_llm(prompt)
+    if not raw_output:
+        print("❌ Audit LLM returned empty output")
+        return {"error": "Invalid AI response", "detail": "Model returned empty output"}
 
-    raw_output = ""
-    if hasattr(response, "output") and response.output:
-        for item in response.output:
-            if hasattr(item, "content"):
-                for c in item.content:
-                    if hasattr(c, "text"):
-                        raw_output += c.text
-
-    data = _parse_audit_json(raw_output.strip())
+    data = _parse_audit_json(raw_output)
     if data.get("error"):
         print("❌ Audit JSON parse failed:", data.get("parse_error", data.get("error")))
+        print("❌ Raw snippet:", raw_output[:500])
         return data
 
     data = _ensure_challenge_fields(data)

@@ -230,6 +230,10 @@ def run_full_audit(
         if not result or not isinstance(result, dict):
             raise RuntimeError("AI returned empty or invalid response")
 
+        if result.get("error"):
+            detail = result.get("parse_error") or result.get("detail") or result.get("error")
+            raise RuntimeError(f"AI audit failed: {detail}")
+
         result = _ensure_result_shape(result)
 
         if all([
