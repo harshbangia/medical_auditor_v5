@@ -7,7 +7,7 @@ from typing import Optional
 
 import backend.config  # noqa: F401 — load .env before OpenAI client
 
-from backend.ai.case_profiler import profile_to_audit_context
+from backend.ai.case_profiler import normalize_str_list, profile_to_audit_context
 from backend.llm_client import get_openai_client
 
 _VISION_BATCH_SIZE = int(os.getenv("VISION_BATCH_SIZE", "3"))
@@ -311,7 +311,7 @@ def run_audit(
     if image_analysis_text is None and images:
         hint = ""
         if case_profile:
-            hint = f"{case_profile.get('diagnosis', '')} | {', '.join(case_profile.get('procedures') or [])}"
+            hint = f"{case_profile.get('diagnosis', '')} | {', '.join(normalize_str_list(case_profile.get('procedures')))}"
         image_analysis_text = analyze_case_images(images, case_hint=hint)
     else:
         image_analysis_text = image_analysis_text or ""

@@ -6,7 +6,7 @@ from typing import Callable, List, Optional
 from uuid import uuid4
 
 from backend.ai.audit_engine import analyze_case_images, run_audit
-from backend.ai.case_profiler import extract_case_profile
+from backend.ai.case_profiler import extract_case_profile, normalize_str_list
 from backend.ai.guideline_selector import select_guideline
 from backend.rag.guideline_retriever import retrieve_guideline_sections
 from backend.rag.rag_manager import get_or_create_index
@@ -201,7 +201,7 @@ def run_full_audit(
 
         case_hint = (
             f"{case_profile.get('diagnosis', '')} | "
-            f"{', '.join(case_profile.get('procedures') or [])}"
+            f"{', '.join(normalize_str_list(case_profile.get('procedures')))}"
         )
 
         progress("rag", 72, "Retrieving relevant guideline criteria…")

@@ -2,14 +2,15 @@
 
 from typing import Dict, List
 
+from backend.ai.case_profiler import normalize_str_list
 from backend.rag.vector_store import search_multi
 
 
 def _queries_from_profile(profile: dict, case_excerpt: str) -> List[str]:
     diagnosis = profile.get("diagnosis") or ""
     age = profile.get("age") or ""
-    procedures = profile.get("procedures") or []
-    imaging = profile.get("imaging_mentioned") or []
+    procedures = normalize_str_list(profile.get("procedures"))
+    imaging = normalize_str_list(profile.get("imaging_mentioned"))
     admission = profile.get("admission_type") or ""
 
     proc_str = ", ".join(procedures[:5]) if procedures else ""
