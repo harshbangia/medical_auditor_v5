@@ -5,13 +5,10 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
 
-from dotenv import load_dotenv
-from openai import OpenAI
+import backend.config  # noqa: F401 — load .env before OpenAI client
 
 from backend.ai.case_profiler import profile_to_audit_context
-
-load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+from backend.llm_client import get_openai_client
 
 _VISION_BATCH_SIZE = int(os.getenv("VISION_BATCH_SIZE", "3"))
 _VISION_MODEL = os.getenv("VISION_MODEL", "gpt-4o-mini")
@@ -97,7 +94,7 @@ def _analyze_image_batch(batch, case_hint: str = "") -> str:
         content.append({"type": "input_image", "image_base64": img["base64"]})
 
     try:
-        response = client.responses.create(model=_VISION_MODEL, input=[{"role": "user", "content": content}])
+        response = get_openai_client().responses.create(model=_VISION_MODEL, input=[{"role": "user", "content": content}])
         text = ""
         if hasattr(response, "output") and response.output:
             for item in response.output:
@@ -337,7 +334,7 @@ def run_audit(
         user_question,
     )
 
-    response = client.responses.create(
+    response = get_openai_client().responses.create(
         model=_AUDIT_MODEL,
         input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
     )

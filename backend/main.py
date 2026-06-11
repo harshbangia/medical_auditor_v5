@@ -8,6 +8,8 @@ import os
 import json
 import tempfile
 import traceback
+
+import backend.config  # noqa: F401 — load .env at startup
 from backend.ai.audit_engine import run_audit
 from backend.utils.pdf_generator import generate_pdf
 from backend.utils.pdf_filename import pdf_download_filename

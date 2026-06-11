@@ -1,11 +1,7 @@
-from openai import OpenAI
 import os
-from dotenv import load_dotenv
 
-load_dotenv()
-
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
+import backend.config  # noqa: F401
+from backend.llm_client import get_openai_client
 from backend.services.s3_utils import guidelines_cache
 
 
@@ -47,7 +43,7 @@ CASE:
 {case_text[:3000]}
 """
 
-    response = client.responses.create(
+    response = get_openai_client().responses.create(
         model="gpt-4o-mini",
         input=prompt
     )

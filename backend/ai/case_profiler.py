@@ -1,12 +1,10 @@
 """Fast structured case extraction — drives targeted RAG and focused audit."""
 
 import json
-import os
 import re
 
-from openai import OpenAI
-
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+import backend.config  # noqa: F401 — load .env before OpenAI client
+from backend.llm_client import get_openai_client
 
 
 def _parse_json(text: str) -> dict:
@@ -58,6 +56,7 @@ CASE:
 {excerpt}
 """
 
+    client = get_openai_client()
     response = client.responses.create(model="gpt-4o-mini", input=prompt)
     raw = ""
     if hasattr(response, "output") and response.output:

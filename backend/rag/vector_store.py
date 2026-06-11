@@ -3,11 +3,9 @@ import re
 
 import faiss
 import numpy as np
-from dotenv import load_dotenv
-from openai import OpenAI
 
-load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+import backend.config  # noqa: F401 — load .env before OpenAI client
+from backend.llm_client import get_openai_client
 
 _CLINICAL_BOOST = [
     "diagnosis", "treatment", "surgery", "biopsy", "indication", "contraindication",
@@ -18,7 +16,7 @@ _CLINICAL_BOOST = [
 
 
 def get_embedding(text):
-    response = client.embeddings.create(
+    response = get_openai_client().embeddings.create(
         model="text-embedding-3-small",
         input=text,
     )
@@ -69,7 +67,7 @@ def build_vector_store(text):
     chunks = chunk_text(text)
     print(f"📦 Total chunks: {len(chunks)}")
 
-    response = client.embeddings.create(
+    response = get_openai_client().embeddings.create(
         model="text-embedding-3-small",
         input=chunks,
     )
