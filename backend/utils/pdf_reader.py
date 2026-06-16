@@ -100,14 +100,32 @@ def _convert_pages(pdf_path, first_page=None, last_page=None):
     return _render_pages_fitz(pdf_path, first_page=first_page, last_page=last_page, dpi=PDF_DPI)
 
 
+_TYPED_REPORT_TEXT_THRESHOLD = 600  # chars of native text that mark a page as a typed report
+
+
 def _vision_score(page_text: str, image_count: int, page_area: float) -> int:
+    """Rank pages for the IMAGE ANALYSIS vision pass.
+
+    Goal: surface genuine clinical images (scans, photos, films) — NOT typed
+    radiology reports or letters that happen to mention 'MRI' / 'CT' in their text.
+    """
     score = 0
     text_len = len((page_text or "").strip())
+    has_clinical_kw = bool(_CLINICAL_KEYWORDS.search(page_text or ""))
+
+    # Page is text-heavy → it's almost certainly a typed report or letter,
+    # not a clinical image to be visually interpreted. Vision OCR has already
+    # transcribed it; the image-analysis pass should leave it alone.
+    if text_len >= _TYPED_REPORT_TEXT_THRESHOLD:
+        return 0
+
     if text_len < LOW_PAGE_TEXT:
         score += 3
     if image_count > 0:
         score += 2 + min(image_count, 3)
-    if _CLINICAL_KEYWORDS.search(page_text or ""):
+    # Clinical-keyword bonus only on text-light pages (real image pages),
+    # never on typed pages that just mention 'MRI' in passing.
+    if has_clinical_kw and text_len < _TYPED_REPORT_TEXT_THRESHOLD:
         score += 4
     if page_area > 400000:
         score += 1
@@ -441,6 +459,26 @@ def extract_text_from_pdf(pdf_path):
     return text
 
 
+def _summarize_source(filename: str, text: str) -> dict:
+    """Produce a per-PDF provenance summary for the audit report."""
+    total = len(text or "")
+    vision_chars = 0
+    typed_chars = total
+    if "vision transcription" in (text or ""):
+        for block in (text or "").split("=== Page "):
+            if "— vision transcription" in block:
+                vision_chars += len(block)
+        typed_chars = max(0, total - vision_chars)
+    has_handwriting = vision_chars > 0
+    return {
+        "filename": filename,
+        "total_chars": total,
+        "typed_chars": typed_chars,
+        "handwritten_or_scanned_chars": vision_chars,
+        "contains_handwriting_or_scan": has_handwriting,
+    }
+
+
 def process_pdf_file(file_bytes: bytes, filename: str = "upload.pdf"):
     import tempfile
 
@@ -451,9 +489,28 @@ def process_pdf_file(file_bytes: bytes, filename: str = "upload.pdf"):
             tmp.flush()
             tmp_path = tmp.name
         text, imgs = extract_text_and_images(tmp_path, source_name=filename)
-        return {"filename": filename, "text": text, "images": imgs, "error": None}
+        return {
+            "filename": filename,
+            "text": text,
+            "images": imgs,
+            "source_summary": _summarize_source(filename, text),
+            "error": None,
+        }
     except Exception as exc:
-        return {"filename": filename, "text": "", "images": [], "error": str(exc)}
+        return {
+            "filename": filename,
+            "text": "",
+            "images": [],
+            "source_summary": {
+                "filename": filename,
+                "total_chars": 0,
+                "typed_chars": 0,
+                "handwritten_or_scanned_chars": 0,
+                "contains_handwriting_or_scan": False,
+                "error": str(exc),
+            },
+            "error": str(exc),
+        }
     finally:
         if tmp_path and os.path.exists(tmp_path):
             try:

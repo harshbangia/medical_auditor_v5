@@ -9,6 +9,7 @@ import backend.config  # noqa: F401 — load .env before OpenAI client
 
 from backend.ai.llm_helpers import extract_response_text, image_input_part
 from backend.ai.case_profiler import normalize_str_list, profile_to_audit_context
+from backend.ai.drug_normalizer import build_medication_evidence_section
 from backend.llm_client import get_openai_client
 
 _VISION_BATCH_SIZE = 1  # one image per API call — avoids multimodal 400 errors
@@ -20,26 +21,31 @@ _VISION_PROMPT = """You are assisting an INSURANCE MEDICAL AUDITOR reviewing hos
 Each image is one page of a claim file. It may be:
 - a clinical image (X-ray, CT/MRI slice, ultrasound, wound photo, histopath slide, ECG, etc.)
 - a handwritten doctor's consultation note, prescription, or operative note
-- a money receipt, hospital bill, invoice, or pharmacy bill
-- an admission slip, discharge summary, referral letter, or hospital letterhead
-- an insurance / ID card, pre-auth form, policy page, or KYC document
-- a printed lab or radiology report
 
-Read the image carefully. Transcribe key details you can see — names, dates, drug names,
-dosages, amounts, diagnoses, registration numbers, hospital names, signatures, stamps —
-then state how the page bears on the claim.
+For other document types — typed radiology reports, typed lab reports, hospital
+letters, money receipts, ID cards, etc. — the text has ALREADY been transcribed
+upstream and forwarded to the auditor. Do NOT re-transcribe and do NOT critique
+the print/scan resolution of typed pages. Reply only:
+"Page N: Typed document (already transcribed) — Informational"
 
-For clinical images, also:
+For genuine clinical images, do all of the following:
 1. Describe ONLY what is visible — do not invent findings.
 2. State whether findings SUPPORT or CONTRADICT typical documentation for the stated diagnosis.
-3. Flag quality issues: poor exposure, wrong view, missing comparison, illegible labels.
+3. Flag clinically relevant quality issues (poor exposure, wrong view, missing comparison,
+   illegible anatomical labels) — but NEVER critique a page just because the PDF render is
+   low resolution. Image quality complaints must be about the underlying clinical capture,
+   not the document scan.
 4. Note if the image alone is INSUFFICIENT to justify the billed procedure/admission.
+
+For handwritten clinical notes, transcribe the medically meaningful content (dates,
+diagnoses, drugs, dosages, plan) and state how it bears on the claim. Do not critique
+handwriting quality.
 
 If the page is genuinely blank or shows only a logo with no readable content, say
 "Blank page — no audit content."
 
 Format per image (multi-line is fine):
-Page N: [Document type] — [Key content / findings] — [Support / Challenge / Insufficient / Informational] — [Notes for auditor]
+Page N: [Document type] — [Key clinical content] — [Support / Challenge / Insufficient / Informational] — [Notes for auditor]
 """
 
 _CHALLENGE_ANSWERS = (
@@ -257,6 +263,8 @@ You MUST:
 - Cross-examine whether admission, procedures, investigations, and charges are medically necessary per guideline
 - Identify deviations, missing prerequisites, and documentation that fails to justify the claim
 - Use image analysis when provided — do NOT claim imaging is "missing" if IMAGE ANALYSIS section has content
+- Use the MEDICATION EVIDENCE section (if present) when judging prior medical therapy — do NOT claim a drug
+  class was "never tried" if the section lists a brand from that class
 - Produce at least 5 observations; minimum 3 must challenge or question the hospital (answer: Not Supported, Partially Supported, or Insufficient Evidence)
 - Cite specific case facts AND specific guideline expectations in every observation
 
@@ -264,8 +272,21 @@ Observation "answer" MUST be exactly one of: {_CHALLENGE_ANSWERS}
 
 compliance_verdict MUST be one of: Compliant | Partially Compliant | Non-Compliant | Cannot Determine
 
+claim_details.nature_of_admission MUST be one of:
+  Planned / Elective | Emergency | Day Care | Maternity | Unknown
+RULES for nature_of_admission:
+- Use "Emergency" ONLY when the documents explicitly use the words "emergency", "ER",
+  "casualty", "walk-in", "trauma", or describe an acute event (e.g. MI, stroke, RTA, sepsis,
+  status epilepticus, acute abdomen) where admission happened within 24 hours of onset.
+- A pre-authorization request filed days in advance for a chronic condition (trigeminal
+  neuralgia, OA knee, cataract, BPH, planned CABG/PTCA, elective hernia, planned hysterectomy,
+  etc.) is "Planned / Elective" — even if the patient is admitted to an ICU/HDU post-op.
+- If the documents do not indicate either, use "Unknown" — never guess "Emergency".
+
 DO NOT write generic boilerplate. DO NOT defend the hospital when evidence is weak.
 DO NOT hallucinate facts not in the case. When data is missing, use "Insufficient Evidence" and list in documentation_gaps.
+DO NOT critique typed radiology/lab reports as "low quality images" — they are typed
+documents; quality complaints must be about the underlying clinical capture, not the PDF scan.
 
 {"Clinical images WERE analyzed — use IMAGE ANALYSIS below as imaging evidence." if has_images else "No image analysis available — flag missing imaging in documentation_gaps if clinically required by guideline."}
 
@@ -368,6 +389,10 @@ def run_audit(
         case_context = (
             "[IMAGING ANALYZED — see IMAGE ANALYSIS section]\n" + case_context
         )
+
+    drug_evidence = build_medication_evidence_section(case_text)
+    if drug_evidence:
+        case_context = drug_evidence + "\n\n" + case_context
 
     prompt = _build_audit_prompt(
         case_context,

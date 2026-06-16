@@ -222,7 +222,7 @@ def generate_pdf(data, filename="audit_report.pdf"):
     content.append(Spacer(1, 10))
 
     # =========================
-    # Q&A SECTION (🔥 NEW)
+    # Q&A SECTION
     # =========================
     if "qa_section" in data and data["qa_section"]:
         content.append(Paragraph("14. Questions & Answers", styles["Heading2"]))
@@ -232,6 +232,48 @@ def generate_pdf(data, filename="audit_report.pdf"):
             content.append(Paragraph(f"A: {qa.get('answer')}", styles["Normal"]))
             content.append(Paragraph(f"Justification: {qa.get('justification')}", styles["Normal"]))
             content.append(Spacer(1, 5))
+
+    # =========================
+    # DOCUMENT SOURCES (provenance — proves which docs were read)
+    # =========================
+    sources = data.get("document_sources") or []
+    if sources:
+        content.append(Spacer(1, 10))
+        content.append(Paragraph("15. Document Sources Read", styles["Heading2"]))
+        content.append(Paragraph(
+            "Per-file extraction summary. \"Handwritten / scanned chars\" indicates "
+            "content captured by the vision OCR pass (doctor's notes, prescriptions, "
+            "receipts, scanned letters).",
+            styles["Normal"],
+        ))
+        content.append(Spacer(1, 5))
+        total_hand = 0
+        for src in sources:
+            if not isinstance(src, dict):
+                continue
+            fname = src.get("filename", "(unknown)")
+            total = src.get("total_chars", 0)
+            typed = src.get("typed_chars", 0)
+            hand = src.get("handwritten_or_scanned_chars", 0)
+            total_hand += hand
+            tag = " — contains handwriting / scan" if src.get("contains_handwriting_or_scan") else ""
+            content.append(Paragraph(
+                f"<b>{fname}</b>: {total} chars total "
+                f"(typed: {typed}, handwritten/scanned: {hand}){tag}",
+                styles["Normal"],
+            ))
+            if src.get("error"):
+                content.append(Paragraph(f"&nbsp;&nbsp;Error: {src['error']}", styles["Normal"]))
+            content.append(Spacer(1, 3))
+        if total_hand > 0:
+            content.append(Spacer(1, 4))
+            content.append(Paragraph(
+                f"<b>Vision OCR captured {total_hand} characters of handwritten / scanned "
+                f"content across the case file.</b> Findings referencing the consultation "
+                f"date, procedure plan, hospital letterhead, and prescription medications "
+                f"are sourced from this pass.",
+                styles["Normal"],
+            ))
 
     # =========================
     # BUILD PDF

@@ -127,6 +127,7 @@ def _ensure_result_shape(result: dict) -> dict:
     result.setdefault("auditor_conclusion", "No conclusion generated")
     result.setdefault("remarks", "")
     result.setdefault("qa_section", [])
+    result.setdefault("document_sources", [])
     inf = (result.get("inference") or "").strip()
     ac = (result.get("auditor_conclusion") or "").strip()
     if inf and not ac:
@@ -140,7 +141,7 @@ def _ensure_result_shape(result: dict) -> dict:
 def _process_files_sequential(file_items: List[tuple], progress: ProgressFn) -> tuple:
     """Process PDFs one at a time to avoid OOM on small EC2 instances."""
     if not file_items:
-        return "", []
+        return "", [], []
 
     unique = {}
     for name, data in file_items:
@@ -152,6 +153,7 @@ def _process_files_sequential(file_items: List[tuple], progress: ProgressFn) -> 
     progress("extracting", 10, f"Processing {total} PDF(s)…")
     case_texts = []
     images = []
+    source_summaries = []
 
     for idx, (name, data) in enumerate(file_items):
         pct = 10 + int(55 * idx / max(total, 1))
@@ -162,10 +164,12 @@ def _process_files_sequential(file_items: List[tuple], progress: ProgressFn) -> 
         if res.get("text", "").strip():
             case_texts.append(res["text"])
         images.extend(res.get("images") or [])
+        if res.get("source_summary"):
+            source_summaries.append(res["source_summary"])
         pct_done = 10 + int(55 * (idx + 1) / total)
         progress("extracting", pct_done, f"Finished {idx + 1}/{total}: {name}")
 
-    return "\n\n".join(case_texts), images
+    return "\n\n".join(case_texts), images, source_summaries
 
 
 def run_full_audit(
@@ -176,7 +180,7 @@ def run_full_audit(
     progress: ProgressFn = _noop_progress,
 ) -> dict:
     started = time.time()
-    case_text, images = _process_files_sequential(file_items, progress)
+    case_text, images, source_summaries = _process_files_sequential(file_items, progress)
 
     if len(case_text.strip()) < 50:
         raise RuntimeError("No meaningful text extracted from uploaded PDFs")
@@ -235,6 +239,7 @@ def run_full_audit(
             raise RuntimeError(f"AI audit failed: {detail}")
 
         result = _ensure_result_shape(result)
+        result["document_sources"] = source_summaries
 
         if all([
             not result.get("patient_details"),
