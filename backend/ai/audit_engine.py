@@ -17,16 +17,29 @@ _AUDIT_MODEL = os.getenv("AUDIT_MODEL", "gpt-4o")
 
 _VISION_PROMPT = """You are assisting an INSURANCE MEDICAL AUDITOR reviewing hospital claim documents.
 
-For each clinical image (X-ray, CT/MRI slice, ultrasound, wound photo, histopath slide, ECG, etc.):
+Each image is one page of a claim file. It may be:
+- a clinical image (X-ray, CT/MRI slice, ultrasound, wound photo, histopath slide, ECG, etc.)
+- a handwritten doctor's consultation note, prescription, or operative note
+- a money receipt, hospital bill, invoice, or pharmacy bill
+- an admission slip, discharge summary, referral letter, or hospital letterhead
+- an insurance / ID card, pre-auth form, policy page, or KYC document
+- a printed lab or radiology report
+
+Read the image carefully. Transcribe key details you can see — names, dates, drug names,
+dosages, amounts, diagnoses, registration numbers, hospital names, signatures, stamps —
+then state how the page bears on the claim.
+
+For clinical images, also:
 1. Describe ONLY what is visible — do not invent findings.
-2. State whether findings SUPPORT or CONTRADICT typical documentation for the stated diagnosis (if context given).
+2. State whether findings SUPPORT or CONTRADICT typical documentation for the stated diagnosis.
 3. Flag quality issues: poor exposure, wrong view, missing comparison, illegible labels.
 4. Note if the image alone is INSUFFICIENT to justify the billed procedure/admission.
 
-If administrative/non-clinical/blank → say "Non-clinical page — no audit relevance."
+If the page is genuinely blank or shows only a logo with no readable content, say
+"Blank page — no audit content."
 
-Format per image:
-Page N: [Type] — [Findings] — [Support/Challenge/Insufficient] — [Notes]
+Format per image (multi-line is fine):
+Page N: [Document type] — [Key content / findings] — [Support / Challenge / Insufficient / Informational] — [Notes for auditor]
 """
 
 _CHALLENGE_ANSWERS = (
