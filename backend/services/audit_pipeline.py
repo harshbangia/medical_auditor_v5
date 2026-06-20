@@ -12,7 +12,9 @@ from backend.rag.guideline_retriever import retrieve_guideline_sections
 from backend.rag.rag_manager import get_or_create_index
 from backend.services.audit_jobs import AuditJob
 from backend.services.s3_utils import download_guideline
-from backend.utils.pdf_reader import process_pdf_file
+from backend.ai.clinical_synthesizer import build_clinical_synthesis_section
+from backend.utils.insurance_extractor import enrich_insurance_facts, merge_insurance_into_result
+from backend.utils.pdf_reader import extract_text_and_images
 
 ProgressFn = Callable[[str, int, str], None]
 
@@ -138,10 +140,28 @@ def _ensure_result_shape(result: dict) -> dict:
     return result
 
 
+def _summarize_source(filename: str, text: str) -> dict:
+    total = len(text or "")
+    vision_chars = 0
+    typed_chars = total
+    if "vision transcription" in (text or ""):
+        for block in (text or "").split("=== Page "):
+            if "— vision transcription" in block:
+                vision_chars += len(block)
+        typed_chars = max(0, total - vision_chars)
+    return {
+        "filename": filename,
+        "total_chars": total,
+        "typed_chars": typed_chars,
+        "handwritten_or_scanned_chars": vision_chars,
+        "contains_handwriting_or_scan": vision_chars > 0,
+    }
+
+
 def _process_files_sequential(file_items: List[tuple], progress: ProgressFn) -> tuple:
     """Process PDFs one at a time to avoid OOM on small EC2 instances."""
     if not file_items:
-        return "", [], []
+        return "", [], [], []
 
     unique = {}
     for name, data in file_items:
@@ -154,22 +174,29 @@ def _process_files_sequential(file_items: List[tuple], progress: ProgressFn) -> 
     case_texts = []
     images = []
     source_summaries = []
+    temp_pdf_paths = []
 
     for idx, (name, data) in enumerate(file_items):
         pct = 10 + int(55 * idx / max(total, 1))
         progress("extracting", pct, f"Processing PDF {idx + 1}/{total}: {name}")
-        res = process_pdf_file(data, name)
-        if res.get("error"):
-            raise RuntimeError(f"Failed to read {name}: {res['error']}")
-        if res.get("text", "").strip():
-            case_texts.append(res["text"])
-        images.extend(res.get("images") or [])
-        if res.get("source_summary"):
-            source_summaries.append(res["source_summary"])
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                tmp.write(data)
+                tmp.flush()
+                tmp_path = tmp.name
+            temp_pdf_paths.append((tmp_path, name))
+            text, imgs = extract_text_and_images(tmp_path, source_name=name)
+            if text.strip():
+                case_texts.append(text)
+            images.extend(imgs or [])
+            source_summaries.append(_summarize_source(name, text))
+        except Exception as exc:
+            raise RuntimeError(f"Failed to read {name}: {exc}") from exc
         pct_done = 10 + int(55 * (idx + 1) / total)
         progress("extracting", pct_done, f"Finished {idx + 1}/{total}: {name}")
 
-    return "\n\n".join(case_texts), images, source_summaries
+    return "\n\n".join(case_texts), images, source_summaries, temp_pdf_paths
 
 
 def run_full_audit(
@@ -180,10 +207,18 @@ def run_full_audit(
     progress: ProgressFn = _noop_progress,
 ) -> dict:
     started = time.time()
-    case_text, images, source_summaries = _process_files_sequential(file_items, progress)
+    temp_pdf_paths = []
+    guideline_path = None
+    case_text, images, source_summaries, temp_pdf_paths = _process_files_sequential(
+        file_items, progress
+    )
 
     if len(case_text.strip()) < 50:
         raise RuntimeError("No meaningful text extracted from uploaded PDFs")
+
+    progress("insurance", 58, "Extracting insurance details from letters…")
+    insurance_facts = enrich_insurance_facts(case_text, temp_pdf_paths)
+    clinical_synthesis = build_clinical_synthesis_section(case_text)
 
     progress("guideline", 65, "Loading clinical guideline…")
     if not guideline:
@@ -229,6 +264,8 @@ def run_full_audit(
             case_profile=case_profile,
             guideline_name=guideline,
             image_analysis_text=image_analysis,
+            insurance_facts=insurance_facts,
+            clinical_synthesis=clinical_synthesis,
         )
 
         if not result or not isinstance(result, dict):
@@ -239,6 +276,7 @@ def run_full_audit(
             raise RuntimeError(f"AI audit failed: {detail}")
 
         result = _ensure_result_shape(result)
+        result = merge_insurance_into_result(result, insurance_facts)
         result["document_sources"] = source_summaries
 
         if all([
@@ -261,7 +299,13 @@ def run_full_audit(
         progress("done", 100, f"Completed in {time.time() - started:.0f}s")
         return result
     finally:
-        if os.path.exists(guideline_path):
+        for pdf_path, _name in temp_pdf_paths:
+            if pdf_path and os.path.exists(pdf_path):
+                try:
+                    os.remove(pdf_path)
+                except OSError:
+                    pass
+        if guideline_path and os.path.exists(guideline_path):
             try:
                 os.remove(guideline_path)
             except OSError:

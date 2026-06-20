@@ -219,12 +219,37 @@ def _ensure_challenge_fields(data: dict) -> dict:
     return data
 
 
+def _format_insurance_facts_block(facts: dict) -> str:
+    if not facts:
+        return ""
+    lines = ["=== INSURANCE FACTS (extracted from claim letters — use these for insurance_details) ==="]
+    for key, label in (
+        ("insurance_company", "Insurance company"),
+        ("policy_number", "Policy number"),
+        ("claim_incident_number", "Claim / incident number"),
+        ("member_code", "Member code"),
+        ("policy_period", "Policy period"),
+    ):
+        val = str((facts or {}).get(key) or "").strip()
+        if val:
+            lines.append(f"{label}: {val}")
+    if len(lines) <= 1:
+        return ""
+    lines.append(
+        "Populate insurance_details from this section. Do NOT leave insurance_company blank "
+        "if it is listed here."
+    )
+    return "\n".join(lines)
+
+
 def _build_audit_prompt(
     case_context: str,
     guideline_text: str,
     guideline_name: str,
     image_analysis: str,
     user_question: Optional[str],
+    insurance_facts_block: str = "",
+    clinical_synthesis: str = "",
 ) -> str:
     imaging_block = image_analysis.strip() or "No clinical images were extracted from uploaded PDFs."
     has_images = bool(image_analysis.strip())
@@ -265,6 +290,9 @@ You MUST:
 - Use image analysis when provided — do NOT claim imaging is "missing" if IMAGE ANALYSIS section has content
 - Use the MEDICATION EVIDENCE section (if present) when judging prior medical therapy — do NOT claim a drug
   class was "never tried" if the section lists a brand from that class
+- Use the INSURANCE FACTS section for insurance_details — never leave insurance_company blank if listed there
+- Use the CLINICAL VISIT SYNTHESIS section when reporting symptom duration vs treatment course — these are
+  DIFFERENT facts from DIFFERENT pages; report BOTH separately in clinical_findings and observations
 - Produce at least 5 observations; minimum 3 must challenge or question the hospital (answer: Not Supported, Partially Supported, or Insufficient Evidence)
 - Cite specific case facts AND specific guideline expectations in every observation
 
@@ -287,6 +315,13 @@ DO NOT write generic boilerplate. DO NOT defend the hospital when evidence is we
 DO NOT hallucinate facts not in the case. When data is missing, use "Insufficient Evidence" and list in documentation_gaps.
 DO NOT critique typed radiology/lab reports as "low quality images" — they are typed
 documents; quality complaints must be about the underlying clinical capture, not the PDF scan.
+
+clinical_findings MUST include SEPARATE rows when documented:
+  1. Symptom duration at first/s subsequent consult (e.g. "Facial pain duration at presentation: 1 month")
+  2. Prescribed medication course duration (e.g. "Medical therapy course: 2 months — Zenoxa + Dolonex")
+  3. Follow-up interval (e.g. "Follow-up advised after: 2 months")
+Do NOT report only the shorter duration when both 1-month symptom history AND 2-month
+treatment course appear on different pages.
 
 {"Clinical images WERE analyzed — use IMAGE ANALYSIS below as imaging evidence." if has_images else "No image analysis available — flag missing imaging in documentation_gaps if clinically required by guideline."}
 
@@ -320,6 +355,10 @@ Return ONLY JSON:
   "remarks": "",
   "qa_section": []
 }}
+
+{insurance_facts_block}
+
+{clinical_synthesis}
 
 CASE:
 {case_context}
@@ -366,6 +405,8 @@ def run_audit(
     case_profile=None,
     guideline_name="",
     image_analysis_text=None,
+    insurance_facts=None,
+    clinical_synthesis=None,
 ):
     """
     Run adversarial audit. Pass image_analysis_text if already computed (pipeline parallelism).
@@ -394,12 +435,17 @@ def run_audit(
     if drug_evidence:
         case_context = drug_evidence + "\n\n" + case_context
 
+    insurance_block = _format_insurance_facts_block(insurance_facts or {})
+    synthesis_block = (clinical_synthesis or "").strip()
+
     prompt = _build_audit_prompt(
         case_context,
         guideline_text,
         guideline_name or "Clinical Guideline",
         image_analysis_text,
         user_question,
+        insurance_facts_block=insurance_block,
+        clinical_synthesis=synthesis_block,
     )
 
     raw_output = _call_audit_llm(prompt)
