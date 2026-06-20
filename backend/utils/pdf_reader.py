@@ -194,6 +194,18 @@ DISAMBIGUATION RULES (very important for handwriting):
 - Never silently change a word — every interpretive choice goes in UNCERTAIN.
 - If you genuinely cannot read a word, write [?] in BODY and list it in UNCERTAIN.
 
+PRESCRIPTION NOTATION (critical — do not confuse with symptom duration):
+- On a PRESCRIPTION page, "x 2 mths" / "x 2 mo" / "× 2 months" means medicines were
+  prescribed FOR 2 MONTHS — this is the TREATMENT COURSE, not how long the patient
+  had symptoms.
+- "F/u after 2 mths" / "Review after 2 mths" = follow-up after 2 MONTHS.
+- In Indian handwriting, "mths" / "mo" / "m" on prescription pages means MONTHS;
+  "wks" / "wk" means WEEKS. Do NOT read "mths" as "weeks".
+- Symptom duration ("facial pain x 1 month") appears on the CONSULTATION note page;
+  treatment course ("x 2 mths") appears on the PRESCRIPTION page — transcribe BOTH
+  on their respective pages exactly as written.
+- Common brands: Zenoxa/Zenoxo = oxcarbazepine; Dolokind/Dolonex = analgesic combo.
+
 Output format (plain text, no JSON, no markdown fences):
 
 DOCUMENT TYPE: <one short phrase, e.g. "Handwritten consultation note", "Money receipt", "Insurance ID card">
