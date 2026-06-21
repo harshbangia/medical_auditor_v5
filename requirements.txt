@@ -14,3 +14,4 @@ python-dotenv
 requests
 streamlit-cookies-manager
 tqdm
+reportlab

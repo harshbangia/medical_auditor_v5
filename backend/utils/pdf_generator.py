@@ -1,281 +1,306 @@
-from reportlab.platypus import *
+from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib import colors
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+
+from backend.utils.pdf_table_helpers import data_table, kv_table, section
+
+
+def _rows_from_dict(d: dict, mapping: list) -> list:
+    rows = []
+    for key, label in mapping:
+        val = str((d or {}).get(key) or "").strip()
+        rows.append((label, val or "—"))
+    return rows
+
 
 def generate_pdf(data, filename="audit_report.pdf"):
-
-    doc = SimpleDocTemplate(filename)
+    doc = SimpleDocTemplate(
+        filename,
+        pagesize=A4,
+        leftMargin=40,
+        rightMargin=40,
+        topMargin=40,
+        bottomMargin=40,
+    )
     styles = getSampleStyleSheet()
     content = []
 
-    # =========================
-    # TITLE
-    # =========================
+    # Title
     content.append(Paragraph("MEDICAL AUDIT REPORT", styles["Title"]))
-    content.append(Spacer(1, 12))
+    content.append(Spacer(1, 10))
 
     ref = data.get("report_ref") or data.get("audit_ref") or "-"
     rdate = data.get("report_date") or data.get("audit_date") or "-"
     content.append(Paragraph(f"<b>Ref:</b> {ref} &nbsp;&nbsp; <b>Date:</b> {rdate}", styles["Normal"]))
-    content.append(Spacer(1, 10))
+    content.append(Spacer(1, 12))
 
-    # =========================
-    # GUIDELINE USED
-    # =========================
-    content.append(Paragraph("Guideline Referenced", styles["Heading2"]))
-    content.append(Paragraph(data.get("guideline_used", "-"), styles["Normal"]))
-    content.append(Spacer(1, 10))
+    # Guideline
+    content.extend(section("Guideline Referenced", styles))
+    content.append(kv_table([("Guideline", data.get("guideline_used", "-"))], header=False))
+    content.append(Spacer(1, 12))
 
-    # =========================
-    # PATIENT DETAILS
-    # =========================
-    content.append(Paragraph("1. Patient Details", styles["Heading2"]))
-    p = data.get("patient_details", {})
+    # 1. Patient Details
+    content.extend(section("1. Patient Details", styles))
+    p = data.get("patient_details") or {}
+    content.append(kv_table(_rows_from_dict(p, [
+        ("name", "Name"),
+        ("age", "Age"),
+        ("sex", "Sex"),
+    ])))
+    content.append(Spacer(1, 12))
 
-    content.append(Paragraph(f"Name: {p.get('name','')}", styles["Normal"]))
-    content.append(Paragraph(f"Age: {p.get('age','')}", styles["Normal"]))
-    content.append(Paragraph(f"Sex: {p.get('sex','')}", styles["Normal"]))
-    content.append(Spacer(1, 10))
-
-    # =========================
-    # INSURANCE DETAILS
-    # =========================
+    # 2. Insurance Details
+    content.extend(section("2. Insurance Details", styles))
     ins = data.get("insurance_details") or {}
-    content.append(Paragraph("2. Insurance Details", styles["Heading2"]))
-    content.append(Paragraph(f"Insurance company: {ins.get('insurance_company', '')}", styles["Normal"]))
-    content.append(Paragraph(f"Policy number: {ins.get('policy_number', '')}", styles["Normal"]))
-    content.append(Paragraph(f"Policy period: {ins.get('policy_period', '')}", styles["Normal"]))
-    content.append(Paragraph(f"Claim / incident number: {ins.get('claim_incident_number', '')}", styles["Normal"]))
-    content.append(Spacer(1, 10))
+    content.append(kv_table(_rows_from_dict(ins, [
+        ("insurance_company", "Insurance company"),
+        ("policy_number", "Policy number"),
+        ("policy_period", "Policy period"),
+        ("claim_incident_number", "Claim / incident number"),
+    ])))
+    content.append(Spacer(1, 12))
 
-    # =========================
-    # CLAIM DETAILS
-    # =========================
-    content.append(Paragraph("3. Claim Details", styles["Heading2"]))
-    c = data.get("claim_details", {})
+    # 3. Claim Details
+    content.extend(section("3. Claim Details", styles))
+    c = data.get("claim_details") or {}
+    content.append(kv_table(_rows_from_dict(c, [
+        ("hospital", "Hospital"),
+        ("consultation_date", "Consultation date"),
+        ("date_of_admission", "Date of admission"),
+        ("date_of_discharge", "Date of discharge"),
+        ("nature_of_admission", "Nature of admission"),
+        ("procedure_or_surgery", "Procedure / surgery done"),
+        ("diagnosis", "Diagnosis"),
+    ])))
+    content.append(Spacer(1, 12))
 
-    content.append(Paragraph(f"Hospital: {c.get('hospital','')}", styles["Normal"]))
-    content.append(Paragraph(f"Consultation date: {c.get('consultation_date','')}", styles["Normal"]))
-    content.append(Paragraph(f"Date of admission: {c.get('date_of_admission','')}", styles["Normal"]))
-    content.append(Paragraph(f"Date of discharge: {c.get('date_of_discharge','')}", styles["Normal"]))
-    content.append(Paragraph(f"Nature of admission: {c.get('nature_of_admission','')}", styles["Normal"]))
-    content.append(Paragraph(f"Procedure / surgery done: {c.get('procedure_or_surgery','')}", styles["Normal"]))
-    content.append(Paragraph(f"Diagnosis: {c.get('diagnosis','')}", styles["Normal"]))
-    content.append(Spacer(1, 10))
-
-    # =========================
-    # COMPLIANCE & CHALLENGES
-    # =========================
+    # Compliance verdict
     verdict = (data.get("compliance_verdict") or "").strip()
     if verdict:
-        content.append(Paragraph("Compliance Verdict", styles["Heading2"]))
-        content.append(Paragraph(verdict, styles["Normal"]))
-        content.append(Spacer(1, 8))
+        content.extend(section("Compliance Verdict", styles))
+        content.append(kv_table([("Verdict", verdict)], header=False))
+        content.append(Spacer(1, 10))
 
+    # Guideline deviations
     deviations = data.get("guideline_deviations") or []
     if deviations:
-        content.append(Paragraph("Guideline Deviations", styles["Heading2"]))
+        content.extend(section("Guideline Deviations", styles))
+        dev_rows = []
         for dev in deviations:
             if isinstance(dev, dict):
-                content.append(Paragraph(
-                    f"{dev.get('issue','')} [{dev.get('severity','')}] — "
-                    f"Guideline: {dev.get('guideline_expectation','')} — "
-                    f"Evidence: {dev.get('case_evidence','')}",
-                    styles["Normal"],
-                ))
+                dev_rows.append([
+                    dev.get("issue", ""),
+                    dev.get("severity", ""),
+                    dev.get("guideline_expectation", ""),
+                    dev.get("case_evidence", ""),
+                ])
             else:
-                content.append(Paragraph(f"- {dev}", styles["Normal"]))
-            content.append(Spacer(1, 3))
-        content.append(Spacer(1, 8))
+                dev_rows.append([str(dev), "", "", ""])
+        content.append(data_table(
+            ["Issue", "Severity", "Guideline expectation", "Case evidence"],
+            dev_rows,
+            col_widths=[110, 55, 155, 180],
+        ))
+        content.append(Spacer(1, 12))
 
+    # Hospital must justify
     challenges = data.get("challenge_points") or []
     if challenges:
-        content.append(Paragraph("Hospital Must Justify", styles["Heading2"]))
-        for pt in challenges:
-            content.append(Paragraph(f"- {pt}", styles["Normal"]))
-        content.append(Spacer(1, 10))
+        content.extend(section("Hospital Must Justify", styles))
+        ch_rows = [[str(i + 1), pt] for i, pt in enumerate(challenges)]
+        content.append(data_table(["#", "Challenge point"], ch_rows, col_widths=[30, 470]))
+        content.append(Spacer(1, 12))
 
-    # =========================
-    # IMAGING FINDINGS
-    # =========================
-    if data.get("imaging_findings"):
-        content.append(Paragraph("4. Imaging Findings", styles["Heading2"]))
-
-        for img in data.get("imaging_findings", []):
-            content.append(Paragraph(
-                f"{img.get('type','')} - {img.get('finding','')}",
-                styles["Normal"]
-            ))
-            content.append(Paragraph(
-                f"Clinical Correlation: {img.get('clinical_correlation','')}",
-                styles["Normal"]
-            ))
-            content.append(Paragraph(
-                f"Consistency: {img.get('consistency_with_diagnosis','')}",
-                styles["Normal"]
-            ))
-            content.append(Spacer(1, 5))
-
-        content.append(Spacer(1, 10))
-
-    # =========================
-    # CLINICAL FINDINGS
-    # =========================
-    content.append(Paragraph("5. Clinical Findings", styles["Heading2"]))
-
-    for item in data.get("clinical_findings", []):
-        content.append(Paragraph(
-            f"{item.get('parameter')} - {item.get('value')} ({item.get('comment')})",
-            styles["Normal"]
+    # 4. Imaging Findings
+    imaging = data.get("imaging_findings") or []
+    if imaging:
+        content.extend(section("4. Imaging Findings", styles))
+        img_rows = []
+        for img in imaging:
+            if isinstance(img, dict):
+                img_rows.append([
+                    img.get("type", ""),
+                    img.get("finding", ""),
+                    img.get("clinical_correlation", ""),
+                    img.get("consistency_with_diagnosis", ""),
+                ])
+        content.append(data_table(
+            ["Type", "Finding", "Clinical correlation", "Consistency"],
+            img_rows,
+            col_widths=[90, 130, 140, 140],
         ))
+        content.append(Spacer(1, 12))
 
-    content.append(Spacer(1, 10))
+    # 5. Clinical Findings (tabular)
+    content.extend(section("5. Clinical Findings", styles))
+    cf_rows = []
+    for item in data.get("clinical_findings") or []:
+        if isinstance(item, dict):
+            cf_rows.append([
+                item.get("parameter", ""),
+                item.get("value", ""),
+                item.get("comment", ""),
+                item.get("source", item.get("normal_range", "")),
+            ])
+    if not cf_rows:
+        cf_rows = [["—", "Not documented", "", ""]]
+    content.append(data_table(
+        ["Parameter", "Value", "Comment", "Source"],
+        cf_rows,
+        col_widths=[130, 100, 140, 130],
+    ))
+    content.append(Spacer(1, 12))
 
-    # =========================
-    # DOCUMENTATION CHECKLIST
-    # =========================
-    content.append(Paragraph("6. Documentation Checklist", styles["Heading2"]))
-    for item in data.get("clinical_checklist", []):
-        area = item.get("area", "")
-        available = item.get("available", "")
-        remarks = item.get("remarks", "")
-        content.append(Paragraph(f"{area}: {available}", styles["Normal"]))
-        if remarks:
-            content.append(Paragraph(f"Remarks: {remarks}", styles["Normal"]))
-        content.append(Spacer(1, 3))
-    content.append(Spacer(1, 8))
+    # 6. Documentation Checklist
+    content.extend(section("6. Documentation Checklist", styles))
+    cl_rows = []
+    for item in data.get("clinical_checklist") or []:
+        if isinstance(item, dict):
+            cl_rows.append([
+                item.get("area", ""),
+                item.get("available", ""),
+                item.get("remarks", ""),
+            ])
+    if not cl_rows:
+        cl_rows = [["—", "—", "—"]]
+    content.append(data_table(
+        ["Area", "Available", "Remarks"],
+        cl_rows,
+        col_widths=[160, 70, 270],
+    ))
+    content.append(Spacer(1, 12))
 
-    # =========================
-    # DOCUMENTATION GAPS
-    # =========================
-    content.append(Paragraph("7. Documentation Gaps", styles["Heading2"]))
+    # 7. Documentation Gaps
+    content.extend(section("7. Documentation Gaps", styles))
+    gaps = data.get("documentation_gaps") or []
+    gap_rows = [[str(i + 1), g] for i, g in enumerate(gaps)] if gaps else [["—", "None identified"]]
+    content.append(data_table(["#", "Gap"], gap_rows, col_widths=[30, 470]))
+    content.append(Spacer(1, 12))
 
-    for gap in data.get("documentation_gaps", []):
-        content.append(Paragraph(f"- {gap}", styles["Normal"]))
-
-    content.append(Spacer(1, 10))
-
-    # =========================
-    # TREATMENT & BILLING AUDIT
-    # =========================
+    # 8. Treatment & Billing Audit
+    content.extend(section("8. Treatment & Billing Audit", styles))
     tba = data.get("treatment_billing_audit") or {}
-    content.append(Paragraph("8. Treatment & Billing Audit", styles["Heading2"]))
-    content.append(Paragraph(f"Room category admitted: {tba.get('room_category_admitted','')}", styles["Normal"]))
-    content.append(Paragraph(f"Room category eligible (policy): {tba.get('room_category_eligible','')}", styles["Normal"]))
-    content.append(Paragraph(f"Procedures performed: {tba.get('procedures_performed','')}", styles["Normal"]))
-    content.append(Paragraph(f"Cross-checked with pre-auth: {tba.get('cross_checked_with_preauth','')}", styles["Normal"]))
-    content.append(Paragraph(f"Excluded items billed: {tba.get('excluded_items_billed','')}", styles["Normal"]))
-    content.append(Paragraph(f"Charges appropriate: {tba.get('charges_appropriate','')}", styles["Normal"]))
-    content.append(Spacer(1, 10))
+    content.append(kv_table(_rows_from_dict(tba, [
+        ("room_category_admitted", "Room category admitted"),
+        ("room_category_eligible", "Room category eligible (policy)"),
+        ("procedures_performed", "Procedures performed"),
+        ("cross_checked_with_preauth", "Cross-checked with pre-auth"),
+        ("excluded_items_billed", "Excluded items billed"),
+        ("charges_appropriate", "Charges appropriate"),
+    ])))
+    content.append(Spacer(1, 12))
 
-    # =========================
-    # FINANCIAL REVIEW
-    # =========================
+    # 9. Financial Review
+    content.extend(section("9. Financial Review", styles))
     fin = data.get("financial_review") or {}
-    content.append(Paragraph("9. Financial Review", styles["Heading2"]))
-    content.append(Paragraph(f"Total hospital bill: {fin.get('total_hospital_bill','')}", styles["Normal"]))
-    content.append(Paragraph(f"Non-payable amount: {fin.get('non_payable_amount','')}", styles["Normal"]))
-    content.append(Paragraph(f"Net claimable amount: {fin.get('net_claimable_amount','')}", styles["Normal"]))
-    content.append(Paragraph(f"Recommended approval amount: {fin.get('recommended_approval_amount','')}", styles["Normal"]))
-    content.append(Paragraph(f"Patient liability: {fin.get('patient_liability','')}", styles["Normal"]))
-    content.append(Spacer(1, 10))
+    content.append(kv_table(_rows_from_dict(fin, [
+        ("total_hospital_bill", "Total hospital bill"),
+        ("non_payable_amount", "Non-payable amount"),
+        ("net_claimable_amount", "Net claimable amount"),
+        ("recommended_approval_amount", "Recommended approval amount"),
+        ("patient_liability", "Patient liability"),
+    ])))
+    content.append(Spacer(1, 12))
 
-    # =========================
-    # TIMELINE
-    # =========================
-    content.append(Paragraph("10. Timeline", styles["Heading2"]))
+    # 10. Timeline
+    content.extend(section("10. Timeline", styles))
+    tl_rows = []
+    for t in data.get("timeline") or []:
+        if isinstance(t, dict):
+            tl_rows.append([t.get("date", ""), t.get("event", "")])
+    if not tl_rows:
+        tl_rows = [["—", "—"]]
+    content.append(data_table(["Date", "Event"], tl_rows, col_widths=[90, 410]))
+    content.append(Spacer(1, 12))
 
-    for t in data.get("timeline", []):
-        content.append(Paragraph(f"{t.get('date')} - {t.get('event')}", styles["Normal"]))
-
-    content.append(Spacer(1, 10))
-
-    # =========================
-    # OBSERVATIONS
-    # =========================
-    content.append(Paragraph("11. Auditor's Observations (Detailed)", styles["Heading2"]))
+    # 11. Observations
+    content.extend(section("11. Auditor's Observations (Detailed)", styles))
     if data.get("auditor_observation_summary"):
-        content.append(Paragraph(f"Overall narrative: {data.get('auditor_observation_summary')}", styles["Normal"]))
-        content.append(Spacer(1, 5))
+        content.append(kv_table(
+            [("Overall narrative", data.get("auditor_observation_summary"))],
+            header=False,
+        ))
+        content.append(Spacer(1, 8))
 
-    for idx, obs in enumerate(data.get("observations", []), start=1):
-        content.append(Paragraph(f"Q{idx}: {obs.get('question')}", styles["Normal"]))
-        content.append(Paragraph(f"Analysis: {obs.get('analysis')}", styles["Normal"]))
-        content.append(Paragraph(f"Answer: {obs.get('answer')}", styles["Normal"]))
-        content.append(Spacer(1, 5))
+    obs_rows = []
+    for idx, obs in enumerate(data.get("observations") or [], start=1):
+        if isinstance(obs, dict):
+            obs_rows.append([
+                f"Q{idx}",
+                obs.get("question", ""),
+                obs.get("analysis", ""),
+                obs.get("answer", ""),
+            ])
+    if obs_rows:
+        content.append(data_table(
+            ["#", "Question", "Analysis", "Answer"],
+            obs_rows,
+            col_widths=[25, 120, 255, 100],
+        ))
+    content.append(Spacer(1, 12))
 
-    content.append(Spacer(1, 10))
-
-    # =========================
-    # CONCLUSION
-    # =========================
-    content.append(Paragraph("12. Inference", styles["Heading2"]))
+    # 12. Inference
+    content.extend(section("12. Inference", styles))
     conclusion = (data.get("inference") or data.get("auditor_conclusion") or "").strip()
-    content.append(Paragraph(conclusion, styles["Normal"]))
-    content.append(Spacer(1, 10))
+    content.append(kv_table([("Conclusion", conclusion or "—")], header=False))
+    content.append(Spacer(1, 12))
 
-    # =========================
-    # REMARKS
-    # =========================
-    content.append(Paragraph("13. Remarks", styles["Heading2"]))
-    content.append(Paragraph(data.get("remarks", ""), styles["Normal"]))
-    content.append(Spacer(1, 10))
+    # 13. Remarks
+    content.extend(section("13. Remarks", styles))
+    content.append(kv_table([("Remarks", data.get("remarks", "") or "—")], header=False))
+    content.append(Spacer(1, 12))
 
-    # =========================
-    # Q&A SECTION
-    # =========================
-    if "qa_section" in data and data["qa_section"]:
-        content.append(Paragraph("14. Questions & Answers", styles["Heading2"]))
-
+    # 14. Q&A
+    if data.get("qa_section"):
+        content.extend(section("14. Questions & Answers", styles))
+        qa_rows = []
         for qa in data["qa_section"]:
-            content.append(Paragraph(f"Q: {qa.get('question')}", styles["Normal"]))
-            content.append(Paragraph(f"A: {qa.get('answer')}", styles["Normal"]))
-            content.append(Paragraph(f"Justification: {qa.get('justification')}", styles["Normal"]))
-            content.append(Spacer(1, 5))
+            if isinstance(qa, dict):
+                qa_rows.append([
+                    qa.get("question", ""),
+                    qa.get("answer", ""),
+                    qa.get("justification", ""),
+                ])
+        content.append(data_table(
+            ["Question", "Answer", "Justification"],
+            qa_rows or [["—", "—", "—"]],
+            col_widths=[160, 160, 180],
+        ))
+        content.append(Spacer(1, 12))
 
-    # =========================
-    # DOCUMENT SOURCES (provenance — proves which docs were read)
-    # =========================
+    # 15. Document Sources
     sources = data.get("document_sources") or []
     if sources:
-        content.append(Spacer(1, 10))
-        content.append(Paragraph("15. Document Sources Read", styles["Heading2"]))
+        content.extend(section("15. Document Sources Read", styles))
         content.append(Paragraph(
-            "Per-file extraction summary. \"Handwritten / scanned chars\" indicates "
-            "content captured by the vision OCR pass (doctor's notes, prescriptions, "
-            "receipts, scanned letters).",
+            "Per-file extraction summary. Handwritten/scanned chars = vision OCR content.",
             styles["Normal"],
         ))
-        content.append(Spacer(1, 5))
+        content.append(Spacer(1, 6))
+        src_rows = []
         total_hand = 0
         for src in sources:
             if not isinstance(src, dict):
                 continue
-            fname = src.get("filename", "(unknown)")
-            total = src.get("total_chars", 0)
-            typed = src.get("typed_chars", 0)
-            hand = src.get("handwritten_or_scanned_chars", 0)
+            hand = int(src.get("handwritten_or_scanned_chars") or 0)
             total_hand += hand
-            tag = " — contains handwriting / scan" if src.get("contains_handwriting_or_scan") else ""
-            content.append(Paragraph(
-                f"<b>{fname}</b>: {total} chars total "
-                f"(typed: {typed}, handwritten/scanned: {hand}){tag}",
-                styles["Normal"],
-            ))
-            if src.get("error"):
-                content.append(Paragraph(f"&nbsp;&nbsp;Error: {src['error']}", styles["Normal"]))
-            content.append(Spacer(1, 3))
+            src_rows.append([
+                src.get("filename", "(unknown)"),
+                str(src.get("total_chars", 0)),
+                str(src.get("typed_chars", 0)),
+                str(hand),
+                "Yes" if src.get("contains_handwriting_or_scan") else "No",
+            ])
+        content.append(data_table(
+            ["File", "Total chars", "Typed", "Handwritten/scanned", "Has handwriting"],
+            src_rows,
+            col_widths=[150, 70, 60, 110, 110],
+        ))
         if total_hand > 0:
-            content.append(Spacer(1, 4))
-            content.append(Paragraph(
-                f"<b>Vision OCR captured {total_hand} characters of handwritten / scanned "
-                f"content across the case file.</b> Findings referencing the consultation "
-                f"date, procedure plan, hospital letterhead, and prescription medications "
-                f"are sourced from this pass.",
-                styles["Normal"],
+            content.append(Spacer(1, 6))
+            content.append(kv_table(
+                [("Vision OCR total", f"{total_hand} characters of handwritten/scanned content")],
+                header=False,
             ))
 
-    # =========================
-    # BUILD PDF
-    # =========================
     doc.build(content)
