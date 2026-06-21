@@ -1,11 +1,9 @@
 .rag_cache/
 .env
-.env
-.env.example
-!.env
 __pycache__/
 *.pyc
 .venv/
 venv/
 .idea/
 *.log
+.DS_Store

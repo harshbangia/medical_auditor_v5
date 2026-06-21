@@ -323,6 +323,31 @@ clinical_findings MUST include SEPARATE rows when documented:
 Do NOT report only the shorter duration when both 1-month symptom history AND 2-month
 treatment course appear on different pages.
 
+observations MUST echo EVERY row you place in clinical_findings — no observation may
+cite only one duration when clinical_findings lists several:
+  • If clinical_findings includes "Symptom duration at presentation: 1 month", at least one
+    observation MUST state that fact explicitly.
+  • If clinical_findings includes "Medication course duration: 2 months", at least one
+    observation MUST state the prescribed drug names AND the 2-month course.
+  • If clinical_findings includes "Follow-up interval: 2 months", at least one observation
+    MUST state the follow-up interval.
+  • Observations MUST NOT contradict clinical_findings (e.g. do NOT claim "no antineuralgic
+    therapy tried" if clinical_findings lists Zenoxa/oxcarbazepine).
+  • When judging medical history adequacy, distinguish: (a) symptom duration at first consult,
+    (b) duration of prescribed medical therapy, (c) whether insurer-required certified total
+    illness duration is still missing — these are separate audit points.
+
+Before finalising JSON, self-check: every clinical_findings row appears verbatim or paraphrased
+in at least one observations[].analysis block.
+
+clinical_checklist rules:
+- Mark "MRI Report" as YES if a typed MRI/radiology report with IMPRESSION is in the case text.
+- Mark "Medication Trials" as YES if prescription documents Zenoxa/Tegretol/Lyrica etc.
+- Do NOT mark medication trials NO when oxcarbazepine/carbamazepine brands are in prescriptions.
+
+Typed MRI in case text: if IMPRESSION mentions neurovascular conflict / grade III, populate
+imaging_findings from that report — do NOT claim MRI report is missing.
+
 {"Clinical images WERE analyzed — use IMAGE ANALYSIS below as imaging evidence." if has_images else "No image analysis available — flag missing imaging in documentation_gaps if clinically required by guideline."}
 
 Return ONLY JSON:
@@ -340,7 +365,7 @@ Return ONLY JSON:
   "insurance_details": {{"insurance_company": "", "policy_number": "", "policy_period": "", "claim_incident_number": ""}},
   "claim_details": {{"hospital": "", "consultation_date": "", "date_of_admission": "", "date_of_discharge": "", "nature_of_admission": "", "procedure_or_surgery": "", "diagnosis": ""}},
   "imaging_findings": [{{"type": "", "finding": "", "clinical_correlation": "", "consistency_with_diagnosis": ""}}],
-  "clinical_findings": [{{"parameter": "", "value": "", "normal_range": "", "comment": ""}}],
+  "clinical_findings": [{{"parameter": "", "value": "", "normal_range": "", "comment": "", "source": "document page or file name"}}],
   "documentation_gaps": ["Specific gap and why it matters for claim validity"],
   "clinical_checklist": [{{"area": "", "available": "YES or NO", "remarks": ""}}],
   "timeline": [{{"date": "", "event": ""}}],

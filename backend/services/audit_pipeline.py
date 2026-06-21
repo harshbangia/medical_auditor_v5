@@ -12,6 +12,7 @@ from backend.rag.guideline_retriever import retrieve_guideline_sections
 from backend.rag.rag_manager import get_or_create_index
 from backend.services.audit_jobs import AuditJob
 from backend.services.s3_utils import download_guideline
+from backend.ai.audit_result_enricher import enrich_audit_result
 from backend.ai.clinical_synthesizer import build_clinical_synthesis_section
 from backend.utils.insurance_extractor import enrich_insurance_facts, merge_insurance_into_result
 from backend.utils.pdf_reader import extract_text_and_images
@@ -277,6 +278,7 @@ def run_full_audit(
 
         result = _ensure_result_shape(result)
         result = merge_insurance_into_result(result, insurance_facts)
+        result = enrich_audit_result(result, case_text, insurance_facts)
         result["document_sources"] = source_summaries
 
         if all([

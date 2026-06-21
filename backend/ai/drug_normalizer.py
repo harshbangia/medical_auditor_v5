@@ -27,6 +27,12 @@ KNOWN_DRUG_BRANDS: Dict[str, Tuple[str, str, str]] = {
         "Often preferred over carbamazepine for tolerability. "
         "Documented trial counts as guideline-appropriate prior therapy before MVD.",
     ),
+    "zenoxo": (
+        "oxcarbazepine",
+        "sodium channel blocker (anticonvulsant)",
+        "First-line drug for trigeminal neuralgia (common handwriting variant of Zenoxa). "
+        "Documented trial counts as guideline-appropriate prior therapy before MVD.",
+    ),
     "oxetol": (
         "oxcarbazepine",
         "sodium channel blocker (anticonvulsant)",
