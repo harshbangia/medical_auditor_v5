@@ -268,39 +268,4 @@ def generate_pdf(data, filename="audit_report.pdf"):
         ))
         content.append(Spacer(1, 12))
 
-    # 15. Document Sources
-    sources = data.get("document_sources") or []
-    if sources:
-        content.extend(section("15. Document Sources Read", styles))
-        content.append(Paragraph(
-            "Per-file extraction summary. Handwritten/scanned chars = vision OCR content.",
-            styles["Normal"],
-        ))
-        content.append(Spacer(1, 6))
-        src_rows = []
-        total_hand = 0
-        for src in sources:
-            if not isinstance(src, dict):
-                continue
-            hand = int(src.get("handwritten_or_scanned_chars") or 0)
-            total_hand += hand
-            src_rows.append([
-                src.get("filename", "(unknown)"),
-                str(src.get("total_chars", 0)),
-                str(src.get("typed_chars", 0)),
-                str(hand),
-                "Yes" if src.get("contains_handwriting_or_scan") else "No",
-            ])
-        content.append(data_table(
-            ["File", "Total chars", "Typed", "Handwritten/scanned", "Has handwriting"],
-            src_rows,
-            col_widths=[150, 70, 60, 110, 110],
-        ))
-        if total_hand > 0:
-            content.append(Spacer(1, 6))
-            content.append(kv_table(
-                [("Vision OCR total", f"{total_hand} characters of handwritten/scanned content")],
-                header=False,
-            ))
-
     doc.build(content)
