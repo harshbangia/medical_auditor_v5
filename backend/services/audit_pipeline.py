@@ -15,6 +15,7 @@ from backend.services.s3_utils import download_guideline
 from backend.ai.audit_result_enricher import enrich_audit_result
 from backend.ai.clinical_synthesizer import build_clinical_synthesis_section
 from backend.utils.insurance_extractor import enrich_insurance_facts, merge_insurance_into_result
+from backend.utils.claim_details_extractor import enrich_claim_facts, merge_claim_details_into_result
 from backend.utils.pdf_reader import extract_text_and_images
 
 ProgressFn = Callable[[str, int, str], None]
@@ -219,6 +220,7 @@ def run_full_audit(
 
     progress("insurance", 58, "Extracting insurance details from letters…")
     insurance_facts = enrich_insurance_facts(case_text, temp_pdf_paths)
+    claim_facts = enrich_claim_facts(case_text, temp_pdf_paths)
     clinical_synthesis = build_clinical_synthesis_section(case_text)
 
     progress("guideline", 65, "Loading clinical guideline…")
@@ -267,6 +269,7 @@ def run_full_audit(
             image_analysis_text=image_analysis,
             insurance_facts=insurance_facts,
             clinical_synthesis=clinical_synthesis,
+            claim_facts=claim_facts,
         )
 
         if not result or not isinstance(result, dict):
@@ -278,7 +281,8 @@ def run_full_audit(
 
         result = _ensure_result_shape(result)
         result = merge_insurance_into_result(result, insurance_facts)
-        result = enrich_audit_result(result, case_text, insurance_facts)
+        result = merge_claim_details_into_result(result, claim_facts)
+        result = enrich_audit_result(result, case_text, insurance_facts, claim_facts)
         result["document_sources"] = source_summaries
 
         if all([

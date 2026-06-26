@@ -9,7 +9,7 @@ image — PyMuPDF native text extraction misses it entirely. This module:
 
 import base64
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import fitz
 
@@ -44,10 +44,41 @@ _INSURANCE_LETTER_MARKERS = re.compile(
     re.I,
 )
 
-_POLICY_RE = re.compile(
-    r"(?:policy\s*(?:no|number|#)?\s*[:.]?\s*)([A-Z0-9][A-Z0-9\-/]{4,})",
-    re.I,
-)
+_POLICY_NUMBER_PATTERNS = [
+    re.compile(
+        r"policy\s*(?:no\.?|number|#)\s*[:.]?\s*([A-Z]?\d{5,}[A-Z0-9\-]*)",
+        re.I,
+    ),
+    re.compile(
+        r"forming part of\s+policy\s*(?:no\.?|number)\s*[:.]?\s*([A-Z]?\d{5,}[A-Z0-9\-]*)",
+        re.I,
+    ),
+]
+
+_POLICY_FALSE_POSITIVES = {
+    "document", "schedule", "certificate", "wordings", "holder", "number",
+    "being", "servicing", "issuing", "family", "health", "protector",
+    "cum", "invoice", "tax", "blank", "details", "previous", "insured",
+}
+
+_POLICY_PERIOD_PATTERNS = [
+    re.compile(
+        r"period\s*of\s*insurance.*?start\s*date\s*:\s*from\s*(\d{1,2}/\d{1,2}/\d{4}).*?"
+        r"end\s*date\s*:.*?(?:on\s*)?(\d{1,2}/\d{1,2}/\d{4})",
+        re.I | re.S,
+    ),
+    re.compile(
+        r"policy\s*period\s*[:.]?\s*(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})\s*(?:to|-|–)\s*"
+        r"(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})",
+        re.I,
+    ),
+    re.compile(
+        r"valid(?:ity)?\s*(?:from|between)\s*(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})\s*(?:to|-|–)\s*"
+        r"(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})",
+        re.I,
+    ),
+]
+
 _CLAIM_RE = re.compile(
     r"(?:claim\s*(?:incident|no|number|#)?|authorization\s*no|auth\s*incident)\s*[:.]?\s*"
     r"([0-9]{8,}[A-Z0-9.\-]*)",
@@ -57,6 +88,13 @@ _MEMBER_RE = re.compile(
     r"member\s*(?:code|id|no|number)?\s*[:.]?\s*([A-Z0-9][A-Z0-9\-/]{4,})",
     re.I,
 )
+
+_BAD_INSURANCE_VALUES = {
+    "policy_number": _POLICY_FALSE_POSITIVES | {"", "-", "—", "na", "n/a", "not available", "unknown"},
+    "policy_period": {"", "-", "—", "na", "n/a", "not available", "unknown"},
+    "insurance_company": {"", "-", "—"},
+    "claim_incident_number": {"", "-", "—"},
+}
 
 _LETTERHEAD_PROMPT = """You are reading the FIRST PAGE of an Indian health-insurance claim letter
 (query letter, denial letter, pre-auth letter, or cashless authorization letter).
@@ -75,6 +113,12 @@ INSURER: UNKNOWN
 def _clean_insurer_name(raw: str) -> str:
     name = re.sub(r"\s+", " ", (raw or "").strip())
     name = re.sub(r"^(insurer|insurance company)\s*[:.]?\s*", "", name, flags=re.I)
+    name = re.split(
+        r"\s+(?:query letter|policy schedule|date:|claim incident|member code)\b",
+        name,
+        maxsplit=1,
+        flags=re.I,
+    )[0]
     return name.strip(" .-")
 
 
@@ -88,7 +132,66 @@ def find_insurer_in_text(text: str) -> str:
     return ""
 
 
-def extract_insurance_from_text(text: str) -> Dict[str, str]:
+def _is_valid_policy_number(val: str) -> bool:
+    val = (val or "").strip().rstrip(".")
+    if len(val) < 5:
+        return False
+    if val.lower() in _POLICY_FALSE_POSITIVES:
+        return False
+    if not re.search(r"\d", val):
+        return False
+    if val.isalpha():
+        return False
+    return True
+
+
+def _extract_policy_numbers(text: str) -> List[str]:
+    found: List[str] = []
+    seen = set()
+    for pat in _POLICY_NUMBER_PATTERNS:
+        for m in pat.finditer(text or ""):
+            val = m.group(1).strip().rstrip(".")
+            if _is_valid_policy_number(val) and val not in seen:
+                seen.add(val)
+                found.append(val)
+    return found
+
+
+def _score_policy_number(val: str, source: str) -> int:
+    score = 0
+    if re.match(r"^[A-Z]\d{5,}$", val, re.I):
+        score += 20
+    if re.match(r"^\d{6,}$", val):
+        score += 10
+    src = (source or "").lower()
+    if "query" in src or "querr" in src:
+        score += 30
+    if "policy" in src:
+        score += 25
+    if "schedule" in src or "policy document" in src:
+        score += 15
+    return score
+
+
+def _pick_best_policy_number(candidates: List[Tuple[str, int]]) -> str:
+    ranked = sorted(
+        [(v, s) for v, s in candidates if _is_valid_policy_number(v)],
+        key=lambda x: (x[1], len(x[0])),
+        reverse=True,
+    )
+    return ranked[0][0] if ranked else ""
+
+
+def _extract_policy_period(text: str) -> str:
+    for pat in _POLICY_PERIOD_PATTERNS:
+        m = pat.search(text or "")
+        if m:
+            start, end = m.group(1).strip(), m.group(2).strip()
+            return f"{start} to {end}"
+    return ""
+
+
+def extract_insurance_from_text(text: str, source: str = "") -> Dict[str, str]:
     """Regex extraction of insurance fields present in typed letter text."""
     facts: Dict[str, str] = {
         "insurance_company": find_insurer_in_text(text),
@@ -100,11 +203,15 @@ def extract_insurance_from_text(text: str) -> Dict[str, str]:
     if not text:
         return facts
 
-    for pat in (_POLICY_RE,):
-        m = pat.search(text)
-        if m:
-            facts["policy_number"] = m.group(1).strip()
-            break
+    policy_candidates = _extract_policy_numbers(text)
+    if policy_candidates:
+        facts["policy_number"] = _pick_best_policy_number([
+            (val, _score_policy_number(val, source)) for val in policy_candidates
+        ])
+
+    period = _extract_policy_period(text)
+    if period:
+        facts["policy_period"] = period
 
     m = _CLAIM_RE.search(text)
     if m:
@@ -115,6 +222,30 @@ def extract_insurance_from_text(text: str) -> Dict[str, str]:
         facts["member_code"] = m.group(1).strip()
 
     return facts
+
+
+def _source_priority(filename: str, text: str) -> int:
+    name = (filename or "").lower()
+    if "query" in name or "querr" in name or _INSURANCE_LETTER_MARKERS.search(text or ""):
+        return 100
+    if "policy" in name:
+        return 90
+    if "pre auth" in name or "preauth" in name:
+        return 70
+    return 50
+
+
+def _pick_best_field(
+    candidates: List[Tuple[str, int]],
+    field: str,
+) -> str:
+    bad = _BAD_INSURANCE_VALUES.get(field, set())
+    ranked = sorted(
+        [(v, p) for v, p in candidates if v and v.lower() not in bad],
+        key=lambda x: x[1],
+        reverse=True,
+    )
+    return ranked[0][0] if ranked else ""
 
 
 def _render_page_b64(pdf_path: str, page_num: int = 1, dpi: int = 180) -> str:
@@ -132,6 +263,14 @@ def _page_native_text(pdf_path: str, page_num: int = 1) -> str:
     doc = fitz.open(pdf_path)
     try:
         return doc[page_num - 1].get_text() or ""
+    finally:
+        doc.close()
+
+
+def _pdf_native_text(pdf_path: str) -> str:
+    doc = fitz.open(pdf_path)
+    try:
+        return "".join(p.get_text() for p in doc)
     finally:
         doc.close()
 
@@ -186,29 +325,73 @@ def enrich_insurance_facts(
 
     pdf_paths: list of (pdf_path, filename) tuples from temp files during extraction.
     """
-    facts = extract_insurance_from_text(case_text)
+    per_source: List[Tuple[str, Dict[str, str], int]] = []
+
+    combined = extract_insurance_from_text(case_text, source="combined")
+    per_source.append(("combined", combined, 50))
 
     if pdf_paths:
-        for pdf_path, _fname in pdf_paths:
-            page1 = _page_native_text(pdf_path, 1)
-            page_facts = extract_insurance_from_text(page1)
-            for key, val in page_facts.items():
-                if val and not facts.get(key):
-                    facts[key] = val
+        for pdf_path, fname in pdf_paths:
+            native = _pdf_native_text(pdf_path)
+            text = native if native.strip() else ""
+            if not text.strip() and case_text and fname:
+                marker = f"({fname})"
+                if marker in case_text:
+                    start = case_text.find(marker)
+                    text = case_text[max(0, start - 200): start + 12000]
 
-            if facts.get("insurance_company"):
-                continue
-            if _looks_like_insurance_letter(page1):
-                name = extract_insurer_from_letterhead(pdf_path, 1)
-                if name:
-                    facts["insurance_company"] = name
-                    print(f"✅ Insurance letterhead OCR: {name}")
+            page_facts = extract_insurance_from_text(text, source=fname)
+            priority = _source_priority(fname, text)
+            per_source.append((fname, page_facts, priority))
 
-    return facts
+            if not page_facts.get("insurance_company"):
+                page1 = _page_native_text(pdf_path, 1)
+                if _looks_like_insurance_letter(page1):
+                    name = extract_insurer_from_letterhead(pdf_path, 1)
+                    if name:
+                        page_facts["insurance_company"] = name
+                        print(f"✅ Insurance letterhead OCR: {name}")
+
+    result = {
+        "insurance_company": "",
+        "policy_number": "",
+        "claim_incident_number": "",
+        "policy_period": "",
+        "member_code": "",
+    }
+    for field in result:
+        result[field] = _pick_best_field([
+            (facts.get(field, ""), priority) for _src, facts, priority in per_source
+        ], field)
+
+    # Policy numbers: vote across per-source extractions with source weighting
+    policy_candidates: List[Tuple[str, int]] = []
+    for src, facts, priority in per_source:
+        val = facts.get("policy_number", "")
+        if _is_valid_policy_number(val):
+            policy_candidates.append((val, priority + _score_policy_number(val, src)))
+    best_policy = _pick_best_policy_number(policy_candidates)
+    if best_policy:
+        result["policy_number"] = best_policy
+
+    return result
+
+
+def _should_overwrite_insurance_field(field: str, current: str, extracted: str) -> bool:
+    if not extracted:
+        return False
+    cur = str(current or "").strip()
+    ext = str(extracted or "").strip()
+    bad = _BAD_INSURANCE_VALUES.get(field, set())
+    if not cur or cur.lower() in bad:
+        return True
+    if field == "policy_number" and cur.lower() in _POLICY_FALSE_POSITIVES:
+        return True
+    return False
 
 
 def merge_insurance_into_result(result: dict, facts: Dict[str, str]) -> dict:
-    """Fill blank insurance_details fields from extracted facts."""
+    """Fill or correct insurance_details from extracted facts."""
     ins = result.setdefault("insurance_details", {})
     mapping = {
         "insurance_company": facts.get("insurance_company", ""),
@@ -217,6 +400,6 @@ def merge_insurance_into_result(result: dict, facts: Dict[str, str]) -> dict:
         "claim_incident_number": facts.get("claim_incident_number", ""),
     }
     for key, val in mapping.items():
-        if val and not str(ins.get(key) or "").strip():
+        if val and _should_overwrite_insurance_field(key, str(ins.get(key) or ""), val):
             ins[key] = val
     return result
