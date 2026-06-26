@@ -12,6 +12,8 @@ from typing import Any, Dict, List, Optional
 
 from backend.ai.clinical_synthesizer import synthesize_clinical_visits
 from backend.ai.drug_normalizer import build_medication_evidence_section, find_brands_in_text
+from backend.utils.claim_details_extractor import merge_claim_details_into_result
+from backend.utils.insurance_extractor import merge_insurance_into_result
 
 _MRI_REPORT_RE = re.compile(
     r"mri\s+report|impression\s*:|neurovascular\s+conflict|grade\s+iii",
