@@ -242,6 +242,28 @@ def _format_insurance_facts_block(facts: dict) -> str:
     return "\n".join(lines)
 
 
+def _format_claim_facts_block(facts: dict) -> str:
+    if not facts:
+        return ""
+    lines = ["=== CLAIM FACTS (extracted from query letters / pre-auth — use for claim_details) ==="]
+    for key, label in (
+        ("hospital", "Hospital"),
+        ("consultation_date", "Consultation date"),
+        ("date_of_admission", "Date of admission / proposed hospitalization"),
+        ("date_of_discharge", "Date of discharge"),
+    ):
+        val = str((facts or {}).get(key) or "").strip()
+        if val:
+            lines.append(f"{label}: {val}")
+    if len(lines) <= 1:
+        return ""
+    lines.append(
+        "Populate claim_details from this section. Do NOT leave policy_number, policy_period, "
+        "consultation_date, or date_of_admission blank when listed in INSURANCE FACTS or CLAIM FACTS."
+    )
+    return "\n".join(lines)
+
+
 def _build_audit_prompt(
     case_context: str,
     guideline_text: str,
@@ -250,6 +272,7 @@ def _build_audit_prompt(
     user_question: Optional[str],
     insurance_facts_block: str = "",
     clinical_synthesis: str = "",
+    claim_facts_block: str = "",
 ) -> str:
     imaging_block = image_analysis.strip() or "No clinical images were extracted from uploaded PDFs."
     has_images = bool(image_analysis.strip())
@@ -291,6 +314,9 @@ You MUST:
 - Use the MEDICATION EVIDENCE section (if present) when judging prior medical therapy — do NOT claim a drug
   class was "never tried" if the section lists a brand from that class
 - Use the INSURANCE FACTS section for insurance_details — never leave insurance_company blank if listed there
+- Use the CLAIM FACTS section for claim_details dates and hospital — never leave consultation_date
+  or date_of_admission blank if listed there; do NOT substitute an old consult date when the query
+  letter states a proposed hospitalization date
 - Use the CLINICAL VISIT SYNTHESIS section when reporting symptom duration vs treatment course — these are
   DIFFERENT facts from DIFFERENT pages; report BOTH separately in clinical_findings and observations
 - Produce at least 5 observations; minimum 3 must challenge or question the hospital (answer: Not Supported, Partially Supported, or Insufficient Evidence)
@@ -383,6 +409,8 @@ Return ONLY JSON:
 
 {insurance_facts_block}
 
+{claim_facts_block}
+
 {clinical_synthesis}
 
 CASE:
@@ -432,6 +460,7 @@ def run_audit(
     image_analysis_text=None,
     insurance_facts=None,
     clinical_synthesis=None,
+    claim_facts=None,
 ):
     """
     Run adversarial audit. Pass image_analysis_text if already computed (pipeline parallelism).
@@ -461,6 +490,7 @@ def run_audit(
         case_context = drug_evidence + "\n\n" + case_context
 
     insurance_block = _format_insurance_facts_block(insurance_facts or {})
+    claim_block = _format_claim_facts_block(claim_facts or {})
     synthesis_block = (clinical_synthesis or "").strip()
 
     prompt = _build_audit_prompt(
@@ -471,6 +501,7 @@ def run_audit(
         user_question,
         insurance_facts_block=insurance_block,
         clinical_synthesis=synthesis_block,
+        claim_facts_block=claim_block,
     )
 
     raw_output = _call_audit_llm(prompt)

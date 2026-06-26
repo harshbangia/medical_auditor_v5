@@ -277,10 +277,16 @@ def enrich_audit_result(
     result: dict,
     case_text: str,
     insurance_facts: Optional[Dict[str, str]] = None,
+    claim_facts: Optional[Dict[str, str]] = None,
 ) -> dict:
     """Apply deterministic enrichments to LLM audit output."""
     if not result or result.get("error"):
         return result
+
+    if insurance_facts:
+        merge_insurance_into_result(result, insurance_facts)
+    if claim_facts:
+        merge_claim_details_into_result(result, claim_facts)
 
     _seed_clinical_findings_from_visits(result, case_text)
     _fix_mri_documentation(result, case_text)
