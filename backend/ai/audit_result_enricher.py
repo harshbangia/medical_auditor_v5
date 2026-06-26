@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from backend.ai.clinical_synthesizer import synthesize_clinical_visits
 from backend.ai.drug_normalizer import build_medication_evidence_section, find_brands_in_text
-from backend.utils.claim_details_extractor import merge_claim_details_into_result
+from backend.utils.claim_details_extractor import merge_claim_details_into_result, enrich_claim_facts
 from backend.utils.insurance_extractor import merge_insurance_into_result, _extract_policy_period
 
 _MRI_REPORT_RE = re.compile(
@@ -288,6 +288,19 @@ def _ensure_insurance_from_case_text(
     merge_insurance_into_result(result, facts)
 
 
+def _ensure_claim_from_case_text(
+    result: dict,
+    case_text: str,
+    claim_facts: Optional[Dict[str, str]],
+) -> None:
+    facts = dict(claim_facts or {})
+    refreshed = enrich_claim_facts(case_text)
+    for key, val in refreshed.items():
+        if val:
+            facts[key] = val
+    merge_claim_details_into_result(result, facts)
+
+
 def enrich_audit_result(
     result: dict,
     case_text: str,
@@ -299,8 +312,7 @@ def enrich_audit_result(
         return result
 
     _ensure_insurance_from_case_text(result, case_text, insurance_facts)
-    if claim_facts:
-        merge_claim_details_into_result(result, claim_facts)
+    _ensure_claim_from_case_text(result, case_text, claim_facts)
 
     _seed_clinical_findings_from_visits(result, case_text)
     _fix_mri_documentation(result, case_text)

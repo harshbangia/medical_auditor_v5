@@ -96,7 +96,7 @@ class ClaimDetailsExtractorTests(unittest.TestCase):
             },
             "treatment_billing_audit": {},
         }
-        facts = enrich_claim_facts(QUERY_LETTER + "\n" + PRE_AUTH)
+        facts = enrich_claim_facts(QUERY_LETTER + "\n=== Page 1 — vision transcription (Pre Auth.pdf) ===\n" + PRE_AUTH)
         merge_claim_details_into_result(result, facts)
         self.assertEqual(result["claim_details"]["date_of_admission"], "29 Jun 2026")
         self.assertEqual(result["claim_details"]["consultation_date"], "02/04/2025")
@@ -104,10 +104,24 @@ class ClaimDetailsExtractorTests(unittest.TestCase):
 
     def test_clinical_consult_date_and_nature(self):
         clinical = "DOCUMENT TYPE: Handwritten consultation note BODY: Date: 4/6/2026 Name: Mr. Divyansh Mishra"
-        facts = extract_claim_details_from_text(clinical)
+        facts = extract_claim_details_from_text(clinical, source="Clinical Documents.pdf")
         self.assertEqual(facts["consultation_date"], "4/6/2026")
-        facts2 = extract_claim_details_from_text(QUERY_LETTER)
+        facts2 = extract_claim_details_from_text(QUERY_LETTER, source="Querry Letter.pdf")
         self.assertEqual(facts2["nature_of_admission"], "Planned / Elective")
+
+    def test_prefers_clinical_consult_over_stale_preauth(self):
+        case = QUERY_LETTER + """
+=== Page 1 — vision transcription (Clinical Documents.pdf) ===
+DOCUMENT TYPE: Handwritten consultation note
+BODY: Date: 4/6/2026 Name: Mr. Divyansh Mishra
+=== Page 1 — vision transcription (Pre Auth.pdf) ===
+Date of first consultation: 20/11/2022
+Date of admission: 20/11/2022
+"""
+        facts = enrich_claim_facts(case)
+        self.assertEqual(facts["consultation_date"], "4/6/2026")
+        self.assertEqual(facts["date_of_admission"], "29 Jun 2026")
+        self.assertEqual(facts["nature_of_admission"], "Planned / Elective")
 
 
 if __name__ == "__main__":
