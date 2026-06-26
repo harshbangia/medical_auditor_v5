@@ -22,6 +22,11 @@ Proposed Date of Hospitalization 29 Jun 2026
 Patient Name DIVYANSH MISHRA
 """
 
+POLICY_SCHEDULE_VISION_OCR = """
+Period Of Insurance Start date From: 04/01/2026 End date Till Midnight on: 03/01/2027 11:59:59
+Policy No.: H1486808
+IFFCO-TOKIO GENERAL INSURANCE CO. LTD
+"""
 POLICY_SCHEDULE = """
 Policy schedule cum Tax Invoice
 Policy No.: H1486808
@@ -51,6 +56,10 @@ class InsuranceExtractorTests(unittest.TestCase):
     def test_extracts_policy_period_from_schedule(self):
         facts = extract_insurance_from_text(POLICY_SCHEDULE, source="Policy document.pdf")
         self.assertEqual(facts["policy_number"], "H1486808")
+        self.assertEqual(facts["policy_period"], "04/01/2026 to 03/01/2027")
+
+    def test_extracts_policy_period_from_vision_ocr_format(self):
+        facts = extract_insurance_from_text(POLICY_SCHEDULE_VISION_OCR, source="Policy document.pdf")
         self.assertEqual(facts["policy_period"], "04/01/2026 to 03/01/2027")
 
     def test_merge_overwrites_bad_llm_policy_number(self):

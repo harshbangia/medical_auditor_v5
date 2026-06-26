@@ -63,6 +63,11 @@ _POLICY_FALSE_POSITIVES = {
 
 _POLICY_PERIOD_PATTERNS = [
     re.compile(
+        r"period\s*of\s*insurance.*?start\s*date\s*[:.]?\s*from\s*[:.]?\s*(\d{1,2}/\d{1,2}/\d{4}).*?"
+        r"end\s*date\s*(?:till\s*midnight\s*on\s*[:.]?\s*)?(\d{1,2}/\d{1,2}/\d{4})",
+        re.I | re.S,
+    ),
+    re.compile(
         r"period\s*of\s*insurance.*?start\s*date\s*:\s*from\s*(\d{1,2}/\d{1,2}/\d{4}).*?"
         r"end\s*date\s*:.*?(?:on\s*)?(\d{1,2}/\d{1,2}/\d{4})",
         re.I | re.S,
@@ -188,6 +193,22 @@ def _extract_policy_period(text: str) -> str:
         if m:
             start, end = m.group(1).strip(), m.group(2).strip()
             return f"{start} to {end}"
+
+    block = re.search(r"period\s*of\s*insurance.{0,500}", text or "", re.I | re.S)
+    if block:
+        snippet = block.group(0)
+        start_m = re.search(
+            r"start\s*date\s*(?:from\s*[:.]?\s*|:\s*from\s*)?(\d{1,2}/\d{1,2}/\d{4})",
+            snippet,
+            re.I,
+        )
+        end_m = re.search(
+            r"end\s*date\s*(?:till\s*midnight\s*on\s*[:.]?\s*)?(\d{1,2}/\d{1,2}/\d{4})",
+            snippet,
+            re.I,
+        )
+        if start_m and end_m:
+            return f"{start_m.group(1)} to {end_m.group(1)}"
     return ""
 
 
@@ -360,9 +381,13 @@ def enrich_insurance_facts(
         "member_code": "",
     }
     for field in result:
-        result[field] = _pick_best_field([
-            (facts.get(field, ""), priority) for _src, facts, priority in per_source
-        ], field)
+        candidates = []
+        for src, facts, priority in per_source:
+            field_priority = priority
+            if field == "policy_period" and "policy" in (src or "").lower():
+                field_priority = max(priority, 110)
+            candidates.append((facts.get(field, ""), field_priority))
+        result[field] = _pick_best_field(candidates, field)
 
     # Policy numbers: vote across per-source extractions with source weighting
     policy_candidates: List[Tuple[str, int]] = []
