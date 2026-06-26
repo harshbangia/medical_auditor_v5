@@ -92,12 +92,22 @@ class ClaimDetailsExtractorTests(unittest.TestCase):
             "claim_details": {
                 "consultation_date": "21/01/2022",
                 "date_of_admission": "",
-            }
+                "nature_of_admission": "Unknown",
+            },
+            "treatment_billing_audit": {},
         }
         facts = enrich_claim_facts(QUERY_LETTER + "\n" + PRE_AUTH)
         merge_claim_details_into_result(result, facts)
         self.assertEqual(result["claim_details"]["date_of_admission"], "29 Jun 2026")
         self.assertEqual(result["claim_details"]["consultation_date"], "02/04/2025")
+        self.assertEqual(result["claim_details"]["nature_of_admission"], "Planned / Elective")
+
+    def test_clinical_consult_date_and_nature(self):
+        clinical = "DOCUMENT TYPE: Handwritten consultation note BODY: Date: 4/6/2026 Name: Mr. Divyansh Mishra"
+        facts = extract_claim_details_from_text(clinical)
+        self.assertEqual(facts["consultation_date"], "4/6/2026")
+        facts2 = extract_claim_details_from_text(QUERY_LETTER)
+        self.assertEqual(facts2["nature_of_admission"], "Planned / Elective")
 
 
 if __name__ == "__main__":

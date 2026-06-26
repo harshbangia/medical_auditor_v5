@@ -6,6 +6,7 @@ from an unrelated handwritten page. This module deterministically extracts:
   - date_of_admission (proposed hospitalization / DOA)
   - date_of_discharge (DOD)
   - hospital name from query / pre-auth letters
+  - nature_of_admission (Planned/Elective when pre-auth filed in advance)
 """
 
 import re
@@ -17,6 +18,10 @@ _QUERY_LETTER_MARKERS = re.compile(
 )
 _PREAUTH_MARKERS = re.compile(
     r"pre[\s-]?auth|cashless hospitalization|request for cashless",
+    re.I,
+)
+_CLINICAL_MARKERS = re.compile(
+    r"consultation note|handwritten consult|clinical document",
     re.I,
 )
 
@@ -38,6 +43,14 @@ _CONSULT_PATTERNS = [
     ),
     re.compile(
         rf"date\s*of\s*consultation\s*[:.]?\s*{_DATE_NUMERIC}",
+        re.I,
+    ),
+    re.compile(
+        rf"date\s*[:.]?\s*{_DATE_NUMERIC}\s*name\s*[:.]",
+        re.I,
+    ),
+    re.compile(
+        rf"body\s*:\s*date\s*[:.]?\s*{_DATE_NUMERIC}",
         re.I,
     ),
 ]
@@ -86,7 +99,7 @@ _DISCHARGE_PATTERNS = [
 
 _HOSPITAL_PATTERNS = [
     re.compile(
-        r"(Kokilaben\s+Dhirubh?ai\s+Ambani\s+Hospital[^\n]{0,60})",
+        r"(Kokilaben\s+Dhirubh?ai\s+Ambani\s+Hospital[^\n]{0,80})",
         re.I,
     ),
     re.compile(
@@ -99,9 +112,17 @@ _HOSPITAL_PATTERNS = [
     ),
 ]
 
+_ROOM_CATEGORY_PATTERNS = [
+    re.compile(r"type\s*of\s*room\s*(?:required|requested)?\s*[:.]?\s*([^\n]{3,40})", re.I),
+    re.compile(r"room\s*category\s*[:.]?\s*([^\n]{3,40})", re.I),
+    re.compile(r"\b((?:single|twin|double)\s+deluxe)\b", re.I),
+    re.compile(r"\b(prince\s+suite)\b", re.I),
+]
+
 _BAD_DATE_VALUES = {
     "", "-", "—", "na", "n/a", "not available", "unknown", "not provided", "not specified",
 }
+_UNKNOWN_ADMISSION = {"", "-", "—", "unknown", "not available", "not specified", "not provided"}
 
 
 def _norm_date(val: str) -> str:
@@ -120,26 +141,69 @@ def _first_match(patterns: List[re.Pattern], text: str) -> str:
     return ""
 
 
-def _source_priority(filename: str, text: str) -> int:
+def _all_consult_dates(text: str) -> List[str]:
+    dates: List[str] = []
+    for pat in _CONSULT_PATTERNS:
+        for m in pat.finditer(text or ""):
+            val = _norm_date(m.group(1))
+            if val and not _is_bad_date(val):
+                dates.append(val)
+    return dates
+
+
+def _infer_nature_of_admission(text: str) -> str:
+    if re.search(
+        r"\b(?:emergency|er\b|casualty|trauma|walk[\s-]?in|acute)\b",
+        text or "",
+        re.I,
+    ):
+        return "Emergency"
+    if re.search(r"proposed\s*date\s*of\s*hospitalization", text or "", re.I):
+        return "Planned / Elective"
+    if re.search(r"pre[\s-]?auth|cashless\s*request|elective|planned\s*admission", text or "", re.I):
+        return "Planned / Elective"
+    return ""
+
+
+def _extract_room_category(text: str) -> str:
+    for pat in _ROOM_CATEGORY_PATTERNS:
+        m = pat.search(text or "")
+        if m:
+            val = re.sub(r"\s+", " ", m.group(1).strip()).strip(" .[]")
+            if val and len(val) >= 3:
+                return val.title() if val.islower() else val
+    return ""
+
+
+def _source_priority(filename: str, text: str, field: str = "") -> int:
     name = (filename or "").lower()
+    if field == "consultation_date" and ("clinical" in name or _CLINICAL_MARKERS.search(text or "")):
+        return 95
+    if field == "date_of_admission" and (
+        "query" in name or "querr" in name or _QUERY_LETTER_MARKERS.search(text or "")
+    ):
+        return 100
     if _QUERY_LETTER_MARKERS.search(text or "") or "query" in name or "querr" in name:
         return 100
     if _PREAUTH_MARKERS.search(text or "") or "pre auth" in name or "preauth" in name:
         return 80
     if "clinical" in name or "consult" in name:
-        return 60
-    if "discharge" in name:
         return 70
+    if "discharge" in name:
+        return 75
     return 40
 
 
 def extract_claim_details_from_text(text: str) -> Dict[str, str]:
     """Regex extraction of claim dates and hospital from document text."""
+    consult_dates = _all_consult_dates(text)
     return {
-        "consultation_date": _first_match(_CONSULT_PATTERNS, text),
+        "consultation_date": consult_dates[0] if consult_dates else "",
         "date_of_admission": _first_match(_ADMISSION_PATTERNS, text),
         "date_of_discharge": _first_match(_DISCHARGE_PATTERNS, text),
         "hospital": _extract_hospital(text),
+        "nature_of_admission": _infer_nature_of_admission(text),
+        "room_category_eligible": _extract_room_category(text),
     }
 
 
@@ -163,6 +227,17 @@ def _pick_best_field(candidates: List[Tuple[str, int]]) -> str:
     return ranked[0][0] if ranked else ""
 
 
+def _slice_case_text_for_file(case_text: str, fname: str) -> str:
+    if not case_text or not fname:
+        return ""
+    markers = [f"({fname})", f"— vision transcription ({fname})", fname]
+    for marker in markers:
+        if marker in case_text:
+            start = case_text.find(marker)
+            return case_text[max(0, start - 200): start + 12000]
+    return ""
+
+
 def enrich_claim_facts(
     case_text: str,
     pdf_paths: Optional[List[Tuple[str, str]]] = None,
@@ -170,7 +245,7 @@ def enrich_claim_facts(
     """
     Build best-effort claim details from combined case text and per-file sources.
 
-    Query letters are preferred for admission dates; pre-auth forms for first consultation.
+    Query letters are preferred for admission dates; clinical notes for consultation.
     """
     per_source: List[Tuple[str, Dict[str, str], int]] = []
 
@@ -192,31 +267,57 @@ def enrich_claim_facts(
                     doc.close()
                 except Exception:
                     text = ""
-            if not text.strip() and case_text and fname:
-                marker = f"({fname})"
-                if marker in case_text:
-                    start = case_text.find(marker)
-                    text = case_text[max(0, start - 200): start + 8000]
+            if not text.strip():
+                text = _slice_case_text_for_file(case_text, fname)
             facts = extract_claim_details_from_text(text)
-            priority = _source_priority(fname, text)
-            per_source.append((fname, facts, priority))
+            per_source.append((fname, facts, _source_priority(fname, text)))
 
     result = {
         "consultation_date": "",
         "date_of_admission": "",
         "date_of_discharge": "",
         "hospital": "",
+        "nature_of_admission": "",
+        "room_category_eligible": "",
     }
     for field in result:
-        result[field] = _pick_best_field([
-            (facts.get(field, ""), priority) for _src, facts, priority in per_source
-        ])
+        candidates = []
+        for src, facts, priority in per_source:
+            field_priority = priority
+            if field == "consultation_date" and "clinical" in (src or "").lower():
+                field_priority = max(priority, 95)
+            if field == "date_of_admission" and (
+                "query" in (src or "").lower() or "querr" in (src or "").lower()
+            ):
+                field_priority = max(priority, 100)
+            if field == "room_category_eligible" and (
+                "pre auth" in (src or "").lower() or "policy" in (src or "").lower()
+            ):
+                field_priority = max(priority, 85)
+            candidates.append((facts.get(field, ""), field_priority))
+        result[field] = _pick_best_field(candidates)
+    if not result["consultation_date"]:
+        clinical_dates = []
+        for src, facts, priority in per_source:
+            if "clinical" in (src or "").lower() or priority >= 70:
+                clinical_dates.extend(_all_consult_dates(_slice_case_text_for_file(case_text, src)))
+        if clinical_dates:
+            result["consultation_date"] = clinical_dates[0]
+    if not result["nature_of_admission"] and result["date_of_admission"]:
+        result["nature_of_admission"] = "Planned / Elective"
     return result
 
 
 def _should_overwrite_claim_field(current: str, extracted: str) -> bool:
     """Prefer deterministic extraction over LLM-filled claim dates."""
     return bool(extracted and not _is_bad_date(extracted))
+
+
+def _should_overwrite_admission_nature(current: str, extracted: str) -> bool:
+    if not extracted:
+        return False
+    cur = str(current or "").strip().lower()
+    return not cur or cur in _UNKNOWN_ADMISSION
 
 
 def merge_claim_details_into_result(result: dict, facts: Dict[str, str]) -> dict:
@@ -227,8 +328,21 @@ def merge_claim_details_into_result(result: dict, facts: Dict[str, str]) -> dict
         "date_of_admission": facts.get("date_of_admission", ""),
         "date_of_discharge": facts.get("date_of_discharge", ""),
         "hospital": facts.get("hospital", ""),
+        "nature_of_admission": facts.get("nature_of_admission", ""),
     }
     for key, val in mapping.items():
-        if val and _should_overwrite_claim_field(str(claim.get(key) or ""), val):
+        if not val:
+            continue
+        if key == "nature_of_admission":
+            if _should_overwrite_admission_nature(str(claim.get(key) or ""), val):
+                claim[key] = val
+        elif _should_overwrite_claim_field(str(claim.get(key) or ""), val):
             claim[key] = val
+
+    room = facts.get("room_category_eligible", "")
+    if room:
+        tba = result.setdefault("treatment_billing_audit", {})
+        current = str(tba.get("room_category_eligible") or "").strip()
+        if not current or current.lower() in _UNKNOWN_ADMISSION:
+            tba["room_category_eligible"] = room
     return result

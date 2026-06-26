@@ -63,6 +63,11 @@ _POLICY_FALSE_POSITIVES = {
 
 _POLICY_PERIOD_PATTERNS = [
     re.compile(
+        r"start\s*date\s*from\s*[:.]?\s*(\d{1,2}/\d{1,2}/\d{4}).*?"
+        r"end\s*date\s*till\s*midnight\s*on\s*[:.]?\s*(\d{1,2}/\d{1,2}/\d{4})",
+        re.I | re.S,
+    ),
+    re.compile(
         r"period\s*of\s*insurance.*?start\s*date\s*[:.]?\s*from\s*[:.]?\s*(\d{1,2}/\d{1,2}/\d{4}).*?"
         r"end\s*date\s*(?:till\s*midnight\s*on\s*[:.]?\s*)?(\d{1,2}/\d{1,2}/\d{4})",
         re.I | re.S,
@@ -356,10 +361,11 @@ def enrich_insurance_facts(
             native = _pdf_native_text(pdf_path)
             text = native if native.strip() else ""
             if not text.strip() and case_text and fname:
-                marker = f"({fname})"
-                if marker in case_text:
-                    start = case_text.find(marker)
-                    text = case_text[max(0, start - 200): start + 12000]
+                for marker in (f"({fname})", f"— vision transcription ({fname})", fname):
+                    if marker in case_text:
+                        start = case_text.find(marker)
+                        text = case_text[max(0, start - 200): start + 12000]
+                        break
 
             page_facts = extract_insurance_from_text(text, source=fname)
             priority = _source_priority(fname, text)
@@ -406,11 +412,12 @@ def _should_overwrite_insurance_field(field: str, current: str, extracted: str) 
     if not extracted:
         return False
     cur = str(current or "").strip()
-    ext = str(extracted or "").strip()
     bad = _BAD_INSURANCE_VALUES.get(field, set())
     if not cur or cur.lower() in bad:
         return True
     if field == "policy_number" and cur.lower() in _POLICY_FALSE_POSITIVES:
+        return True
+    if field == "policy_period" and not cur:
         return True
     return False
 
