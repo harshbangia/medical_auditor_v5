@@ -76,6 +76,11 @@ def generate_pdf(data, filename="audit_report.pdf"):
             c.get("date_of_admission_source") or "",
         ),
         (
+            "Proposed hospitalization date",
+            c.get("proposed_hospitalization_date") or "—",
+            c.get("proposed_hospitalization_date_source") or "",
+        ),
+        (
             "Date of discharge",
             c.get("date_of_discharge") or "—",
             c.get("date_of_discharge_source") or "",
@@ -90,6 +95,25 @@ def generate_pdf(data, filename="audit_report.pdf"):
         col_widths=[120, 150, 225],
     ))
     content.append(Spacer(1, 12))
+
+    all_dates = c.get("all_document_dates") or []
+    if all_dates:
+        content.extend(section("Dates Found Across All Uploaded Documents", styles))
+        date_rows = []
+        for entry in all_dates:
+            if not isinstance(entry, dict):
+                continue
+            date_rows.append([
+                entry.get("field_label") or entry.get("field") or "Date",
+                entry.get("value") or "—",
+                entry.get("source_label") or entry.get("source_file") or "—",
+            ])
+        content.append(data_table(
+            ["Date type", "Value", "Source document"],
+            date_rows or [["—", "—", "—"]],
+            col_widths=[130, 110, 255],
+        ))
+        content.append(Spacer(1, 12))
 
     date_discrepancies = data.get("date_discrepancies") or []
     if date_discrepancies:

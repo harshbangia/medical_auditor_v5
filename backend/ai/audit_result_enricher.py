@@ -294,10 +294,17 @@ def _ensure_claim_from_case_text(
     claim_facts: Optional[Dict[str, str]],
 ) -> None:
     facts = dict(claim_facts or {})
+    existing_claim = result.get("claim_details") or {}
     refreshed = enrich_claim_facts(case_text)
     for key, val in refreshed.items():
-        if val:
-            facts[key] = val
+        if not val:
+            continue
+        if key.endswith("_source") and facts.get(key):
+            continue
+        if key in ("consultation_date", "date_of_admission", "date_of_discharge"):
+            if facts.get(key) or existing_claim.get(key):
+                continue
+        facts[key] = val
     merge_claim_details_into_result(result, facts)
 
 
