@@ -103,8 +103,10 @@ def _ensure_result_shape(result: dict) -> dict:
     for _k in (
         "hospital", "consultation_date", "consultation_date_source",
         "date_of_admission", "date_of_admission_source",
+        "proposed_hospitalization_date", "proposed_hospitalization_date_source",
         "date_of_discharge", "date_of_discharge_source",
         "nature_of_admission", "procedure_or_surgery", "diagnosis",
+        "all_document_dates",
     ):
         result["claim_details"].setdefault(_k, "")
     result.setdefault("date_discrepancies", [])
@@ -193,7 +195,7 @@ def _process_files_sequential(file_items: List[tuple], progress: ProgressFn) -> 
             temp_pdf_paths.append((tmp_path, name))
             text, imgs = extract_text_and_images(tmp_path, source_name=name)
             if text.strip():
-                case_texts.append(text)
+                case_texts.append(f"=== Source document: {name} ===\n{text}")
             images.extend(imgs or [])
             source_summaries.append(_summarize_source(name, text))
         except Exception as exc:

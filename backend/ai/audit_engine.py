@@ -251,7 +251,8 @@ def _format_claim_facts_block(facts: dict) -> str:
     for key, label in (
         ("hospital", "Hospital"),
         ("consultation_date", "Consultation date"),
-        ("date_of_admission", "Date of admission"),
+        ("date_of_admission", "Date of admission (actual)"),
+        ("proposed_hospitalization_date", "Proposed hospitalization date (query letter)"),
         ("date_of_discharge", "Date of discharge"),
     ):
         val = str((facts or {}).get(key) or "").strip()
@@ -322,8 +323,10 @@ You MUST:
   class was "never tried" if the section lists a brand from that class
 - Use the INSURANCE FACTS section for insurance_details — never leave insurance_company blank if listed there
 - Use the CLAIM FACTS section for claim_details dates and hospital — never leave consultation_date
-  or date_of_admission blank if listed there; do NOT substitute an old consult date when the query
-  letter states a proposed hospitalization date
+  or date_of_admission blank if listed there; use date_of_admission for the ACTUAL admission date
+  from pre-auth/clinical documents; put the query letter proposed hospitalization date in
+  proposed_hospitalization_date only — never substitute it for date_of_admission when a pre-auth
+  admission date is present
 - Use the CLINICAL VISIT SYNTHESIS section when reporting symptom duration vs treatment course — these are
   DIFFERENT facts from DIFFERENT pages; report BOTH separately in clinical_findings and observations
 - Produce at least 5 observations; minimum 3 must challenge or question the hospital (answer: Not Supported, Partially Supported, or Insufficient Evidence)

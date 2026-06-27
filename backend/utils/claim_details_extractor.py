@@ -1,8 +1,9 @@
 """Extract claim dates with document-type awareness, source attribution, and discrepancy flags.
 
 Handwritten pre-authorization forms and clinical consult notes take priority over
-computer-generated query letters. When the same date field differs across documents,
-a structured discrepancy is recorded for the audit report.
+computer-generated query letters. Proposed hospitalization dates from query letters
+are recorded separately and never used as the actual admission date when a pre-auth
+or clinical source provides one.
 """
 
 import re
@@ -10,23 +11,25 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 _QUERY_LETTER_MARKERS = re.compile(
-    r"query letter|claim incident|cashless request|proposed date of hospitalization",
+    r"query\s*letter|claim\s*incident|member\s*code|proposed\s*date\s*of\s*hospitalization",
     re.I,
 )
 _PREAUTH_MARKERS = re.compile(
-    r"pre[\s-]?auth|cashless hospitalization|request for cashless",
+    r"pre[\s-]?auth|cashless\s+hospitalization|request\s+for\s+cashless|"
+    r"date\s+of\s+first\s+consultation|date\s+of\s+admission",
     re.I,
 )
 _CLINICAL_MARKERS = re.compile(
-    r"consultation note|handwritten consult|clinical document|opd",
+    r"consultation\s+note|handwritten\s+consult|clinical\s+document|opd|prescription",
     re.I,
 )
 _DISCHARGE_MARKERS = re.compile(
-    r"discharge summary|date of discharge|d\.o\.d",
+    r"discharge\s+summary|date\s+of\s+discharge|d\.o\.d",
     re.I,
 )
 
-_DATE_NUMERIC = r"(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})"
+# Day/month with optional year — handles handwritten forms like 30/6 or 30/6/26
+_DATE_NUMERIC = r"(\d{1,2}[/.-]\d{1,2}(?:[/.-]\d{2,4})?)"
 _DATE_TEXT = r"(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4})"
 _DATE_TEXT_ORDINAL = (
     r"(\d{1,2}(?:st|nd|rd|th)?\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4})"
@@ -58,9 +61,11 @@ _HOSPITAL_PATTERNS = [
     re.compile(r"name\s*of\s*the\s+hospital\s*[:.]?\s*([^\n]{5,80})", re.I),
 ]
 
-_PROPOSED_ADMISSION_PATTERNS = [
+_PROPOSED_HOSPITALIZATION_PATTERNS = [
     re.compile(rf"proposed\s*date\s*of\s*hospitalization\s*{_DATE_TEXT}", re.I),
     re.compile(rf"proposed\s*date\s*of\s*hospitalization\s*{_DATE_NUMERIC}", re.I),
+    re.compile(rf"proposed\s*date\s*of\s*hospitalization\s*[:.]?\s*{_DATE_TEXT}", re.I),
+    re.compile(rf"proposed\s*date\s*of\s*hospitalization\s*[:.]?\s*{_DATE_NUMERIC}", re.I),
 ]
 
 _EXPLICIT_ADMISSION_PATTERNS = [
@@ -71,8 +76,6 @@ _EXPLICIT_ADMISSION_PATTERNS = [
     re.compile(rf"(?:doa|d\.o\.a\.?)\s*[:.]?\s*{_DATE_NUMERIC}", re.I),
     re.compile(rf"admitted\s*(?:on|date)?\s*[:.]?\s*{_DATE_NUMERIC}", re.I),
 ]
-
-_ADMISSION_PATTERNS = _PROPOSED_ADMISSION_PATTERNS + _EXPLICIT_ADMISSION_PATTERNS
 
 _ROOM_CATEGORY_PATTERNS = [
     re.compile(r"type\s*of\s*room\s*(?:required|requested)?\s*[:.]?\s*([^\n]{3,40})", re.I),
@@ -94,10 +97,18 @@ _BOILERPLATE_DISCHARGE = re.compile(
 _FIELD_LABELS = {
     "consultation_date": "Consultation date",
     "date_of_admission": "Date of admission",
+    "proposed_hospitalization_date": "Proposed hospitalization date",
     "date_of_discharge": "Date of discharge",
 }
 
-_DATE_FIELDS = ("consultation_date", "date_of_admission", "date_of_discharge")
+_PRIMARY_DATE_FIELDS = ("consultation_date", "date_of_admission", "date_of_discharge")
+_ALL_DATE_FIELDS = _PRIMARY_DATE_FIELDS + ("proposed_hospitalization_date",)
+
+_SOURCE_DOC_MARKER = re.compile(r"=== Source document:\s*(.+?)\s*===", re.I)
+_VISION_BLOCK_MARKER = re.compile(
+    r"=== Page \d+ — vision transcription \(([^)]+)\) ===",
+    re.I,
+)
 
 
 def _norm_date(val: str) -> str:
@@ -117,8 +128,21 @@ def _strip_ordinal(val: str) -> str:
     return re.sub(r"(\d{1,2})(?:st|nd|rd|th)\b", r"\1", val, flags=re.I)
 
 
-def _parse_flexible_date(val: str) -> Optional[datetime]:
+def _infer_year_for_partial(val: str, reference_year: Optional[int]) -> str:
+    """Turn handwritten partial dates like 30/6 into 30/06/2026 when year is omitted."""
     val = _strip_ordinal(_norm_date(val))
+    if re.search(r"\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}", val):
+        return val
+    m = re.match(r"^(\d{1,2})[/.-](\d{1,2})$", val)
+    if m and reference_year:
+        day, month = int(m.group(1)), int(m.group(2))
+        if 1 <= day <= 31 and 1 <= month <= 12:
+            return f"{day:02d}/{month:02d}/{reference_year}"
+    return val
+
+
+def _parse_flexible_date(val: str, reference_year: Optional[int] = None) -> Optional[datetime]:
+    val = _infer_year_for_partial(_strip_ordinal(_norm_date(val)), reference_year)
     for fmt in (
         "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%d/%m/%y",
         "%d %b %Y", "%d %B %Y", "%d %b %y", "%d %B %y",
@@ -130,13 +154,13 @@ def _parse_flexible_date(val: str) -> Optional[datetime]:
     return None
 
 
-def _canonical_date_key(val: str) -> str:
-    parsed = _parse_flexible_date(val)
+def _canonical_date_key(val: str, reference_year: Optional[int] = None) -> str:
+    parsed = _parse_flexible_date(val, reference_year)
     return parsed.strftime("%Y-%m-%d") if parsed else _norm_date(val).lower()
 
 
-def _parse_date_year(val: str) -> Optional[int]:
-    parsed = _parse_flexible_date(val)
+def _parse_date_year(val: str, reference_year: Optional[int] = None) -> Optional[int]:
+    parsed = _parse_flexible_date(val, reference_year)
     if parsed:
         return parsed.year
     m = re.search(r"(20\d{2})", val or "")
@@ -159,28 +183,52 @@ def _claim_reference_year(text: str) -> Optional[int]:
 
 
 def _is_plausible_for_claim(date_val: str, reference_year: Optional[int]) -> bool:
-    year = _parse_date_year(date_val)
+    year = _parse_date_year(date_val, reference_year)
     if year is None or reference_year is None:
         return True
     return abs(year - reference_year) <= 2
 
 
 def _classify_document(fname: str, text: str) -> str:
-    name = (fname or "").lower()
+    """Classify by document content; filename is only a weak hint."""
     blob = text or ""
-    if "query" in name or "querr" in name or _QUERY_LETTER_MARKERS.search(blob):
-        return "query_letter"
-    if "pre auth" in name or "preauth" in name or _PREAUTH_MARKERS.search(blob):
-        return "pre_auth"
-    if "discharge" in name or (
-        _DISCHARGE_MARKERS.search(blob) and re.search(r"date\s*of\s*discharge\s*[:.]", blob, re.I)
-    ):
-        return "discharge"
-    if "clinical" in name or "consult" in name or _CLINICAL_MARKERS.search(blob):
-        return "clinical"
-    if "bill" in name or "receipt" in name or "invoice" in name:
-        return "bill"
-    return "other"
+    name = (fname or "").lower()
+    scores: Dict[str, int] = {}
+
+    def bump(doc_type: str, amount: int) -> None:
+        scores[doc_type] = scores.get(doc_type, 0) + amount
+
+    if _QUERY_LETTER_MARKERS.search(blob):
+        bump("query_letter", 12)
+    if re.search(r"policy\s*no|member\s*code|claim\s*incident", blob, re.I):
+        bump("query_letter", 4)
+    if _PREAUTH_MARKERS.search(blob):
+        bump("pre_auth", 12)
+    if re.search(r"request\s+for\s+cashless|cashless\s+hospitalization", blob, re.I):
+        bump("pre_auth", 6)
+    if re.search(r"date\s+of\s+first\s+consultation|date\s+of\s+admission", blob, re.I):
+        bump("pre_auth", 8)
+    if _DISCHARGE_MARKERS.search(blob) and re.search(r"date\s*of\s*discharge\s*[:.]", blob, re.I):
+        bump("discharge", 14)
+    if _CLINICAL_MARKERS.search(blob) or re.search(r"consultation\s+note", blob, re.I):
+        bump("clinical", 10)
+    if re.search(r"bill|invoice|receipt|amount\s+paid", blob, re.I):
+        bump("bill", 8)
+
+    if re.search(r"query|querr", name):
+        bump("query_letter", 2)
+    if re.search(r"pre[\s-]?auth|preauth", name):
+        bump("pre_auth", 2)
+    if "discharge" in name:
+        bump("discharge", 2)
+    if re.search(r"clinical|consult", name):
+        bump("clinical", 2)
+    if re.search(r"bill|receipt|invoice", name):
+        bump("bill", 2)
+
+    if not scores:
+        return "other"
+    return max(scores.items(), key=lambda item: item[1])[0]
 
 
 def _document_medium(doc_type: str) -> str:
@@ -202,42 +250,50 @@ def _source_label(fname: str, doc_type: str) -> str:
         "discharge": "Discharge Summary",
         "bill": "Bill / Receipt",
     }.get(doc_type, "Document")
-    name = fname if fname and fname != "combined" else type_name
+    name = fname if fname and fname not in ("combined", "unknown") else type_name
     return f"{name} — {type_name} ({medium})"
 
 
-def _first_match(patterns: List[re.Pattern], text: str) -> str:
+def _first_match(
+    patterns: List[re.Pattern],
+    text: str,
+    reference_year: Optional[int] = None,
+) -> str:
     for pat in patterns:
         m = pat.search(text or "")
         if m:
-            val = _norm_date(m.group(1))
+            val = _infer_year_for_partial(_norm_date(m.group(1)), reference_year)
             if not _is_bad_date(val):
                 return val
     return ""
 
 
-def _clinical_consult_dates(text: str) -> List[str]:
+def _clinical_consult_dates(text: str, reference_year: Optional[int] = None) -> List[str]:
     dates: List[str] = []
     if not _CLINICAL_MARKERS.search(text or "") and "consultation note" not in (text or "").lower():
         return dates
     for m in _CLINICAL_CONSULT_BLOCK.finditer(text or ""):
-        val = _norm_date(m.group(1))
+        val = _infer_year_for_partial(_norm_date(m.group(1)), reference_year)
         if val and not _is_bad_date(val):
             dates.append(val)
     for pat in _CONSULT_PATTERNS:
         for m in pat.finditer(text or ""):
-            val = _norm_date(m.group(1))
+            val = _infer_year_for_partial(_norm_date(m.group(1)), reference_year)
             if val and not _is_bad_date(val):
                 dates.append(val)
     return list(dict.fromkeys(dates))
 
 
-def _extract_discharge_date(text: str) -> str:
+def _extract_discharge_date(text: str, reference_year: Optional[int] = None) -> str:
     if _BOILERPLATE_DISCHARGE.search(text or ""):
         snippet = text or ""
         if not re.search(r"date\s*of\s*discharge\s*[:.]\s*\d", snippet, re.I):
             return ""
-    return _first_match(_DISCHARGE_PATTERNS, text)
+    return _first_match(_DISCHARGE_PATTERNS, text, reference_year)
+
+
+def _extract_proposed_hospitalization(text: str, reference_year: Optional[int] = None) -> str:
+    return _first_match(_PROPOSED_HOSPITALIZATION_PATTERNS, text, reference_year)
 
 
 def _infer_nature_of_admission(text: str, doc_type: str) -> str:
@@ -275,13 +331,10 @@ def _extract_hospital(text: str) -> str:
 
 
 def _extract_admission_date(text: str, doc_type: str, reference_year: Optional[int]) -> str:
+    """Actual admission only — query letters never contribute proposed dates here."""
     if doc_type == "query_letter":
-        patterns = _PROPOSED_ADMISSION_PATTERNS
-    elif doc_type == "pre_auth":
-        patterns = _EXPLICIT_ADMISSION_PATTERNS
-    else:
-        patterns = _ADMISSION_PATTERNS
-    val = _first_match(patterns, text)
+        return ""
+    val = _first_match(_EXPLICIT_ADMISSION_PATTERNS, text, reference_year)
     if val and not _is_plausible_for_claim(val, reference_year):
         return ""
     return val
@@ -293,13 +346,14 @@ def _extract_facts_for_document(
     reference_year: Optional[int],
 ) -> Dict[str, str]:
     doc_type = _classify_document(fname, text)
-    clinical_dates = _clinical_consult_dates(text) if doc_type == "clinical" else []
+    clinical_dates = _clinical_consult_dates(text, reference_year) if doc_type == "clinical" else []
     consult = clinical_dates[0] if clinical_dates else ""
-    if not consult and doc_type == "pre_auth":
-        consult = _first_match(_CONSULT_PATTERNS, text)
+    if not consult and doc_type in ("pre_auth", "other", "clinical"):
+        consult = _first_match(_CONSULT_PATTERNS, text, reference_year)
 
     admission = _extract_admission_date(text, doc_type, reference_year)
-    discharge = _extract_discharge_date(text) if doc_type in ("discharge", "pre_auth", "clinical") else ""
+    proposed = _extract_proposed_hospitalization(text, reference_year) if doc_type == "query_letter" else ""
+    discharge = _extract_discharge_date(text, reference_year) if doc_type in ("discharge", "pre_auth", "clinical") else ""
 
     if consult and not _is_plausible_for_claim(consult, reference_year):
         consult = ""
@@ -309,6 +363,7 @@ def _extract_facts_for_document(
     return {
         "consultation_date": consult,
         "date_of_admission": admission,
+        "proposed_hospitalization_date": proposed,
         "date_of_discharge": discharge,
         "hospital": _extract_hospital(text),
         "nature_of_admission": _infer_nature_of_admission(text, doc_type),
@@ -324,15 +379,21 @@ def _field_priority(doc_type: str, field: str) -> int:
         "consultation_date": {
             "pre_auth": 100,
             "clinical": 95,
-            "query_letter": 50,
+            "query_letter": 40,
             "other": 30,
         },
         "date_of_admission": {
             "pre_auth": 100,
-            "clinical": 85,
-            "query_letter": 60,
-            "bill": 70,
+            "clinical": 90,
+            "bill": 75,
+            "discharge": 70,
+            "query_letter": 20,
             "other": 30,
+        },
+        "proposed_hospitalization_date": {
+            "query_letter": 100,
+            "pre_auth": 30,
+            "other": 10,
         },
         "date_of_discharge": {
             "discharge": 100,
@@ -386,11 +447,11 @@ def _pick_best_candidate(
 def _build_date_provenance(
     per_source: List[Tuple[str, Dict[str, str], str]],
 ) -> Dict[str, List[Dict[str, str]]]:
-    provenance: Dict[str, List[Dict[str, str]]] = {f: [] for f in _DATE_FIELDS}
-    seen: Dict[str, set] = {f: set() for f in _DATE_FIELDS}
+    provenance: Dict[str, List[Dict[str, str]]] = {f: [] for f in _ALL_DATE_FIELDS}
+    seen: Dict[str, set] = {f: set() for f in _ALL_DATE_FIELDS}
 
     for fname, facts, doc_type in per_source:
-        for field in _DATE_FIELDS:
+        for field in _ALL_DATE_FIELDS:
             val = facts.get(field, "")
             if not val or _is_bad_date(val):
                 continue
@@ -404,19 +465,42 @@ def _build_date_provenance(
                 "document_type": doc_type,
                 "medium": _document_medium(doc_type),
                 "source_label": _source_label(fname, doc_type),
+                "field": field,
+                "field_label": _FIELD_LABELS.get(field, field),
             })
     return provenance
 
 
+def _flatten_all_document_dates(provenance: Dict[str, List[Dict[str, str]]]) -> List[Dict[str, str]]:
+    """All labeled dates found across every uploaded document."""
+    rows: List[Dict[str, str]] = []
+    seen: set = set()
+    for field in _ALL_DATE_FIELDS:
+        for entry in provenance.get(field) or []:
+            key = (field, entry.get("value"), entry.get("source_file"))
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(dict(entry))
+    return rows
+
+
 def _detect_date_discrepancies(
     provenance: Dict[str, List[Dict[str, str]]],
+    reference_year: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     discrepancies: List[Dict[str, Any]] = []
-    for field in _DATE_FIELDS:
-        entries = provenance.get(field) or []
+    compare_fields = ("consultation_date", "date_of_admission", "date_of_discharge")
+
+    for field in compare_fields:
+        entries = list(provenance.get(field) or [])
+        proposed = provenance.get("proposed_hospitalization_date") or []
+        if field == "date_of_admission" and proposed:
+            entries = entries + proposed
+
         by_canonical: Dict[str, List[Dict[str, str]]] = {}
         for entry in entries:
-            canon = _canonical_date_key(entry["value"])
+            canon = _canonical_date_key(entry["value"], reference_year)
             if not canon:
                 continue
             by_canonical.setdefault(canon, []).append(entry)
@@ -426,40 +510,77 @@ def _detect_date_discrepancies(
         parts = []
         for group in by_canonical.values():
             sample = group[0]
-            parts.append(f"{sample['value']} in {sample['source_label']}")
+            label = sample.get("field_label") or _FIELD_LABELS.get(field, field)
+            parts.append(f"{label}: {sample['value']} in {sample['source_label']}")
 
-        label = _FIELD_LABELS[field]
-        message = f"{label} differs across documents: " + "; ".join(parts) + "."
+        message = f"{_FIELD_LABELS[field]} differs across documents: " + "; ".join(parts) + "."
         discrepancies.append({
             "field": field,
-            "label": label,
+            "label": _FIELD_LABELS[field],
             "entries": entries,
             "message": message,
         })
     return discrepancies
 
 
-def _slice_case_text_for_file(case_text: str, fname: str) -> str:
-    if not case_text or not fname:
-        return ""
-    markers = [f"({fname})", f"— vision transcription ({fname})", fname]
-    for marker in markers:
-        if marker in case_text:
-            start = case_text.find(marker)
-            return case_text[max(0, start - 200): start + 12000]
-    return ""
+def _gather_text_for_file(case_text: str, pdf_path: str, fname: str) -> str:
+    """Collect all text belonging to one uploaded PDF (native + vision blocks)."""
+    parts: List[str] = []
+
+    if pdf_path:
+        try:
+            import fitz
+            doc = fitz.open(pdf_path)
+            native = "\n".join((p.get_text() or "") for p in doc)
+            doc.close()
+            if native.strip():
+                parts.append(native.strip())
+        except Exception:
+            pass
+
+    if case_text and fname:
+        source_pat = re.compile(
+            rf"=== Source document:\s*{re.escape(fname)}\s*===\s*(.*?)(?=\n=== Source document:|\Z)",
+            re.I | re.S,
+        )
+        m = source_pat.search(case_text)
+        if m:
+            parts.append(m.group(1).strip())
+
+        vision_pat = re.compile(
+            rf"=== Page \d+ — vision transcription \({re.escape(fname)}\) ===\s*(.*?)(?=\n=== Page |\n=== Source document:|\Z)",
+            re.I | re.S,
+        )
+        for vm in vision_pat.finditer(case_text):
+            block = vm.group(1).strip()
+            if block:
+                parts.append(block)
+
+    return "\n\n".join(dict.fromkeys(p for p in parts if p.strip()))
 
 
 def _split_case_text_blocks(case_text: str) -> List[Tuple[str, str]]:
     blocks: List[Tuple[str, str]] = []
     if not case_text:
         return blocks
+
+    source_parts = _SOURCE_DOC_MARKER.split(case_text)
+    if len(source_parts) > 1:
+        for i in range(1, len(source_parts), 2):
+            fname = source_parts[i].strip()
+            body = source_parts[i + 1] if i + 1 < len(source_parts) else ""
+            if fname and body.strip():
+                blocks.append((fname, body.strip()))
+        if blocks:
+            return blocks
+
     parts = re.split(r"=== Page \d+ — vision transcription \(([^)]+)\) ===", case_text)
     if len(parts) > 1:
         for i in range(1, len(parts), 2):
             fname = parts[i].strip()
             body = parts[i + 1] if i + 1 < len(parts) else ""
-            blocks.append((fname, body))
+            if fname and body.strip():
+                blocks.append((fname, body.strip()))
     return blocks
 
 
@@ -470,55 +591,50 @@ def enrich_claim_facts(
     """Build claim details with source labels and cross-document discrepancy flags."""
     reference_year = _claim_reference_year(case_text)
     per_source: List[Tuple[str, Dict[str, str], str]] = []
-
-    combined = _extract_facts_for_document("combined", case_text, reference_year)
-    per_source.append((combined.get("_fname", "combined"), combined, combined.get("_doc_type", "other")))
-
-    for fname, body in _split_case_text_blocks(case_text):
-        facts = _extract_facts_for_document(fname, body, reference_year)
-        per_source.append((fname, facts, facts.get("_doc_type", "other")))
+    seen_files: set = set()
 
     if pdf_paths:
-        try:
-            import fitz
-        except ImportError:
-            fitz = None
-
-        seen = {src for src, _, _ in per_source}
         for pdf_path, fname in pdf_paths:
-            if fname in seen:
-                continue
-            text = ""
-            if fitz:
-                try:
-                    doc = fitz.open(pdf_path)
-                    text = "".join(p.get_text() for p in doc)
-                    doc.close()
-                except Exception:
-                    text = ""
+            text = _gather_text_for_file(case_text, pdf_path, fname)
             if not text.strip():
-                text = _slice_case_text_for_file(case_text, fname)
+                continue
             facts = _extract_facts_for_document(fname, text, reference_year)
             per_source.append((fname, facts, facts.get("_doc_type", "other")))
+            seen_files.add(fname)
+
+    for fname, body in _split_case_text_blocks(case_text):
+        if fname in seen_files:
+            continue
+        facts = _extract_facts_for_document(fname, body, reference_year)
+        per_source.append((fname, facts, facts.get("_doc_type", "other")))
+        seen_files.add(fname)
+
+    if not per_source:
+        combined = _extract_facts_for_document("combined", case_text, reference_year)
+        per_source.append((combined.get("_fname", "combined"), combined, combined.get("_doc_type", "other")))
 
     provenance = _build_date_provenance(per_source)
-    discrepancies = _detect_date_discrepancies(provenance)
+    all_document_dates = _flatten_all_document_dates(provenance)
+    discrepancies = _detect_date_discrepancies(provenance, reference_year)
 
     result: Dict[str, Any] = {
         "consultation_date": "",
         "consultation_date_source": "",
         "date_of_admission": "",
         "date_of_admission_source": "",
+        "proposed_hospitalization_date": "",
+        "proposed_hospitalization_date_source": "",
         "date_of_discharge": "",
         "date_of_discharge_source": "",
         "hospital": "",
         "nature_of_admission": "",
         "room_category_eligible": "",
         "date_provenance": provenance,
+        "all_document_dates": all_document_dates,
         "date_discrepancies": discrepancies,
     }
 
-    for field in _DATE_FIELDS:
+    for field in _PRIMARY_DATE_FIELDS + ("proposed_hospitalization_date",):
         candidates = [
             (facts.get(field, ""), _field_priority(doc_type, field), fname, doc_type)
             for fname, facts, doc_type in per_source
@@ -535,7 +651,7 @@ def enrich_claim_facts(
         value, _source = _pick_best_candidate(candidates)
         result[field] = value
 
-    if not result["nature_of_admission"] and result["date_of_admission"]:
+    if not result["nature_of_admission"] and (result["date_of_admission"] or result["proposed_hospitalization_date"]):
         result["nature_of_admission"] = "Planned / Elective"
 
     return result
@@ -558,6 +674,7 @@ def merge_claim_details_into_result(result: dict, facts: Dict[str, Any]) -> dict
     mapping = {
         "consultation_date": facts.get("consultation_date", ""),
         "date_of_admission": facts.get("date_of_admission", ""),
+        "proposed_hospitalization_date": facts.get("proposed_hospitalization_date", ""),
         "date_of_discharge": facts.get("date_of_discharge", ""),
         "hospital": facts.get("hospital", ""),
         "nature_of_admission": facts.get("nature_of_admission", ""),
@@ -571,13 +688,15 @@ def merge_claim_details_into_result(result: dict, facts: Dict[str, Any]) -> dict
         elif _should_overwrite_claim_field(str(claim.get(key) or ""), val):
             claim[key] = val
 
-    for field in _DATE_FIELDS:
+    for field in _PRIMARY_DATE_FIELDS + ("proposed_hospitalization_date",):
         source = facts.get(f"{field}_source", "")
         if source:
             claim[f"{field}_source"] = source
 
     if facts.get("date_provenance"):
         claim["date_provenance"] = facts["date_provenance"]
+    if facts.get("all_document_dates"):
+        claim["all_document_dates"] = facts["all_document_dates"]
 
     discrepancies = facts.get("date_discrepancies") or []
     if discrepancies:

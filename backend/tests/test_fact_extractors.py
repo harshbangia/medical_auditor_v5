@@ -39,8 +39,14 @@ IFFCO-TOKIO GENERAL INSURANCE CO
 PRE_AUTH = """
 REQUEST FOR CASHLESS HOSPITALIZATION
 Date of first consultation: 02/04/2025
-Date of admission: 20/09/2025
+Date of admission: 30/6
 Proposed diagnosis: Left shoulder bankart lesion
+"""
+
+PRE_AUTH_GENERIC_FILENAME = """
+REQUEST FOR CASHLESS HOSPITALIZATION
+Date of first consultation: 02/04/2025
+Date of admission: 30/6
 """
 
 
@@ -50,17 +56,17 @@ class InsuranceExtractorTests(unittest.TestCase):
         self.assertEqual(bad["policy_number"], "")
 
     def test_extracts_policy_from_query_letter(self):
-        facts = extract_insurance_from_text(QUERY_LETTER, source="Querry Letter.pdf")
+        facts = extract_insurance_from_text(QUERY_LETTER, source="letter_from_insurer.pdf")
         self.assertEqual(facts["policy_number"], "H1486808")
         self.assertEqual(facts["claim_incident_number"], "2026062400280")
 
     def test_extracts_policy_period_from_schedule(self):
-        facts = extract_insurance_from_text(POLICY_SCHEDULE, source="Policy document.pdf")
+        facts = extract_insurance_from_text(POLICY_SCHEDULE, source="policy_schedule.pdf")
         self.assertEqual(facts["policy_number"], "H1486808")
         self.assertEqual(facts["policy_period"], "04/01/2026 to 03/01/2027")
 
     def test_extracts_policy_period_from_vision_ocr_format(self):
-        facts = extract_insurance_from_text(POLICY_SCHEDULE_VISION_OCR, source="Policy document.pdf")
+        facts = extract_insurance_from_text(POLICY_SCHEDULE_VISION_OCR, source="policy_schedule.pdf")
         self.assertEqual(facts["policy_period"], "04/01/2026 to 03/01/2027")
 
     def test_merge_overwrites_bad_llm_policy_number(self):
@@ -79,60 +85,71 @@ class InsuranceExtractorTests(unittest.TestCase):
 
 
 class ClaimDetailsExtractorTests(unittest.TestCase):
-    def test_extracts_admission_from_query_letter(self):
-        facts = extract_claim_details_from_text(QUERY_LETTER, source="Querry Letter.pdf")
-        self.assertEqual(facts["date_of_admission"], "29 Jun 2026")
+    def test_query_letter_proposed_date_not_actual_admission(self):
+        facts = extract_claim_details_from_text(QUERY_LETTER, source="insurer_query.pdf")
+        self.assertEqual(facts["date_of_admission"], "")
+        self.assertEqual(facts["proposed_hospitalization_date"], "29 Jun 2026")
         self.assertIn("Kokilaben", facts["hospital"])
 
-    def test_extracts_consultation_from_pre_auth(self):
-        facts = extract_claim_details_from_text(PRE_AUTH, source="Pre Auth.pdf")
+    def test_extracts_handwritten_partial_admission_from_pre_auth(self):
+        text = PRE_AUTH + "\nClaim Incident : 2026062400280"
+        facts = extract_claim_details_from_text(text, source="hospital_form_scan.pdf")
         self.assertEqual(facts["consultation_date"], "02/04/2025")
-        self.assertEqual(facts["date_of_admission"], "20/09/2025")
+        self.assertEqual(facts["date_of_admission"], "30/06/2026")
 
     def test_prefers_preauth_over_query_and_flags_discrepancy(self):
-        case = QUERY_LETTER + "\n=== Page 1 — vision transcription (Pre Auth.pdf) ===\n" + PRE_AUTH
+        case = (
+            f"=== Source document: insurer_query.pdf ===\n{QUERY_LETTER}\n\n"
+            f"=== Source document: hospital_form_scan.pdf ===\n{PRE_AUTH}"
+        )
         facts = enrich_claim_facts(case)
         self.assertEqual(facts["consultation_date"], "02/04/2025")
-        self.assertEqual(facts["date_of_admission"], "20/09/2025")
-        self.assertIn("Pre Auth.pdf", facts["consultation_date_source"])
+        self.assertEqual(facts["date_of_admission"], "30/06/2026")
+        self.assertEqual(facts["proposed_hospitalization_date"], "29 Jun 2026")
+        self.assertIn("hospital_form_scan.pdf", facts["date_of_admission_source"])
         self.assertTrue(facts["date_discrepancies"])
         self.assertTrue(any(d["field"] == "date_of_admission" for d in facts["date_discrepancies"]))
+        self.assertTrue(len(facts["all_document_dates"]) >= 3)
 
     def test_merge_attaches_sources_and_discrepancies(self):
         result = {
             "claim_details": {
                 "consultation_date": "21/01/2022",
-                "date_of_admission": "",
+                "date_of_admission": "29 Jun 2026",
                 "nature_of_admission": "Unknown",
             },
             "treatment_billing_audit": {},
         }
-        facts = enrich_claim_facts(QUERY_LETTER + "\n=== Page 1 — vision transcription (Pre Auth.pdf) ===\n" + PRE_AUTH)
+        case = (
+            f"=== Source document: insurer_query.pdf ===\n{QUERY_LETTER}\n\n"
+            f"=== Source document: hospital_form_scan.pdf ===\n{PRE_AUTH}"
+        )
+        facts = enrich_claim_facts(case)
         merge_claim_details_into_result(result, facts)
         self.assertEqual(result["claim_details"]["consultation_date"], "02/04/2025")
-        self.assertEqual(result["claim_details"]["date_of_admission"], "20/09/2025")
+        self.assertEqual(result["claim_details"]["date_of_admission"], "30/06/2026")
+        self.assertEqual(result["claim_details"]["proposed_hospitalization_date"], "29 Jun 2026")
         self.assertIn("consultation_date_source", result["claim_details"])
         self.assertTrue(result.get("date_discrepancies"))
 
     def test_clinical_consult_date_and_nature(self):
         clinical = "DOCUMENT TYPE: Handwritten consultation note BODY: Date: 4/6/2026 Name: Mr. Divyansh Mishra"
-        facts = extract_claim_details_from_text(clinical, source="Clinical Documents.pdf")
+        facts = extract_claim_details_from_text(clinical, source="opd_note.pdf")
         self.assertEqual(facts["consultation_date"], "4/6/2026")
-        facts2 = extract_claim_details_from_text(QUERY_LETTER, source="Querry Letter.pdf")
+        facts2 = extract_claim_details_from_text(QUERY_LETTER, source="insurer_query.pdf")
         self.assertEqual(facts2["nature_of_admission"], "Planned / Elective")
 
     def test_prefers_preauth_over_clinical_when_both_present(self):
-        case = QUERY_LETTER + """
-=== Page 1 — vision transcription (Clinical Documents.pdf) ===
-DOCUMENT TYPE: Handwritten consultation note
-BODY: Date: 4/6/2026 Name: Mr. Divyansh Mishra
-=== Page 1 — vision transcription (Pre Auth.pdf) ===
-Date of first consultation: 02/04/2025
-Date of admission: 20/09/2025
-"""
+        case = (
+            f"=== Source document: insurer_query.pdf ===\n{QUERY_LETTER}\n\n"
+            f"=== Source document: opd_note.pdf ===\n"
+            "DOCUMENT TYPE: Handwritten consultation note\n"
+            "BODY: Date: 4/6/2026 Name: Mr. Divyansh Mishra\n\n"
+            f"=== Source document: hospital_form_scan.pdf ===\n{PRE_AUTH_GENERIC_FILENAME}"
+        )
         facts = enrich_claim_facts(case)
         self.assertEqual(facts["consultation_date"], "02/04/2025")
-        self.assertEqual(facts["date_of_admission"], "20/09/2025")
+        self.assertEqual(facts["date_of_admission"], "30/06/2026")
         self.assertIn("handwritten", facts["consultation_date_source"].lower())
 
 
