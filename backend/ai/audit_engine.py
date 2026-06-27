@@ -245,21 +245,28 @@ def _format_insurance_facts_block(facts: dict) -> str:
 def _format_claim_facts_block(facts: dict) -> str:
     if not facts:
         return ""
-    lines = ["=== CLAIM FACTS (extracted from query letters / pre-auth — use for claim_details) ==="]
+    lines = [
+        "=== CLAIM FACTS (deterministic extraction — prefer pre-auth / clinical over query letter) ==="
+    ]
     for key, label in (
         ("hospital", "Hospital"),
         ("consultation_date", "Consultation date"),
-        ("date_of_admission", "Date of admission / proposed hospitalization"),
+        ("date_of_admission", "Date of admission"),
         ("date_of_discharge", "Date of discharge"),
     ):
         val = str((facts or {}).get(key) or "").strip()
         if val:
-            lines.append(f"{label}: {val}")
+            src = str((facts or {}).get(f"{key}_source") or "").strip()
+            lines.append(f"{label}: {val}" + (f" [from {src}]" if src else ""))
+    discrepancies = facts.get("date_discrepancies") or []
+    for item in discrepancies:
+        if isinstance(item, dict) and item.get("message"):
+            lines.append(f"DATE DISCREPANCY: {item['message']}")
     if len(lines) <= 1:
         return ""
     lines.append(
-        "Populate claim_details from this section. Do NOT leave policy_number, policy_period, "
-        "consultation_date, or date_of_admission blank when listed in INSURANCE FACTS or CLAIM FACTS."
+        "Use these values and sources for claim_details. If DATE DISCREPANCY lines appear, "
+        "mention them in documentation_gaps and challenge_points — do NOT hide conflicting dates."
     )
     return "\n".join(lines)
 
