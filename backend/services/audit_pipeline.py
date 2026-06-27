@@ -101,10 +101,13 @@ def _ensure_result_shape(result: dict) -> dict:
         result["insurance_details"].setdefault(_k, "")
     result.setdefault("claim_details", {})
     for _k in (
-        "hospital", "consultation_date", "date_of_admission", "date_of_discharge",
+        "hospital", "consultation_date", "consultation_date_source",
+        "date_of_admission", "date_of_admission_source",
+        "date_of_discharge", "date_of_discharge_source",
         "nature_of_admission", "procedure_or_surgery", "diagnosis",
     ):
         result["claim_details"].setdefault(_k, "")
+    result.setdefault("date_discrepancies", [])
     result.setdefault("clinical_findings", [])
     result.setdefault("documentation_gaps", [])
     result.setdefault("clinical_checklist", [])

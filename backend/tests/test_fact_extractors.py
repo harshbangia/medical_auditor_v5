@@ -39,6 +39,7 @@ IFFCO-TOKIO GENERAL INSURANCE CO
 PRE_AUTH = """
 REQUEST FOR CASHLESS HOSPITALIZATION
 Date of first consultation: 02/04/2025
+Date of admission: 20/09/2025
 Proposed diagnosis: Left shoulder bankart lesion
 """
 
@@ -79,15 +80,25 @@ class InsuranceExtractorTests(unittest.TestCase):
 
 class ClaimDetailsExtractorTests(unittest.TestCase):
     def test_extracts_admission_from_query_letter(self):
-        facts = extract_claim_details_from_text(QUERY_LETTER)
+        facts = extract_claim_details_from_text(QUERY_LETTER, source="Querry Letter.pdf")
         self.assertEqual(facts["date_of_admission"], "29 Jun 2026")
         self.assertIn("Kokilaben", facts["hospital"])
 
     def test_extracts_consultation_from_pre_auth(self):
-        facts = extract_claim_details_from_text(PRE_AUTH)
+        facts = extract_claim_details_from_text(PRE_AUTH, source="Pre Auth.pdf")
         self.assertEqual(facts["consultation_date"], "02/04/2025")
+        self.assertEqual(facts["date_of_admission"], "20/09/2025")
 
-    def test_merge_overwrites_blank_or_llm_admission(self):
+    def test_prefers_preauth_over_query_and_flags_discrepancy(self):
+        case = QUERY_LETTER + "\n=== Page 1 — vision transcription (Pre Auth.pdf) ===\n" + PRE_AUTH
+        facts = enrich_claim_facts(case)
+        self.assertEqual(facts["consultation_date"], "02/04/2025")
+        self.assertEqual(facts["date_of_admission"], "20/09/2025")
+        self.assertIn("Pre Auth.pdf", facts["consultation_date_source"])
+        self.assertTrue(facts["date_discrepancies"])
+        self.assertTrue(any(d["field"] == "date_of_admission" for d in facts["date_discrepancies"]))
+
+    def test_merge_attaches_sources_and_discrepancies(self):
         result = {
             "claim_details": {
                 "consultation_date": "21/01/2022",
@@ -98,9 +109,10 @@ class ClaimDetailsExtractorTests(unittest.TestCase):
         }
         facts = enrich_claim_facts(QUERY_LETTER + "\n=== Page 1 — vision transcription (Pre Auth.pdf) ===\n" + PRE_AUTH)
         merge_claim_details_into_result(result, facts)
-        self.assertEqual(result["claim_details"]["date_of_admission"], "29 Jun 2026")
         self.assertEqual(result["claim_details"]["consultation_date"], "02/04/2025")
-        self.assertEqual(result["claim_details"]["nature_of_admission"], "Planned / Elective")
+        self.assertEqual(result["claim_details"]["date_of_admission"], "20/09/2025")
+        self.assertIn("consultation_date_source", result["claim_details"])
+        self.assertTrue(result.get("date_discrepancies"))
 
     def test_clinical_consult_date_and_nature(self):
         clinical = "DOCUMENT TYPE: Handwritten consultation note BODY: Date: 4/6/2026 Name: Mr. Divyansh Mishra"
@@ -109,19 +121,19 @@ class ClaimDetailsExtractorTests(unittest.TestCase):
         facts2 = extract_claim_details_from_text(QUERY_LETTER, source="Querry Letter.pdf")
         self.assertEqual(facts2["nature_of_admission"], "Planned / Elective")
 
-    def test_prefers_clinical_consult_over_stale_preauth(self):
+    def test_prefers_preauth_over_clinical_when_both_present(self):
         case = QUERY_LETTER + """
 === Page 1 — vision transcription (Clinical Documents.pdf) ===
 DOCUMENT TYPE: Handwritten consultation note
 BODY: Date: 4/6/2026 Name: Mr. Divyansh Mishra
 === Page 1 — vision transcription (Pre Auth.pdf) ===
-Date of first consultation: 20/11/2022
-Date of admission: 20/11/2022
+Date of first consultation: 02/04/2025
+Date of admission: 20/09/2025
 """
         facts = enrich_claim_facts(case)
-        self.assertEqual(facts["consultation_date"], "4/6/2026")
-        self.assertEqual(facts["date_of_admission"], "29 Jun 2026")
-        self.assertEqual(facts["nature_of_admission"], "Planned / Elective")
+        self.assertEqual(facts["consultation_date"], "02/04/2025")
+        self.assertEqual(facts["date_of_admission"], "20/09/2025")
+        self.assertIn("handwritten", facts["consultation_date_source"].lower())
 
 
 if __name__ == "__main__":

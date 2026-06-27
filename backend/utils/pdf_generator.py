@@ -63,16 +63,58 @@ def generate_pdf(data, filename="audit_report.pdf"):
     # 3. Claim Details
     content.extend(section("3. Claim Details", styles))
     c = data.get("claim_details") or {}
-    content.append(kv_table(_rows_from_dict(c, [
-        ("hospital", "Hospital"),
-        ("consultation_date", "Consultation date"),
-        ("date_of_admission", "Date of admission"),
-        ("date_of_discharge", "Date of discharge"),
-        ("nature_of_admission", "Nature of admission"),
-        ("procedure_or_surgery", "Procedure / surgery done"),
-        ("diagnosis", "Diagnosis"),
-    ])))
+    claim_rows = [
+        ("Hospital", c.get("hospital") or "—", ""),
+        (
+            "Consultation date",
+            c.get("consultation_date") or "—",
+            c.get("consultation_date_source") or "",
+        ),
+        (
+            "Date of admission",
+            c.get("date_of_admission") or "—",
+            c.get("date_of_admission_source") or "",
+        ),
+        (
+            "Date of discharge",
+            c.get("date_of_discharge") or "—",
+            c.get("date_of_discharge_source") or "",
+        ),
+        ("Nature of admission", c.get("nature_of_admission") or "—", ""),
+        ("Procedure / surgery done", c.get("procedure_or_surgery") or "—", ""),
+        ("Diagnosis", c.get("diagnosis") or "—", ""),
+    ]
+    content.append(data_table(
+        ["Field", "Value", "Source document"],
+        claim_rows,
+        col_widths=[120, 150, 225],
+    ))
     content.append(Spacer(1, 12))
+
+    date_discrepancies = data.get("date_discrepancies") or []
+    if date_discrepancies:
+        content.extend(section("Date Discrepancies Across Documents", styles))
+        disc_rows = []
+        for item in date_discrepancies:
+            if not isinstance(item, dict):
+                continue
+            detail_parts = []
+            for entry in item.get("entries") or []:
+                if isinstance(entry, dict):
+                    detail_parts.append(
+                        f"{entry.get('value', '')} ({entry.get('source_label', '')})"
+                    )
+            disc_rows.append([
+                item.get("label", item.get("field", "")),
+                item.get("message", ""),
+                "; ".join(detail_parts),
+            ])
+        content.append(data_table(
+            ["Date field", "Discrepancy", "Values found"],
+            disc_rows or [["—", "—", "—"]],
+            col_widths=[110, 200, 185],
+        ))
+        content.append(Spacer(1, 12))
 
     # Compliance verdict
     verdict = (data.get("compliance_verdict") or "").strip()

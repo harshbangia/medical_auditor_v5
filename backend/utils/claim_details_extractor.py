@@ -1,15 +1,13 @@
-"""Extract claim dates and hospital from insurance letters and clinical documents.
+"""Extract claim dates with document-type awareness, source attribution, and discrepancy flags.
 
-Classifies each uploaded document (query letter, pre-auth, clinical note, discharge
-summary, bills) and pulls the right date into the right field:
-  - consultation_date  → OPD / consult note header dates
-  - date_of_admission  → pre-auth admission line or query proposed hospitalization
-  - date_of_discharge  → discharge summary only (never boilerplate)
+Handwritten pre-authorization forms and clinical consult notes take priority over
+computer-generated query letters. When the same date field differs across documents,
+a structured discrepancy is recorded for the audit report.
 """
 
 import re
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 _QUERY_LETTER_MARKERS = re.compile(
     r"query letter|claim incident|cashless request|proposed date of hospitalization",
@@ -93,6 +91,14 @@ _BOILERPLATE_DISCHARGE = re.compile(
     re.I | re.S,
 )
 
+_FIELD_LABELS = {
+    "consultation_date": "Consultation date",
+    "date_of_admission": "Date of admission",
+    "date_of_discharge": "Date of discharge",
+}
+
+_DATE_FIELDS = ("consultation_date", "date_of_admission", "date_of_discharge")
+
 
 def _norm_date(val: str) -> str:
     return " ".join(str(val or "").strip().split())
@@ -107,14 +113,33 @@ def _is_bad_date(val: str) -> bool:
     return False
 
 
-def _parse_date_year(val: str) -> Optional[int]:
-    val = _norm_date(val)
-    for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%d/%m/%y", "%d %b %Y", "%d %B %Y"):
+def _strip_ordinal(val: str) -> str:
+    return re.sub(r"(\d{1,2})(?:st|nd|rd|th)\b", r"\1", val, flags=re.I)
+
+
+def _parse_flexible_date(val: str) -> Optional[datetime]:
+    val = _strip_ordinal(_norm_date(val))
+    for fmt in (
+        "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%d/%m/%y",
+        "%d %b %Y", "%d %B %Y", "%d %b %y", "%d %B %y",
+    ):
         try:
-            return datetime.strptime(val, fmt).year
+            return datetime.strptime(val, fmt)
         except ValueError:
             continue
-    m = re.search(r"(\d{4})", val)
+    return None
+
+
+def _canonical_date_key(val: str) -> str:
+    parsed = _parse_flexible_date(val)
+    return parsed.strftime("%Y-%m-%d") if parsed else _norm_date(val).lower()
+
+
+def _parse_date_year(val: str) -> Optional[int]:
+    parsed = _parse_flexible_date(val)
+    if parsed:
+        return parsed.year
+    m = re.search(r"(20\d{2})", val or "")
     return int(m.group(1)) if m else None
 
 
@@ -158,6 +183,29 @@ def _classify_document(fname: str, text: str) -> str:
     return "other"
 
 
+def _document_medium(doc_type: str) -> str:
+    if doc_type == "query_letter":
+        return "computer-generated"
+    if doc_type in ("pre_auth", "clinical"):
+        return "handwritten/scanned"
+    if doc_type == "discharge":
+        return "typed or handwritten"
+    return "document"
+
+
+def _source_label(fname: str, doc_type: str) -> str:
+    medium = _document_medium(doc_type)
+    type_name = {
+        "query_letter": "Query Letter",
+        "pre_auth": "Pre-Authorization Form",
+        "clinical": "Clinical Document",
+        "discharge": "Discharge Summary",
+        "bill": "Bill / Receipt",
+    }.get(doc_type, "Document")
+    name = fname if fname and fname != "combined" else type_name
+    return f"{name} — {type_name} ({medium})"
+
+
 def _first_match(patterns: List[re.Pattern], text: str) -> str:
     for pat in patterns:
         m = pat.search(text or "")
@@ -181,7 +229,6 @@ def _clinical_consult_dates(text: str) -> List[str]:
             val = _norm_date(m.group(1))
             if val and not _is_bad_date(val):
                 dates.append(val)
-    # de-dupe preserve order
     return list(dict.fromkeys(dates))
 
 
@@ -197,9 +244,11 @@ def _infer_nature_of_admission(text: str, doc_type: str) -> str:
     blob = text or ""
     if re.search(r"\b(?:emergency|casualty|trauma|walk[\s-]?in)\b", blob, re.I):
         return "Emergency"
-    if doc_type == "query_letter" or re.search(r"proposed\s*date\s*of\s*hospitalization", blob, re.I):
-        return "Planned / Elective"
-    if doc_type == "pre_auth" or re.search(r"pre[\s-]?auth|elective|planned\s*admission", blob, re.I):
+    if doc_type in ("query_letter", "pre_auth") or re.search(
+        r"proposed\s*date\s*of\s*hospitalization|pre[\s-]?auth|elective|planned\s*admission",
+        blob,
+        re.I,
+    ):
         return "Planned / Elective"
     return ""
 
@@ -250,7 +299,6 @@ def _extract_facts_for_document(
         consult = _first_match(_CONSULT_PATTERNS, text)
 
     admission = _extract_admission_date(text, doc_type, reference_year)
-
     discharge = _extract_discharge_date(text) if doc_type in ("discharge", "pre_auth", "clinical") else ""
 
     if consult and not _is_plausible_for_claim(consult, reference_year):
@@ -266,27 +314,29 @@ def _extract_facts_for_document(
         "nature_of_admission": _infer_nature_of_admission(text, doc_type),
         "room_category_eligible": _extract_room_category(text),
         "_doc_type": doc_type,
+        "_fname": fname,
     }
 
 
 def _field_priority(doc_type: str, field: str) -> int:
+    """Handwritten pre-auth and clinical notes beat computer-generated query letters."""
     table = {
         "consultation_date": {
-            "clinical": 100,
-            "pre_auth": 55,
-            "query_letter": 40,
+            "pre_auth": 100,
+            "clinical": 95,
+            "query_letter": 50,
             "other": 30,
         },
         "date_of_admission": {
-            "query_letter": 95,
-            "pre_auth": 85,
+            "pre_auth": 100,
+            "clinical": 85,
+            "query_letter": 60,
             "bill": 70,
-            "clinical": 50,
             "other": 30,
         },
         "date_of_discharge": {
             "discharge": 100,
-            "pre_auth": 75,
+            "pre_auth": 80,
             "clinical": 40,
             "other": 20,
         },
@@ -297,8 +347,8 @@ def _field_priority(doc_type: str, field: str) -> int:
             "bill": 60,
         },
         "nature_of_admission": {
-            "query_letter": 100,
-            "pre_auth": 80,
+            "pre_auth": 100,
+            "query_letter": 90,
             "clinical": 20,
         },
         "room_category_eligible": {
@@ -315,16 +365,78 @@ def extract_claim_details_from_text(text: str, source: str = "") -> Dict[str, st
     ref_year = _claim_reference_year(text)
     facts = _extract_facts_for_document(source or "combined", text, ref_year)
     facts.pop("_doc_type", None)
+    facts.pop("_fname", None)
     return facts
 
 
-def _pick_best_field(candidates: List[Tuple[str, int]]) -> str:
+def _pick_best_candidate(
+    candidates: List[Tuple[str, int, str, str]],
+) -> Tuple[str, str]:
     ranked = sorted(
-        [(v, p) for v, p in candidates if v and not _is_bad_date(v)],
+        [(v, p, fname, doc_type) for v, p, fname, doc_type in candidates if v and not _is_bad_date(v)],
         key=lambda x: x[1],
         reverse=True,
     )
-    return ranked[0][0] if ranked else ""
+    if not ranked:
+        return "", ""
+    value, _prio, fname, doc_type = ranked[0]
+    return value, _source_label(fname, doc_type)
+
+
+def _build_date_provenance(
+    per_source: List[Tuple[str, Dict[str, str], str]],
+) -> Dict[str, List[Dict[str, str]]]:
+    provenance: Dict[str, List[Dict[str, str]]] = {f: [] for f in _DATE_FIELDS}
+    seen: Dict[str, set] = {f: set() for f in _DATE_FIELDS}
+
+    for fname, facts, doc_type in per_source:
+        for field in _DATE_FIELDS:
+            val = facts.get(field, "")
+            if not val or _is_bad_date(val):
+                continue
+            key = (fname, val, doc_type)
+            if key in seen[field]:
+                continue
+            seen[field].add(key)
+            provenance[field].append({
+                "value": val,
+                "source_file": fname,
+                "document_type": doc_type,
+                "medium": _document_medium(doc_type),
+                "source_label": _source_label(fname, doc_type),
+            })
+    return provenance
+
+
+def _detect_date_discrepancies(
+    provenance: Dict[str, List[Dict[str, str]]],
+) -> List[Dict[str, Any]]:
+    discrepancies: List[Dict[str, Any]] = []
+    for field in _DATE_FIELDS:
+        entries = provenance.get(field) or []
+        by_canonical: Dict[str, List[Dict[str, str]]] = {}
+        for entry in entries:
+            canon = _canonical_date_key(entry["value"])
+            if not canon:
+                continue
+            by_canonical.setdefault(canon, []).append(entry)
+        if len(by_canonical) <= 1:
+            continue
+
+        parts = []
+        for group in by_canonical.values():
+            sample = group[0]
+            parts.append(f"{sample['value']} in {sample['source_label']}")
+
+        label = _FIELD_LABELS[field]
+        message = f"{label} differs across documents: " + "; ".join(parts) + "."
+        discrepancies.append({
+            "field": field,
+            "label": label,
+            "entries": entries,
+            "message": message,
+        })
+    return discrepancies
 
 
 def _slice_case_text_for_file(case_text: str, fname: str) -> str:
@@ -354,13 +466,13 @@ def _split_case_text_blocks(case_text: str) -> List[Tuple[str, str]]:
 def enrich_claim_facts(
     case_text: str,
     pdf_paths: Optional[List[Tuple[str, str]]] = None,
-) -> Dict[str, str]:
-    """Build best-effort claim details from combined case text and per-file sources."""
+) -> Dict[str, Any]:
+    """Build claim details with source labels and cross-document discrepancy flags."""
     reference_year = _claim_reference_year(case_text)
     per_source: List[Tuple[str, Dict[str, str], str]] = []
 
     combined = _extract_facts_for_document("combined", case_text, reference_year)
-    per_source.append(("combined", combined, combined.get("_doc_type", "other")))
+    per_source.append((combined.get("_fname", "combined"), combined, combined.get("_doc_type", "other")))
 
     for fname, body in _split_case_text_blocks(case_text):
         facts = _extract_facts_for_document(fname, body, reference_year)
@@ -389,20 +501,39 @@ def enrich_claim_facts(
             facts = _extract_facts_for_document(fname, text, reference_year)
             per_source.append((fname, facts, facts.get("_doc_type", "other")))
 
-    result = {
+    provenance = _build_date_provenance(per_source)
+    discrepancies = _detect_date_discrepancies(provenance)
+
+    result: Dict[str, Any] = {
         "consultation_date": "",
+        "consultation_date_source": "",
         "date_of_admission": "",
+        "date_of_admission_source": "",
         "date_of_discharge": "",
+        "date_of_discharge_source": "",
         "hospital": "",
         "nature_of_admission": "",
         "room_category_eligible": "",
+        "date_provenance": provenance,
+        "date_discrepancies": discrepancies,
     }
-    for field in result:
+
+    for field in _DATE_FIELDS:
         candidates = [
-            (facts.get(field, ""), _field_priority(doc_type, field))
-            for _src, facts, doc_type in per_source
+            (facts.get(field, ""), _field_priority(doc_type, field), fname, doc_type)
+            for fname, facts, doc_type in per_source
         ]
-        result[field] = _pick_best_field(candidates)
+        value, source = _pick_best_candidate(candidates)
+        result[field] = value
+        result[f"{field}_source"] = source
+
+    for field in ("hospital", "nature_of_admission", "room_category_eligible"):
+        candidates = [
+            (facts.get(field, ""), _field_priority(doc_type, field), fname, doc_type)
+            for fname, facts, doc_type in per_source
+        ]
+        value, _source = _pick_best_candidate(candidates)
+        result[field] = value
 
     if not result["nature_of_admission"] and result["date_of_admission"]:
         result["nature_of_admission"] = "Planned / Elective"
@@ -421,8 +552,8 @@ def _should_overwrite_admission_nature(current: str, extracted: str) -> bool:
     return not cur or cur in _UNKNOWN_ADMISSION
 
 
-def merge_claim_details_into_result(result: dict, facts: Dict[str, str]) -> dict:
-    """Fill or correct claim_details from extracted facts."""
+def merge_claim_details_into_result(result: dict, facts: Dict[str, Any]) -> dict:
+    """Fill claim_details, attach source labels, and surface date discrepancies."""
     claim = result.setdefault("claim_details", {})
     mapping = {
         "consultation_date": facts.get("consultation_date", ""),
@@ -440,6 +571,26 @@ def merge_claim_details_into_result(result: dict, facts: Dict[str, str]) -> dict
         elif _should_overwrite_claim_field(str(claim.get(key) or ""), val):
             claim[key] = val
 
+    for field in _DATE_FIELDS:
+        source = facts.get(f"{field}_source", "")
+        if source:
+            claim[f"{field}_source"] = source
+
+    if facts.get("date_provenance"):
+        claim["date_provenance"] = facts["date_provenance"]
+
+    discrepancies = facts.get("date_discrepancies") or []
+    if discrepancies:
+        result["date_discrepancies"] = discrepancies
+        gaps = result.setdefault("documentation_gaps", [])
+        challenges = result.setdefault("challenge_points", [])
+        for item in discrepancies:
+            msg = item.get("message", "")
+            if msg and msg not in gaps:
+                gaps.insert(0, msg)
+            if msg and msg not in challenges:
+                challenges.insert(0, f"Reconcile date discrepancy — {msg}")
+
     room = facts.get("room_category_eligible", "")
     if room:
         tba = result.setdefault("treatment_billing_audit", {})
@@ -453,7 +604,9 @@ def merge_claim_details_into_result(result: dict, facts: Dict[str, str]) -> dict
             "Date of discharge not documented in uploaded files "
             "(discharge summary may not yet be available for a planned admission)."
         )
-        if gap_msg not in gaps and not any("discharge" in str(g).lower() for g in gaps):
+        if gap_msg not in gaps and not any(
+            "discharge not documented" in str(g).lower() for g in gaps
+        ):
             gaps.append(gap_msg)
 
     return result
