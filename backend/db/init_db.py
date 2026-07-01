@@ -32,6 +32,7 @@ def main() -> int:
     Base.metadata.create_all(bind=engine)
     print("Step 3/3: applying schema upgrades...", flush=True)
     upgrade_schema(engine)
+    print("  schema upgrades done", flush=True)
     print("Tables created successfully", flush=True)
     return 0
 
