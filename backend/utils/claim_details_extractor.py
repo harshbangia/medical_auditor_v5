@@ -58,7 +58,16 @@ _DISCHARGE_PATTERNS = [
 
 _HOSPITAL_PATTERNS = [
     re.compile(r"(Kokilaben\s+Dhirubh?ai\s+Ambani\s+Hospital[^\n]{0,80})", re.I),
+    re.compile(r"(Gangapada\s+Super\s+Speciality\s+Hospital[^\n]{0,60})", re.I),
+    re.compile(r"(Nibedita\s+Health\s+Care[^\n]{0,60})", re.I),
     re.compile(r"name\s*of\s*the\s+hospital\s*[:.]?\s*([^\n]{5,80})", re.I),
+]
+
+_ICU_ADMISSION_DATE_PATTERNS = [
+    re.compile(rf"receiving\s*date\s*[:.]?\s*{_DATE_NUMERIC}", re.I),
+    re.compile(rf"receiving\s*date\s*[:.]?\s*{_DATE_TEXT}", re.I),
+    re.compile(rf"date\s*[:.]?\s*{_DATE_NUMERIC}.*?bed\s*no\s*[:.]?\s*icu", re.I | re.S),
+    re.compile(rf"admitted\s+with\s+[^.\n]{{0,80}}\s*{_DATE_NUMERIC}", re.I),
 ]
 
 _PROPOSED_HOSPITALIZATION_PATTERNS = [
@@ -173,6 +182,8 @@ def _claim_reference_year(text: str) -> Optional[int]:
     if m:
         years.append(int(m.group(1)))
     for pat in (
+        r"receiving\s*date\s*[:.]?\s*\d{1,2}[/.-]\d{1,2}[/.-](20\d{2})",
+        r"reporting\s*date\s*[:.]?\s*\d{1,2}[/.-]\d{1,2}[/.-](20\d{2})",
         r"proposed\s*date\s*of\s*hospitalization\s*\d{1,2}\s+\w+\s+(20\d{2})",
         r"query\s*letter\s*date\s*[:.]?\s*\d{1,2}\s+\w+\s+(20\d{2})",
         r"date\s*[:.]?\s*\d{1,2}\s+\w+\s+(20\d{2})",
@@ -184,8 +195,11 @@ def _claim_reference_year(text: str) -> Optional[int]:
 
 def _is_plausible_for_claim(date_val: str, reference_year: Optional[int]) -> bool:
     year = _parse_date_year(date_val, reference_year)
-    if year is None or reference_year is None:
+    if year is None:
         return True
+    if reference_year is None:
+        # Reject clearly stale handwritten dates when no claim year anchor exists
+        return year >= 2018
     return abs(year - reference_year) <= 2
 
 
@@ -331,10 +345,12 @@ def _extract_hospital(text: str) -> str:
 
 
 def _extract_admission_date(text: str, doc_type: str, reference_year: Optional[int]) -> str:
-    """Actual admission only — query letters never contribute proposed dates here."""
+    """Actual admission — ICU receiving dates and explicit admission lines."""
     if doc_type == "query_letter":
         return ""
     val = _first_match(_EXPLICIT_ADMISSION_PATTERNS, text, reference_year)
+    if not val:
+        val = _first_match(_ICU_ADMISSION_DATE_PATTERNS, text, reference_year)
     if val and not _is_plausible_for_claim(val, reference_year):
         return ""
     return val

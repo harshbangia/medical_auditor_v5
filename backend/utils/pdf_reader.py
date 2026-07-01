@@ -28,7 +28,7 @@ PDF_DPI = int(os.getenv("PDF_DPI", "150"))
 VISION_OCR_ENABLED = os.getenv("VISION_OCR_ENABLED", "1") not in ("0", "false", "False", "")
 # Default to gpt-4o (not mini) — handwritten medical notes need the bigger model.
 VISION_OCR_MODEL = os.getenv("VISION_OCR_MODEL", "gpt-4o")
-MAX_VISION_OCR_PAGES = int(os.getenv("MAX_VISION_OCR_PAGES", "15"))
+MAX_VISION_OCR_PAGES = int(os.getenv("MAX_VISION_OCR_PAGES", "25"))
 VISION_OCR_DPI = int(os.getenv("VISION_OCR_DPI", "220"))
 VISION_OCR_MIN_NATIVE_CHARS = int(os.getenv("VISION_OCR_MIN_NATIVE_CHARS", "120"))
 
