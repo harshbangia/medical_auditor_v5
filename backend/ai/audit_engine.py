@@ -3,7 +3,7 @@ import json
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Optional
+from typing import List, Optional
 
 import backend.config  # noqa: F401 — load .env before OpenAI client
 
@@ -281,16 +281,29 @@ def _build_audit_prompt(
     insurance_facts_block: str = "",
     clinical_synthesis: str = "",
     claim_facts_block: str = "",
+    guidelines_used: Optional[List[str]] = None,
 ) -> str:
     imaging_block = image_analysis.strip() or "No clinical images were extracted from uploaded PDFs."
     has_images = bool(image_analysis.strip())
+    multi_guideline = bool(guidelines_used and len(guidelines_used) > 1)
+    guidelines_json = json.dumps(guidelines_used or [guideline_name])
+
+    multi_block = ""
+    if multi_guideline:
+        multi_block = """
+MULTIPLE GUIDELINES APPLY to this case. Cross-examine the hospital against EACH guideline separately.
+- Use the section headers (=== GUIDELINE: filename ===) to identify which source supports each rule.
+- In guideline_deviations, set source_guideline to the specific guideline filename when known.
+- If guidelines conflict, state the conflict and which standard is stricter for claim denial.
+"""
 
     if user_question:
+        guideline_header = f"GUIDELINE(S) ({guideline_name})"
         return f"""You are a SENIOR INSURANCE MEDICAL AUDITOR answering a follow-up question.
 
 Answer ONLY from case documents, image analysis, and guideline excerpts. Be direct and evidence-based.
 If the hospital's position is weak, say so clearly.
-
+{multi_block}
 Return ONLY JSON:
 {{
   "mode": "qa",
@@ -306,15 +319,15 @@ CASE:
 IMAGE ANALYSIS:
 {imaging_block}
 
-GUIDELINE ({guideline_name}):
+{guideline_header}:
 {guideline_text}
 """
 
     return f"""You are a SENIOR INSURANCE MEDICAL AUDITOR preparing an OFFICIAL medico-legal audit report.
 
-YOUR PRIMARY DUTY: CHALLENGE the hospital's clinical and billing decisions against the attached guideline.
+YOUR PRIMARY DUTY: CHALLENGE the hospital's clinical and billing decisions against the attached guideline(s).
 You represent the payer/insurer — NOT the hospital. Default stance: SKEPTICAL until documentation proves compliance.
-
+{multi_block}
 You MUST:
 - Cross-examine whether admission, procedures, investigations, and charges are medically necessary per guideline
 - Identify deviations, missing prerequisites, and documentation that fails to justify the claim
@@ -390,9 +403,10 @@ Return ONLY JSON:
 {{
   "mode": "audit",
   "guideline_used": "{guideline_name}",
+  "guidelines_used": {guidelines_json},
   "compliance_verdict": "",
   "guideline_deviations": [
-    {{"issue": "", "guideline_expectation": "", "case_evidence": "", "severity": "High|Medium|Low"}}
+    {{"issue": "", "guideline_expectation": "", "case_evidence": "", "severity": "High|Medium|Low", "source_guideline": ""}}
   ],
   "challenge_points": [
     "Specific question the hospital must answer to justify the claim"
@@ -467,6 +481,7 @@ def run_audit(
     images=None,
     case_profile=None,
     guideline_name="",
+    guidelines_used=None,
     image_analysis_text=None,
     insurance_facts=None,
     clinical_synthesis=None,
@@ -512,6 +527,7 @@ def run_audit(
         insurance_facts_block=insurance_block,
         clinical_synthesis=synthesis_block,
         claim_facts_block=claim_block,
+        guidelines_used=guidelines_used,
     )
 
     raw_output = _call_audit_llm(prompt)
@@ -526,6 +542,11 @@ def run_audit(
         return data
 
     data = _ensure_challenge_fields(data)
+
+    if guidelines_used:
+        data["guidelines_used"] = list(guidelines_used)
+        if not data.get("guideline_used"):
+            data["guideline_used"] = "; ".join(guidelines_used)
 
     data.setdefault("insurance_details", {})
     for key in ("insurance_company", "policy_number", "policy_period", "claim_incident_number"):

@@ -8,7 +8,7 @@ from uuid import uuid4
 from backend.ai.audit_engine import analyze_case_images, run_audit
 from backend.ai.case_profiler import extract_case_profile, normalize_str_list
 from backend.ai.guideline_selector import select_guideline
-from backend.rag.guideline_retriever import retrieve_guideline_sections
+from backend.rag.guideline_retriever import retrieve_from_guidelines, retrieve_guideline_sections
 from backend.rag.rag_manager import get_or_create_index
 from backend.services.audit_jobs import AuditJob
 from backend.services.s3_utils import download_guideline
@@ -206,16 +206,37 @@ def _process_files_sequential(file_items: List[tuple], progress: ProgressFn) -> 
     return "\n\n".join(case_texts), images, source_summaries, temp_pdf_paths
 
 
+def _normalize_guideline_list(
+    guideline: Optional[str] = None,
+    guidelines: Optional[List[str]] = None,
+) -> List[str]:
+    """Merge legacy single guideline with multi-select list; dedupe preserving order."""
+    names: List[str] = []
+    for source in (guidelines or []):
+        if source and str(source).strip():
+            names.append(str(source).strip())
+    if guideline and str(guideline).strip():
+        names.append(str(guideline).strip())
+    seen = set()
+    result: List[str] = []
+    for name in names:
+        clean = name.replace('"', "").replace("'", "")
+        if clean and clean not in seen:
+            seen.add(clean)
+            result.append(clean)
+    return result
+
+
 def run_full_audit(
     file_items: List[tuple],
     guideline: Optional[str],
     user_question: Optional[str],
     global_cache: dict,
     progress: ProgressFn = _noop_progress,
+    guidelines: Optional[List[str]] = None,
 ) -> dict:
     started = time.time()
     temp_pdf_paths = []
-    guideline_path = None
     case_text, images, source_summaries, temp_pdf_paths = _process_files_sequential(
         file_items, progress
     )
@@ -228,23 +249,32 @@ def run_full_audit(
     claim_facts = enrich_claim_facts(case_text, temp_pdf_paths)
     clinical_synthesis = build_clinical_synthesis_section(case_text)
 
-    progress("guideline", 65, "Loading clinical guideline…")
-    if not guideline:
-        guideline = select_guideline(case_text)
-    guideline = guideline.strip().replace('"', '').replace("'", "")
+    progress("guideline", 65, "Loading clinical guideline(s)…")
+    guideline_names = _normalize_guideline_list(guideline, guidelines)
+    if not guideline_names:
+        guideline_names = [select_guideline(case_text).strip().replace('"', '').replace("'", "")]
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-        download_guideline(guideline, tmp.name)
-        guideline_path = tmp.name
+    guideline_paths: List[str] = []
+    for gname in guideline_names:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            download_guideline(gname, tmp.name)
+            guideline_paths.append(tmp.name)
 
     try:
-        progress("profile", 62, "Extracting case facts & loading guideline…")
+        progress("profile", 62, "Extracting case facts & loading guideline(s)…")
 
-        with ThreadPoolExecutor(max_workers=2) as pool:
+        with ThreadPoolExecutor(max_workers=min(4, len(guideline_names) + 1)) as pool:
             fut_profile = pool.submit(extract_case_profile, case_text[:16000])
-            fut_index = pool.submit(get_or_create_index, guideline_path, cache_key=guideline)
+            index_futures = {
+                pool.submit(get_or_create_index, path, cache_key=name): name
+                for path, name in zip(guideline_paths, guideline_names)
+            }
             case_profile = fut_profile.result()
-            index, chunks = fut_index.result()
+            guideline_stores = []
+            for fut in index_futures:
+                name = index_futures[fut]
+                index, chunks = fut.result()
+                guideline_stores.append((name, index, chunks))
 
         case_hint = (
             f"{case_profile.get('diagnosis', '')} | "
@@ -254,7 +284,7 @@ def run_full_audit(
         progress("rag", 72, "Retrieving relevant guideline criteria…")
         with ThreadPoolExecutor(max_workers=2) as pool:
             fut_rag = pool.submit(
-                retrieve_guideline_sections, index, chunks, case_profile, case_text
+                retrieve_from_guidelines, guideline_stores, case_profile, case_text
             )
             fut_vision = pool.submit(analyze_case_images, images, case_hint)
             relevant_guideline = fut_rag.result()
@@ -263,6 +293,7 @@ def run_full_audit(
         if not relevant_guideline.strip():
             raise RuntimeError("Guideline retrieval failed")
 
+        guidelines_label = "; ".join(guideline_names)
         progress("ai_audit", 82, "Running adversarial medical audit…")
         result = run_audit(
             case_text,
@@ -270,7 +301,8 @@ def run_full_audit(
             user_question=user_question,
             images=images,
             case_profile=case_profile,
-            guideline_name=guideline,
+            guideline_name=guidelines_label,
+            guidelines_used=guideline_names,
             image_analysis_text=image_analysis,
             insurance_facts=insurance_facts,
             clinical_synthesis=clinical_synthesis,
@@ -299,12 +331,15 @@ def run_full_audit(
             raise RuntimeError("AI returned empty structured response")
 
         session_id = str(uuid4())
+        first_name, first_index, first_chunks = guideline_stores[0]
         global_cache[session_id] = {
             "case_text": case_text,
             "images": images,
-            "guideline": guideline,
-            "index": index,
-            "chunks": chunks,
+            "guidelines": guideline_names,
+            "guideline": guidelines_label,
+            "guideline_stores": guideline_stores,
+            "index": first_index,
+            "chunks": first_chunks,
         }
         result["session_id"] = session_id
         progress("done", 100, f"Completed in {time.time() - started:.0f}s")
@@ -316,16 +351,19 @@ def run_full_audit(
                     os.remove(pdf_path)
                 except OSError:
                     pass
-        if guideline_path and os.path.exists(guideline_path):
-            try:
-                os.remove(guideline_path)
-            except OSError:
-                pass
+        for gpath in guideline_paths:
+            if gpath and os.path.exists(gpath):
+                try:
+                    os.remove(gpath)
+                except OSError:
+                    pass
 
 
-def run_job_audit(job: AuditJob, file_items, guideline, user_question, global_cache) -> dict:
+def run_job_audit(job: AuditJob, file_items, guideline, user_question, global_cache, guidelines=None) -> dict:
     def progress(phase, pct, message):
         from backend.services.audit_jobs import _update
         _update(job, phase=phase, progress=pct, message=message)
 
-    return run_full_audit(file_items, guideline, user_question, global_cache, progress=progress)
+    return run_full_audit(
+        file_items, guideline, user_question, global_cache, progress=progress, guidelines=guidelines
+    )

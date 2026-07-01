@@ -34,9 +34,14 @@ def generate_pdf(data, filename="audit_report.pdf"):
     content.append(Paragraph(f"<b>Ref:</b> {ref} &nbsp;&nbsp; <b>Date:</b> {rdate}", styles["Normal"]))
     content.append(Spacer(1, 12))
 
-    # Guideline
-    content.extend(section("Guideline Referenced", styles))
-    content.append(kv_table([("Guideline", data.get("guideline_used", "-"))], header=False))
+    # Guideline(s)
+    content.extend(section("Guideline(s) Referenced", styles))
+    guidelines_used = data.get("guidelines_used") or []
+    if isinstance(guidelines_used, list) and guidelines_used:
+        guideline_rows = [(f"Guideline {idx + 1}", name) for idx, name in enumerate(guidelines_used)]
+        content.append(kv_table(guideline_rows, header=False))
+    else:
+        content.append(kv_table([("Guideline", data.get("guideline_used", "-"))], header=False))
     content.append(Spacer(1, 12))
 
     # 1. Patient Details
