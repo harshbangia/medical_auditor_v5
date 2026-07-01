@@ -19,7 +19,7 @@ from backend.auth import authenticate_user, create_access_token, verify_token
 from backend.db.database import SessionLocal
 from backend.db.models import AuditReport
 
-from backend.rag.vector_store import search
+from backend.rag.guideline_retriever import search_across_guidelines
 from backend.services.s3_utils import guidelines_cache
 from backend.services.audit_jobs import create_job, get_job, run_job_in_background
 from backend.services.audit_pipeline import run_job_audit
@@ -275,6 +275,7 @@ async def audit(
     request: Request,
     files: Optional[List[UploadFile]] = File(None),
     guideline: Optional[str] = Form(None),
+    guidelines: Optional[List[str]] = Form(None),
     question: Optional[str] = Form(None),
     session_id: str = Form(None),
     authorization: str = Header(None)
@@ -284,6 +285,7 @@ async def audit(
     _audit_log(request_id, "hit /audit")
     _audit_log(request_id, f"files received: {files}")
     _audit_log(request_id, f"guideline received: {guideline}")
+    _audit_log(request_id, f"guidelines received: {guidelines}")
     _audit_log(request_id, f"has authorization header: {bool(authorization)}")
     # =========================
     # ⚡ FAST QA MODE (NO OCR)
@@ -300,17 +302,21 @@ async def audit(
 
         case_text = cached["case_text"]
         images = cached["images"]
-        guideline = cached["guideline"]
-        index = cached["index"]
-        chunks = cached["chunks"]
+        stores = cached.get("guideline_stores") or []
+        if not stores and cached.get("index") is not None:
+            stores = [(cached.get("guideline", ""), cached["index"], cached["chunks"])]
 
-        relevant_guideline = search(index, chunks, question, top_k=10)
+        relevant_guideline = search_across_guidelines(stores, question, top_k=10)
+        guidelines_label = cached.get("guideline") or ""
+        guidelines_used = cached.get("guidelines") or []
 
         result = run_audit(
             case_text,
             relevant_guideline,
             user_question=question,
-            images=images
+            images=images,
+            guideline_name=guidelines_label,
+            guidelines_used=guidelines_used,
         )
         _audit_log(
             request_id,
@@ -359,7 +365,7 @@ async def audit(
         run_job_in_background(
             job,
             lambda j: run_job_audit(
-                j, file_items, guideline, question, GLOBAL_CACHE
+                j, file_items, guideline, question, GLOBAL_CACHE, guidelines=guidelines
             ),
         )
         return JSONResponse(

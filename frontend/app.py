@@ -640,9 +640,10 @@ guidelines = st.session_state["guidelines_list"]
 if not guidelines:
     st.sidebar.warning("No guidelines loaded. Click ↻ to retry.")
 
-selected_guideline = gcol1.selectbox(
-    "📘 Select Guideline",
-    ["-- Select --"] + sorted(guidelines),
+selected_guidelines = gcol1.multiselect(
+    "📘 Select Guidelines",
+    sorted(guidelines),
+    help="Choose one or more clinical guidelines to audit against.",
 )
 
 # Upload
@@ -689,7 +690,7 @@ if "report" not in st.session_state:
         <div class="gwx-card gwx-steps">
             <h3>How to run an audit — step by step</h3>
             <ol>
-                <li><strong>Select a guideline</strong> in the left sidebar (choose the PDF that matches the clinical context).</li>
+                <li><strong>Select guideline(s)</strong> in the left sidebar — choose every PDF that applies to this case.</li>
                 <li><strong>Upload case documents</strong> as PDFs — discharge summary, clinical notes, imaging reports, and photos (e.g. clinical pictures) if embedded in PDF.</li>
                 <li>Click <strong>Run Audit</strong> and wait while text and images are processed; a structured report will appear here.</li>
                 <li>Review <strong>Inference</strong>, documentation gaps, and observations; use <strong>Ask a question</strong> for follow-ups when needed.</li>
@@ -713,8 +714,8 @@ if "report" not in st.session_state:
 # =========================
 if run:
 
-    if selected_guideline == "-- Select --":
-        st.error("Please select a guideline")
+    if not selected_guidelines:
+        st.error("Please select at least one guideline")
         st.stop()
 
     if not uploaded_files:
@@ -730,10 +731,11 @@ if run:
     ]
 
     try:
+        audit_form_data = [("guidelines", g) for g in selected_guidelines]
         response = requests.post(
             API_URL,
             files=files,
-            data={"guideline": selected_guideline},
+            data=audit_form_data,
             headers=headers,
             timeout=600,
         )
@@ -913,7 +915,11 @@ if "report" in st.session_state:
                 key="gwx_save_pdf",
             )
 
-    st.caption(f"Guideline referenced: **{data.get('guideline_used', '-') }**")
+    guidelines_display = data.get("guidelines_used") or []
+    if isinstance(guidelines_display, list) and guidelines_display:
+        st.caption("Guidelines referenced: **" + "**, **".join(guidelines_display) + "**")
+    else:
+        st.caption(f"Guideline referenced: **{data.get('guideline_used', '-') }**")
     st.markdown("---")
 
     if st.session_state["report_edit_mode"]:
@@ -1046,11 +1052,17 @@ if "report" in st.session_state:
         for dev in deviations:
             if isinstance(dev, dict):
                 sev = dev.get("severity") or "—"
+                source_gl = dev.get("source_guideline") or ""
+                source_line = (
+                    f'<p class="gwx-row-tight"><strong>Source guideline:</strong> {source_gl}</p>'
+                    if source_gl else ""
+                )
                 st.markdown(
                     f"""
                     <div class="gwx-card" style="border-left:4px solid #dc2626;">
                     <p class="gwx-row-tight"><strong>{dev.get('issue') or 'Deviation'}</strong>
                     <span class="gwx-ref-pill">{sev}</span></p>
+                    {source_line}
                     <p class="gwx-row-tight"><strong>Guideline expects:</strong> {dev.get('guideline_expectation') or '—'}</p>
                     <p class="gwx-row-tight"><strong>Case evidence:</strong> {dev.get('case_evidence') or '—'}</p>
                     </div>
@@ -1214,7 +1226,6 @@ if "report" in st.session_state:
             f"{API_BASE}/audit",
             data={
                 "question": question,
-                "guideline": selected_guideline,
                 "session_id": st.session_state.get("session_id"),
             },
             headers=headers,
