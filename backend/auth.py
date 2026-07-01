@@ -2,8 +2,8 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
+import bcrypt
 from jose import ExpiredSignatureError, JWTError, jwt
-from passlib.context import CryptContext
 from sqlalchemy import func
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -17,18 +17,21 @@ SECRET_KEY = env("SECRET_KEY", "fallback_dev_key")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(env("ACCESS_TOKEN_EXPIRE_MINUTES", "480") or "480")
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(plain_password: str, stored_password: str) -> bool:
     if not stored_password:
         return False
     if stored_password.startswith("$2"):
-        return pwd_context.verify(plain_password, stored_password)
+        try:
+            return bcrypt.checkpw(
+                plain_password.encode("utf-8"),
+                stored_password.encode("utf-8"),
+            )
+        except ValueError:
+            return False
     return plain_password == stored_password
 
 
