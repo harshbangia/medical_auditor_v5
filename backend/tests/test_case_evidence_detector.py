@@ -135,6 +135,65 @@ class CaseEvidenceDetectorTests(unittest.TestCase):
         )
         self.assertFalse(detect_case_evidence(CASE165_SNIPPET)["has_preauth_form"])
 
+    def test_seeds_labs_symptoms_and_culture(self):
+        result = {
+            "clinical_findings": [
+                {"parameter": "Symptom duration at presentation", "value": "3 days (chest discomfort)"},
+            ],
+            "clinical_checklist": [],
+            "claim_details": {},
+            "treatment_billing_audit": {},
+        }
+        fixed = apply_case_evidence_corrections(result, CASE165_SNIPPET)
+        params = {f["parameter"]: f for f in fixed["clinical_findings"] if isinstance(f, dict)}
+        self.assertIn("Creatinine (Serum)", params)
+        self.assertEqual(params["Creatinine (Serum)"]["value"], "1.9 mg/dl")
+        self.assertIn("C-Reactive Protein (CRP)", params)
+        self.assertIn("fever", params["Symptom duration at presentation"]["value"].lower())
+        self.assertIn("treatment sheet", params["Symptom duration at presentation"]["source"].lower())
+        self.assertIn("Culture sensitivity", params)
+
+    def test_downgrades_copd_and_reconciles_verdict(self):
+        result = {
+            "clinical_findings": [],
+            "clinical_checklist": [],
+            "compliance_verdict": "Non-Compliant",
+            "guideline_deviations": [
+                {
+                    "issue": "Lack of confirmed COPD diagnosis as per guidelines.",
+                    "case_evidence": "Spirometry results not documented.",
+                    "severity": "High",
+                },
+            ],
+            "challenge_points": ["Justify admission without spirometry confirming COPD diagnosis."],
+            "documentation_gaps": ["Spirometry results missing for COPD diagnosis confirmation."],
+            "claim_details": {},
+            "treatment_billing_audit": {},
+        }
+        fixed = apply_case_evidence_corrections(result, CASE165_SNIPPET)
+        self.assertEqual(fixed["guideline_deviations"][0]["severity"], "Low")
+        self.assertEqual(fixed["compliance_verdict"], "Partially Compliant")
+        self.assertFalse(fixed["challenge_points"])
+        self.assertFalse(fixed["documentation_gaps"])
+
+    def test_acs_observation_acknowledges_documented_workup(self):
+        result = {
+            "clinical_findings": [],
+            "clinical_checklist": [],
+            "observations": [
+                {
+                    "question": "Is there adequate documentation for acute coronary syndrome management?",
+                    "analysis": "TIMI risk score and comprehensive ACS management not documented.",
+                    "answer": "Insufficient Evidence",
+                }
+            ],
+            "claim_details": {},
+            "treatment_billing_audit": {},
+        }
+        fixed = apply_case_evidence_corrections(result, CASE165_SNIPPET)
+        self.assertEqual(fixed["observations"][0]["answer"], "Partially Supported")
+        self.assertIn("ECG", fixed["observations"][0]["analysis"])
+
 
 if __name__ == "__main__":
     unittest.main()

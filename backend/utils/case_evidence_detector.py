@@ -8,6 +8,8 @@ CT reports mis-labelled as MRI.
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
+from backend.utils.claim_details_extractor import _classify_document, _source_label
+
 _CREATININE_RE = re.compile(
     r"creatinine\s*(?:\(serum\))?\s*[:.]?\s*(\d+(?:\.\d+)?)\s*mg/dl",
     re.I,
@@ -65,6 +67,21 @@ _EMERGENCY_MARKERS = re.compile(
 )
 _SYMPTOM_CHEST_RE = re.compile(r"chest\s+discomfort\s*x\s*(\d+)\s*d", re.I)
 _SYMPTOM_FEVER_RE = re.compile(r"fever\s*(\d+)\s*[-–]\s*(\d+)\s*days", re.I)
+_COPD_SPIROMETRY_RE = re.compile(r"\b(?:copd|spirometry|fev1/?fvc|post[\s-]?bronchodilator)\b", re.I)
+_NO_CARDIAC_WORKUP_RE = re.compile(
+    r"no\s+cardiac|lack\s+of\s+cardiac|absence\s+of\s+(?:cardiac|acs\s+management)|"
+    r"without\s+cardiac|not\s+documented.*(?:ecg|echo|troponin)|"
+    r"no\s+(?:ecg|echo|troponin)|lacks?\s+comprehensive\s+documentation\s+for\s+the\s+acs",
+    re.I,
+)
+_ACS_PROCESS_GAP_RE = re.compile(r"\btimi\b|risk\s+score|comprehensive\s+acs\s+management", re.I)
+_CULTURE_RE = re.compile(r"culture\s+shows\s+growth\s+of\s+([^\n.;]+)", re.I)
+
+_LAB_FINDING_LABELS = {
+    "creatinine": "Creatinine (Serum)",
+    "crp": "C-Reactive Protein (CRP)",
+    "sodium": "Sodium (Serum)",
+}
 
 
 def _norm(s: str) -> str:
@@ -110,6 +127,31 @@ def extract_symptom_durations(case_text: str) -> List[str]:
     if m:
         durations.append(f"{m.group(1)}-{m.group(2)} days (fever)")
     return list(dict.fromkeys(durations))
+
+
+def _split_source_blocks(case_text: str) -> List[Tuple[str, str]]:
+    blocks: List[Tuple[str, str]] = []
+    if not case_text:
+        return blocks
+    parts = re.split(r"=== Source document:\s*(.+?)\s*===", case_text, flags=re.I)
+    for i in range(1, len(parts), 2):
+        fname = parts[i].strip()
+        body = parts[i + 1] if i + 1 < len(parts) else ""
+        if fname and body.strip():
+            blocks.append((fname, body.strip()))
+    return blocks
+
+
+def _chart_source_label(case_text: str) -> str:
+    """Return a source label from the uploaded chart block (filename + content type)."""
+    for fname, body in _split_source_blocks(case_text):
+        doc_type = _classify_document(fname, body)
+        if doc_type in ("indoor_case", "clinical", "pre_auth"):
+            return _source_label(fname, doc_type)
+    for fname, body in _split_source_blocks(case_text):
+        if re.search(r"treatment\s+sheet|ward\s*/\s*bed|consultation\s+note", body, re.I):
+            return f"{fname} — clinical chart"
+    return "Clinical chart in uploaded case file"
 
 
 def _dedupe_strings(items: List[str]) -> List[str]:
@@ -161,6 +203,8 @@ def detect_case_evidence(case_text: str) -> Dict[str, Any]:
     if _FILENAME_ECHO.search(filenames_hint) or "echocardiography report" in low:
         has_cardiac = True
 
+    culture_match = _CULTURE_RE.search(text)
+
     return {
         "labs": extract_lab_values(text),
         "has_antibiotics": has_antibiotics,
@@ -171,6 +215,7 @@ def detect_case_evidence(case_text: str) -> Dict[str, Any]:
         "has_copd_diagnosis": has_copd_dx,
         "symptom_durations": extract_symptom_durations(text),
         "has_preauth_form": bool(_PREAUTH_MARKERS.search(text)),
+        "culture_organism": culture_match.group(1).strip() if culture_match else "",
     }
 
 
@@ -185,9 +230,106 @@ def _fix_creatinine_in_text_blob(blob: str, correct: str) -> str:
     )
 
 
-def _downgrade_deviation(dev: dict, reason: str) -> None:
+def _downgrade_deviation(dev: dict, reason: str, severity: str = "Low") -> None:
     dev["case_evidence"] = reason
-    dev["severity"] = "Low"
+    dev["severity"] = severity
+
+
+def _is_copd_spirometry_issue(text: str) -> bool:
+    return bool(_COPD_SPIROMETRY_RE.search(_norm(text)))
+
+
+def _seed_or_update_clinical_findings(
+    findings: List[dict],
+    evidence: Dict[str, Any],
+    case_text: str,
+) -> None:
+    chart_source = _chart_source_label(case_text)
+    labs = evidence.get("labs") or {}
+
+    for key, label in _LAB_FINDING_LABELS.items():
+        val = labs.get(key)
+        if not val:
+            continue
+        updated = False
+        for item in findings:
+            if not isinstance(item, dict):
+                continue
+            if key in _norm(item.get("parameter", "")):
+                item["value"] = val
+                if not item.get("source"):
+                    item["source"] = chart_source
+                updated = True
+                break
+        if not updated:
+            findings.append({
+                "parameter": label,
+                "value": val,
+                "normal_range": "",
+                "comment": "From uploaded investigation / lab report",
+                "source": chart_source,
+            })
+
+    symptom_durations = evidence.get("symptom_durations") or []
+    if symptom_durations:
+        merged = "; ".join(symptom_durations)
+        updated = False
+        for item in findings:
+            if not isinstance(item, dict):
+                continue
+            if "symptom duration" in _norm(item.get("parameter", "")):
+                existing = str(item.get("value") or "")
+                parts = [p.strip() for p in re.split(r"[;]", existing) if p.strip()]
+                for part in symptom_durations:
+                    if part not in parts:
+                        parts.append(part)
+                item["value"] = "; ".join(parts) if parts else merged
+                item["source"] = item.get("source") or chart_source
+                item["comment"] = item.get("comment") or "From treatment sheet / clinical chart"
+                updated = True
+                break
+        if not updated:
+            findings.append({
+                "parameter": "Symptom duration at presentation",
+                "value": merged,
+                "normal_range": "",
+                "comment": "From treatment sheet / clinical chart",
+                "source": chart_source,
+            })
+
+    organism = evidence.get("culture_organism")
+    if organism and not any("culture" in _norm(f.get("parameter", "")) for f in findings if isinstance(f, dict)):
+        findings.append({
+            "parameter": "Culture sensitivity",
+            "value": organism,
+            "normal_range": "",
+            "comment": "Organism isolated in uploaded lab report",
+            "source": chart_source,
+        })
+
+
+def _reconcile_compliance_verdict(result: dict, evidence: Dict[str, Any]) -> None:
+    deviations = result.get("guideline_deviations") or []
+    if not isinstance(deviations, list):
+        return
+
+    highs = [
+        d for d in deviations
+        if isinstance(d, dict) and _norm(d.get("severity", "")) == "high"
+    ]
+    if not highs:
+        verdict = _norm(result.get("compliance_verdict", ""))
+        if verdict == "non-compliant":
+            result["compliance_verdict"] = "Partially Compliant"
+        return
+
+    if not evidence.get("has_copd_diagnosis"):
+        copd_highs = [
+            d for d in highs
+            if _is_copd_spirometry_issue(str(d.get("issue", "")))
+        ]
+        if len(copd_highs) == len(highs):
+            result["compliance_verdict"] = "Partially Compliant"
 
 
 def _remove_challenge(challenges: List[str], needle: str) -> None:
@@ -282,20 +424,8 @@ def apply_case_evidence_corrections(result: dict, case_text: str) -> dict:
 
     result["clinical_checklist"] = _dedupe_checklist(checklist)
 
-    symptom_durations = evidence.get("symptom_durations") or []
-    if symptom_durations and isinstance(findings, list):
-        if not any(
-            "symptom duration" in _norm(f.get("parameter", ""))
-            for f in findings
-            if isinstance(f, dict)
-        ):
-            findings.append({
-                "parameter": "Symptom duration at presentation",
-                "value": "; ".join(symptom_durations),
-                "normal_range": "",
-                "comment": "From indoor case / treatment sheet",
-                "source": "INDOOR CASE PAPER.pdf",
-            })
+    if isinstance(findings, list):
+        _seed_or_update_clinical_findings(findings, evidence, case_text)
 
     # --- Guideline deviations: retract false 'missing' claims ---
     deviations = result.get("guideline_deviations") or []
@@ -304,6 +434,7 @@ def apply_case_evidence_corrections(result: dict, case_text: str) -> dict:
             if not isinstance(dev, dict):
                 continue
             issue = _norm(dev.get("issue", ""))
+            issue_raw = str(dev.get("issue", ""))
             evidence_text = _norm(dev.get("case_evidence", ""))
 
             if evidence.get("has_antibiotics") and (
@@ -312,25 +443,31 @@ def apply_case_evidence_corrections(result: dict, case_text: str) -> dict:
             ):
                 _downgrade_deviation(
                     dev,
-                    "Antibiotic therapy documented on treatment sheets and/or culture report "
-                    "(e.g. doxycycline, IV antibiotics, Klebsiella sensitivity).",
+                    "Antibiotic therapy documented on treatment sheets and/or culture report.",
                 )
 
-            if evidence.get("has_cardiac_workup") and (
-                "cardiac" in issue or "angiograph" in issue or "acs" in issue
-                or "no cardiac" in evidence_text
-            ):
-                _downgrade_deviation(
-                    dev,
-                    "Cardiac workup documented: ECG and/or echocardiography and/or troponin "
-                    "and/or Holter/CAG planning in case file.",
-                )
+            if evidence.get("has_cardiac_workup"):
+                if _NO_CARDIAC_WORKUP_RE.search(issue_raw) or _NO_CARDIAC_WORKUP_RE.search(
+                    str(dev.get("case_evidence") or "")
+                ):
+                    _downgrade_deviation(
+                        dev,
+                        "Cardiac workup documented: ECG and/or echocardiography and/or troponin "
+                        "in uploaded case file.",
+                    )
+                elif _ACS_PROCESS_GAP_RE.search(issue_raw):
+                    _downgrade_deviation(
+                        dev,
+                        "ECG/echocardiography/troponin documented; formal TIMI risk score or "
+                        "written ACS management pathway may still be requested from hospital.",
+                        severity="Medium",
+                    )
 
-            if "spirometry" in issue and not evidence.get("has_copd_diagnosis"):
+            if _is_copd_spirometry_issue(issue_raw) and not evidence.get("has_copd_diagnosis"):
                 _downgrade_deviation(
                     dev,
-                    "COPD/spirometry not clearly documented in case file; primary presentation "
-                    "appears cardiac and/or infective respiratory — spirometry may not apply.",
+                    "COPD/spirometry not documented in case file — primary presentation appears "
+                    "cardiac and/or infective respiratory; COPD guideline may not apply.",
                 )
 
             if labs.get("creatinine"):
@@ -346,6 +483,9 @@ def apply_case_evidence_corrections(result: dict, case_text: str) -> dict:
         if evidence.get("has_cardiac_workup"):
             _remove_challenge(challenges, "cardiac evaluation")
             _remove_challenge(challenges, "angiography")
+        if not evidence.get("has_copd_diagnosis"):
+            _remove_challenge(challenges, "spirometry")
+            _remove_challenge(challenges, "copd")
         result["challenge_points"] = _dedupe_strings(challenges)
 
     # --- Observations referencing false gaps ---
@@ -368,13 +508,22 @@ def apply_case_evidence_corrections(result: dict, case_text: str) -> dict:
                 )
 
             if evidence.get("has_cardiac_workup") and (
-                "cardiac" in q or "angiograph" in q or "acs" in q
+                "cardiac" in q or "angiograph" in q or "acs" in q or "coronary" in q
             ):
-                obs["answer"] = "Partially Supported"
-                analysis += (
-                    " Note: ECG and/or echocardiography and troponin workup are present "
-                    "in the uploaded case file."
-                )
+                if _ACS_PROCESS_GAP_RE.search(analysis) or _ACS_PROCESS_GAP_RE.search(
+                    str(obs.get("question") or "")
+                ):
+                    obs["answer"] = "Partially Supported"
+                    analysis += (
+                        " Note: ECG and/or echocardiography and troponin are documented; "
+                        "only formal TIMI risk scoring or written ACS pathway may be missing."
+                    )
+                elif _NO_CARDIAC_WORKUP_RE.search(analysis):
+                    obs["answer"] = "Partially Supported"
+                    analysis += (
+                        " Note: ECG and/or echocardiography and troponin workup are present "
+                        "in the uploaded case file."
+                    )
 
             obs["analysis"] = analysis.strip()
 
@@ -391,6 +540,8 @@ def apply_case_evidence_corrections(result: dict, case_text: str) -> dict:
             if evidence.get("has_cardiac_workup") and "missing cardiac" in g:
                 continue
             if evidence.get("has_cardiac_workup") and "no cardiac" in g:
+                continue
+            if not evidence.get("has_copd_diagnosis") and _is_copd_spirometry_issue(g):
                 continue
             if labs.get("creatinine"):
                 gap = _fix_creatinine_in_text_blob(str(gap), labs["creatinine"])
@@ -427,6 +578,7 @@ def apply_case_evidence_corrections(result: dict, case_text: str) -> dict:
             claim["nature_of_admission"] = "Emergency"
 
     result["_case_evidence"] = evidence
+    _reconcile_compliance_verdict(result, evidence)
     return result
 
 
