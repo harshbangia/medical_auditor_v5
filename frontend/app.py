@@ -188,6 +188,7 @@ def force_logout_and_relogin(message: str):
     st.error(message)
     st.session_state["is_logged_out"] = True
     st.session_state.pop("token", None)
+    st.session_state.pop("current_user", None)
     if "token" in cookies:
         del cookies["token"]
         cookies.save()
@@ -239,8 +240,8 @@ def login_page():
             if "access_token" in data:
                 st.success("Login successful")
 
-                # 🔥 set session
                 st.session_state["token"] = data["access_token"]
+                st.session_state["current_user"] = data.get("user") or {}
                 st.session_state["force_login"] = False
                 st.session_state["is_logged_out"] = False
 
@@ -269,6 +270,134 @@ if "token" not in st.session_state:
     st.stop()
 
 headers = {"Authorization": f"Bearer {st.session_state['token']}"}
+
+
+def load_current_user():
+    try:
+        resp = requests.get(f"{API_BASE}/me", headers=headers, timeout=20)
+        if resp.status_code == 200:
+            st.session_state["current_user"] = resp.json()
+            return st.session_state["current_user"]
+        if resp.status_code == 401:
+            force_logout_and_relogin("Session expired. Please login again.")
+    except requests.exceptions.RequestException:
+        pass
+    return st.session_state.get("current_user") or {}
+
+
+if "current_user" not in st.session_state:
+    load_current_user()
+
+current_user = st.session_state.get("current_user") or {}
+is_admin = current_user.get("role") == "admin"
+
+
+def render_admin_dashboard():
+    st.markdown(
+        """
+        <div class="gwx-header-bar">
+            <div>
+                <h2>Admin Dashboard</h2>
+                <div class="tagline">Logins, cases, and user management</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    try:
+        metrics_resp = requests.get(f"{API_BASE}/admin/metrics", headers=headers, timeout=30)
+    except requests.exceptions.RequestException as exc:
+        st.error(f"Could not load dashboard: {exc}")
+        return
+
+    if metrics_resp.status_code == 401:
+        force_logout_and_relogin("Session expired. Please login again.")
+    if metrics_resp.status_code == 403:
+        st.error("Admin access required.")
+        return
+    if metrics_resp.status_code != 200:
+        st.error(f"Dashboard unavailable ({metrics_resp.status_code})")
+        return
+
+    metrics = metrics_resp.json() or {}
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Successful logins", metrics.get("total_logins", 0))
+    c2.metric("Cases started", metrics.get("total_cases", 0))
+    c3.metric("Cases completed", metrics.get("completed_cases", 0))
+    c4.metric("Active users", metrics.get("active_users", 0))
+
+    st.markdown("### Per-user activity")
+    rows = metrics.get("per_user") or []
+    if rows:
+        st.dataframe(
+            [
+                {
+                    "Email": r.get("email"),
+                    "Role": r.get("role"),
+                    "Active": "Yes" if r.get("is_active") else "No",
+                    "Logins": r.get("login_count", 0),
+                    "Cases started": r.get("cases_started", 0),
+                    "Cases completed": r.get("cases_completed", 0),
+                    "Last login": r.get("last_login_at") or "—",
+                }
+                for r in rows
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.info("No users yet.")
+
+    st.markdown("### Create user")
+    with st.form("create_user_form", clear_on_submit=True):
+        new_email = st.text_input("Email")
+        new_password = st.text_input("Temporary password", type="password")
+        new_role = st.selectbox("Role", ["user", "admin"])
+        submitted = st.form_submit_button("Create user")
+        if submitted:
+            if not new_email.strip() or not new_password:
+                st.warning("Email and password are required.")
+            else:
+                create_resp = requests.post(
+                    f"{API_BASE}/admin/users",
+                    headers=headers,
+                    json={
+                        "email": new_email.strip(),
+                        "password": new_password,
+                        "role": new_role,
+                    },
+                    timeout=30,
+                )
+                if create_resp.status_code == 200:
+                    st.success(f"Created user {new_email.strip()}")
+                    st.rerun()
+                else:
+                    try:
+                        detail = create_resp.json().get("detail", create_resp.text)
+                    except Exception:
+                        detail = create_resp.text
+                    st.error(detail)
+
+    st.markdown("### Manage users")
+    for row in rows:
+        if row.get("id") == current_user.get("id"):
+            continue
+        label = f"{row.get('email')} ({row.get('role')})"
+        active = bool(row.get("is_active"))
+        btn_label = "Deactivate" if active else "Activate"
+        if st.button(btn_label, key=f"toggle_user_{row.get('id')}"):
+            patch = requests.patch(
+                f"{API_BASE}/admin/users/{row.get('id')}",
+                headers=headers,
+                json={"is_active": not active},
+                timeout=30,
+            )
+            if patch.status_code == 200:
+                st.rerun()
+            else:
+                st.error("Could not update user status.")
+
 
 PAGE_CSS = """
 <style>
@@ -611,6 +740,29 @@ st.sidebar.markdown(
     unsafe_allow_html=True,
 )
 
+if current_user.get("email"):
+    st.sidebar.caption(f"Signed in as **{current_user['email']}**")
+    if is_admin:
+        st.sidebar.caption("Role: **admin**")
+
+if is_admin:
+    page = st.sidebar.radio(
+        "Navigation",
+        ["Audit", "Admin Dashboard"],
+        key="app_page",
+    )
+else:
+    page = "Audit"
+
+if page == "Admin Dashboard":
+    render_admin_dashboard()
+    if st.sidebar.button("Logout"):
+        st.session_state["is_logged_out"] = True
+        st.session_state.pop("token", None)
+        st.session_state.pop("current_user", None)
+        st.rerun()
+    st.stop()
+
 # ✅ GUIDELINE DROPDOWN
 def load_guidelines(force_refresh=False):
     try:
@@ -658,6 +810,7 @@ if st.sidebar.button("Logout"):
 
     # 🔥 clear token from session
     st.session_state.pop("token", None)
+    st.session_state.pop("current_user", None)
 
     st.rerun()
 
@@ -822,7 +975,8 @@ if run:
     st.session_state.pop("pdf_name", None)
     st.session_state["session_id"] = result.get("session_id")
     st.session_state["audit_meta"] = {
-        "audit_id": f"GMS-{datetime.now().strftime('%Y%m%d')}-{str(uuid.uuid4())[:6]}",
+        "audit_id": result.get("audit_ref")
+        or f"GMS-{datetime.now().strftime('%Y%m%d')}-{str(uuid.uuid4())[:6]}",
         "audit_date": datetime.now().strftime("%d/%m/%Y"),
     }
 

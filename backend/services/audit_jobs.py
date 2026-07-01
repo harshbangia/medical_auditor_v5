@@ -53,13 +53,19 @@ def create_job() -> AuditJob:
 _audit_lock = threading.Lock()
 
 
-def run_job_in_background(job: AuditJob, runner: Callable[[AuditJob], dict]) -> None:
+def run_job_in_background(
+    job: AuditJob,
+    runner: Callable[[AuditJob], dict],
+    on_success: Optional[Callable[[AuditJob, dict], None]] = None,
+    on_failure: Optional[Callable[[AuditJob, Exception], None]] = None,
+) -> None:
     def _work():
         _update(job, status="running", phase="starting", progress=5, message="Starting audit…")
         try:
-            # One heavy audit at a time — parallel OCR OOMs small EC2 instances
             with _audit_lock:
                 result = runner(job)
+            if on_success:
+                on_success(job, result)
             _update(
                 job,
                 status="completed",
@@ -69,6 +75,8 @@ def run_job_in_background(job: AuditJob, runner: Callable[[AuditJob], dict]) -> 
                 result=result,
             )
         except Exception as exc:
+            if on_failure:
+                on_failure(job, exc)
             traceback.print_exc()
             _update(
                 job,

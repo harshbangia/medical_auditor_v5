@@ -14,10 +14,26 @@ from backend.ai.audit_engine import run_audit
 from backend.utils.pdf_generator import generate_pdf
 from backend.utils.pdf_filename import pdf_download_filename
 from starlette.background import BackgroundTask
-from backend.auth import authenticate_user, create_access_token, verify_token
+from backend.auth import (
+    authenticate_user,
+    create_access_token,
+    get_user_from_token,
+    require_admin,
+    require_user,
+    verify_token,
+)
 
-from backend.db.database import SessionLocal
-from backend.db.models import AuditReport
+from backend.db.database import SessionLocal, engine
+from backend.db.models import AuditReport, Base
+from backend.db.schema_upgrade import upgrade_schema
+from backend.services.audit_store import (
+    create_user_account,
+    get_admin_metrics,
+    list_user_history,
+    record_audit_completed,
+    record_audit_started,
+    set_user_active,
+)
 
 from backend.rag.guideline_retriever import search_across_guidelines
 from backend.services.s3_utils import guidelines_cache
@@ -163,7 +179,12 @@ def health_db():
 
 
 @app.on_event("startup")
-def warm_guidelines_cache():
+def startup_db_and_cache():
+    try:
+        Base.metadata.create_all(bind=engine)
+        upgrade_schema(engine)
+    except Exception as exc:
+        logger.warning("Database schema setup failed: %s", exc)
     try:
         names = guidelines_cache.get()
         logger.info("Guidelines cache warmed (%d PDFs)", len(names))
@@ -222,12 +243,24 @@ class LoginRequest(BaseModel):
     email: str
     password: str
 
+
+class CreateUserRequest(BaseModel):
+    email: str
+    password: str
+    role: str = "user"
+
+
+class UserStatusRequest(BaseModel):
+    is_active: bool
+
+
 @app.post("/login")
-def login(data: LoginRequest):
+def login(data: LoginRequest, request: Request):
     from sqlalchemy.exc import SQLAlchemyError
 
+    client_ip = request.client.host if request.client else None
     try:
-        user = authenticate_user(data.email, data.password)
+        user = authenticate_user(data.email, data.password, ip_address=client_ip)
     except SQLAlchemyError:
         logger.exception("Login database error")
         raise HTTPException(
@@ -238,12 +271,19 @@ def login(data: LoginRequest):
     if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    token = create_access_token({"sub": user["email"]})
+    token = create_access_token(user)
 
     return {
         "access_token": token,
-        "token_type": "bearer"
+        "token_type": "bearer",
+        "user": user,
     }
+
+
+@app.get("/me")
+def me(authorization: str = Header(None)):
+    user = require_user(authorization)
+    return user
 
 
 # =========================
@@ -361,12 +401,43 @@ async def audit(
             raise HTTPException(status_code=400, detail="No valid PDF files uploaded")
 
         _audit_log(request_id, f"queued {len(file_items)} unique PDF(s) for async audit")
+        current_user = require_user(authorization)
+        guideline_list = guidelines or ([guideline] if guideline else [])
         job = create_job()
+        record_audit_started(
+            user_id=current_user["id"],
+            user_email=current_user["email"],
+            job_id=job.job_id,
+            file_count=len(file_items),
+            guidelines=guideline_list,
+        )
+
+        def _on_success(audit_job, result):
+            from datetime import datetime as _dt
+            audit_ref = f"GMS-{_dt.utcnow():%Y%m%d}-{audit_job.job_id[:6]}"
+            record_audit_completed(
+                job_id=audit_job.job_id,
+                report=result if isinstance(result, dict) else None,
+                status="completed",
+                audit_ref=audit_ref,
+            )
+            if isinstance(result, dict):
+                result["audit_ref"] = audit_ref
+
+        def _on_failure(audit_job, _exc):
+            record_audit_completed(
+                job_id=audit_job.job_id,
+                report=None,
+                status="failed",
+            )
+
         run_job_in_background(
             job,
             lambda j: run_job_audit(
                 j, file_items, guideline, question, GLOBAL_CACHE, guidelines=guidelines
             ),
+            on_success=_on_success,
+            on_failure=_on_failure,
         )
         return JSONResponse(
             status_code=202,
@@ -417,35 +488,38 @@ async def generate_pdf_api(data: dict):
 # =========================
 @app.get("/history")
 async def get_history(authorization: str = Header(None)):
+    user = require_user(authorization)
+    return list_user_history(user["id"])
 
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Missing token")
 
-    token = _extract_bearer_token(authorization)
-    if not token:
-        raise HTTPException(status_code=401, detail="Malformed Authorization header")
-    payload = verify_token(token)
+@app.get("/admin/metrics")
+def admin_metrics(authorization: str = Header(None)):
+    require_admin(authorization)
+    return get_admin_metrics()
 
-    if not payload:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
 
-    db = SessionLocal()
+@app.get("/admin/users")
+def admin_users(authorization: str = Header(None)):
+    require_admin(authorization)
+    metrics = get_admin_metrics()
+    return {"users": metrics["per_user"]}
 
-    reports = db.query(AuditReport)\
-        .filter(AuditReport.user_email == payload["sub"])\
-        .order_by(AuditReport.created_at.desc())\
-        .all()
 
-    db.close()
+@app.post("/admin/users")
+def admin_create_user(data: CreateUserRequest, authorization: str = Header(None)):
+    require_admin(authorization)
+    try:
+        return create_user_account(data.email, data.password, data.role)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
-    return [
-        {
-            "id": r.id,
-            "created_at": r.created_at.strftime("%d-%m-%Y %H:%M"),
-            "report": json.loads(r.report_json)
-        }
-        for r in reports
-    ]
+
+@app.patch("/admin/users/{user_id}")
+def admin_update_user(user_id: int, data: UserStatusRequest, authorization: str = Header(None)):
+    require_admin(authorization)
+    if not set_user_active(user_id, data.is_active):
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"id": user_id, "is_active": data.is_active}
 
 def chunk_text(text, size=3000, overlap=300):
     chunks = []
