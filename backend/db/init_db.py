@@ -17,13 +17,16 @@ def main() -> int:
         return 1
 
     print(f"Target: host={DB_HOST} db={DB_NAME}", flush=True)
+    pw = env("DB_PASSWORD") or ""
+    print(f"Password loaded from .env: {'yes' if pw else 'NO'} (len={len(pw)})", flush=True)
     print("Step 1/3: testing connection (10s timeout)...", flush=True)
     probe = check_db_connection()
     if not probe.get("ok"):
         print(f"ERROR: cannot connect — {probe.get('error')}", flush=True)
-        print("Tip: RDS usually needs sslmode=require (now default for remote hosts).", flush=True)
+        print("Tip: ensure DB_PASSWORD in .env matches psql (no extra quotes/spaces).", flush=True)
+        print("Tip: add DB_SSLMODE=require to .env for RDS.", flush=True)
         return 1
-    print(f"  connected (users table count: {probe.get('users', 0)})", flush=True)
+    print("  connected", flush=True)
 
     print("Step 2/3: creating tables...", flush=True)
     Base.metadata.create_all(bind=engine)

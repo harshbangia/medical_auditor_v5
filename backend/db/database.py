@@ -63,8 +63,8 @@ def check_db_connection() -> dict:
         return {"ok": False, "error": f"missing env: {_missing}"}
     try:
         with engine.connect() as conn:
-            count = conn.execute(text("SELECT COUNT(*) FROM users")).scalar()
-        return {"ok": True, "users": int(count or 0)}
+            conn.execute(text("SELECT 1"))
+        return {"ok": True}
     except Exception as exc:
         logger.exception("Database connection failed")
         return {"ok": False, "error": str(exc)}
