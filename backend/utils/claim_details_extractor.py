@@ -54,11 +54,21 @@ _CONSULT_PATTERNS = [
     re.compile(rf"date\s*of\s*consultation\s*[:.]?\s*{_DATE_NUMERIC}", re.I),
     re.compile(rf"date\s*[:.]?\s*{_DATE_NUMERIC}\s*name\s*[:.]", re.I),
     re.compile(rf"body\s*:\s*date\s*[:.]?\s*{_DATE_NUMERIC}", re.I),
+]
+
+# Treatment-sheet timestamps — valid for admission inference, not first consultation.
+_INDOOR_SHEET_TIMESTAMP_PATTERNS = [
     re.compile(rf"date\s*&\s*time\s*[:.]?\s*{_DATE_NUMERIC}", re.I),
 ]
 
-_TREATMENT_SHEET_DATE_PATTERNS = [
-    re.compile(rf"date\s*&\s*time\s*[:.]?\s*{_DATE_NUMERIC}", re.I),
+_LAB_RECEIVING_DATE_PATTERNS = [
+    re.compile(rf"receiving\s*date\s*[:.]?\s*{_DATE_NUMERIC}", re.I),
+    re.compile(rf"reporting\s*date\s*[:.]?\s*{_DATE_NUMERIC}", re.I),
+]
+
+_CARE_DOCUMENT_TYPES = frozenset({"pre_auth", "indoor_case", "clinical", "discharge"})
+
+_TREATMENT_SHEET_DATE_PATTERNS = _INDOOR_SHEET_TIMESTAMP_PATTERNS + [
     re.compile(rf"^date\s*[:.]?\s*{_DATE_NUMERIC}", re.I | re.M),
 ]
 
@@ -136,6 +146,10 @@ _VISION_BLOCK_MARKER = re.compile(
     r"=== Page \d+ — vision transcription \(([^)]+)\) ===",
     re.I,
 )
+
+
+def _norm_text(val: str) -> str:
+    return " ".join(str(val or "").strip().lower().split())
 
 
 def _norm_date(val: str) -> str:
@@ -367,13 +381,6 @@ def _infer_nature_of_admission(text: str, doc_type: str) -> str:
 
 
 def _extract_hospital(text: str) -> str:
-    gangapada = re.search(
-        r"(Gangapada\s+Super\s+Speciality\s+Hospital(?:\s+Pvt\.?\s+Ltd\.?)?[^\n]{0,40})",
-        text or "",
-        re.I,
-    )
-    if gangapada:
-        return re.sub(r"\s+", " ", gangapada.group(1).strip())
     for pat in _HOSPITAL_PATTERNS:
         m = pat.search(text or "")
         if m:
@@ -408,16 +415,41 @@ def _extract_admission_date(text: str, doc_type: str, reference_year: Optional[i
     return val
 
 
+def _extract_lab_report_dates(text: str, reference_year: Optional[int]) -> List[str]:
+    dates: List[str] = []
+    for pat in _LAB_RECEIVING_DATE_PATTERNS:
+        for m in pat.finditer(text or ""):
+            val = _infer_year_for_partial(_norm_date(m.group(1)), reference_year)
+            if val and not _is_bad_date(val):
+                dates.append(val)
+    return list(dict.fromkeys(dates))
+
+
+def _extract_consultation_date(
+    text: str,
+    doc_type: str,
+    reference_year: Optional[int],
+) -> str:
+    """First consultation only — never lab receiving/reporting or sheet timestamps."""
+    if doc_type == "lab_report":
+        return ""
+    clinical_dates = _clinical_consult_dates(text, reference_year) if doc_type == "clinical" else []
+    if clinical_dates:
+        return clinical_dates[0]
+    if doc_type in ("pre_auth", "clinical", "other"):
+        return _first_match(_CONSULT_PATTERNS, text, reference_year)
+    if doc_type == "indoor_case":
+        return _first_match(_CONSULT_PATTERNS, text, reference_year)
+    return ""
+
+
 def _extract_facts_for_document(
     fname: str,
     text: str,
     reference_year: Optional[int],
 ) -> Dict[str, str]:
     doc_type = _classify_document(fname, text)
-    clinical_dates = _clinical_consult_dates(text, reference_year) if doc_type == "clinical" else []
-    consult = clinical_dates[0] if clinical_dates else ""
-    if not consult and doc_type in ("pre_auth", "indoor_case", "other", "clinical"):
-        consult = _first_match(_CONSULT_PATTERNS, text, reference_year)
+    consult = _extract_consultation_date(text, doc_type, reference_year)
 
     admission = _extract_admission_date(text, doc_type, reference_year)
     proposed = _extract_proposed_hospitalization(text, reference_year) if doc_type == "query_letter" else ""
@@ -446,9 +478,11 @@ def _field_priority(doc_type: str, field: str) -> int:
     table = {
         "consultation_date": {
             "pre_auth": 100,
-            "indoor_case": 95,
-            "clinical": 90,
+            "clinical": 95,
+            "indoor_case": 70,
             "query_letter": 40,
+            "lab_report": 0,
+            "radiology": 5,
             "other": 30,
         },
         "date_of_admission": {
@@ -475,11 +509,12 @@ def _field_priority(doc_type: str, field: str) -> int:
         },
         "hospital": {
             "query_letter": 100,
-            "lab_report": 90,
-            "pre_auth": 80,
-            "indoor_case": 75,
-            "clinical": 70,
-            "radiology": 70,
+            "pre_auth": 95,
+            "indoor_case": 90,
+            "clinical": 88,
+            "discharge": 85,
+            "radiology": 50,
+            "lab_report": 30,
             "bill": 60,
         },
         "nature_of_admission": {
@@ -662,6 +697,47 @@ def _split_case_text_blocks(case_text: str) -> List[Tuple[str, str]]:
     return blocks
 
 
+def _sanitize_consultation_date(
+    result: Dict[str, Any],
+    per_source: List[Tuple[str, Dict[str, str], str]],
+    case_text: str,
+    reference_year: Optional[int],
+) -> None:
+    """Drop consult dates that mirror lab receiving/reporting or post-admission sheet stamps."""
+    consult = result.get("consultation_date", "")
+    if not consult:
+        return
+
+    lab_anchors: set = set()
+    for fname, _facts, doc_type in per_source:
+        if doc_type != "lab_report":
+            continue
+        for block_fname, body in _split_case_text_blocks(case_text):
+            if block_fname != fname:
+                continue
+            for val in _extract_lab_report_dates(body, reference_year):
+                lab_anchors.add(_canonical_date_key(val, reference_year))
+
+    consult_key = _canonical_date_key(consult, reference_year)
+    if consult_key in lab_anchors:
+        result["consultation_date"] = ""
+        result["consultation_date_source"] = ""
+        return
+
+    admission_key = _canonical_date_key(result.get("date_of_admission", ""), reference_year)
+    if not admission_key or not consult_key:
+        return
+
+    source_label = _norm_text(result.get("consultation_date_source", ""))
+    from_explicit_consult = any(
+        token in source_label
+        for token in ("pre-authorization", "clinical document", "consultation")
+    )
+    if consult_key > admission_key and not from_explicit_consult:
+        result["consultation_date"] = ""
+        result["consultation_date_source"] = ""
+
+
 def enrich_claim_facts(
     case_text: str,
     pdf_paths: Optional[List[Tuple[str, str]]] = None,
@@ -729,11 +805,7 @@ def enrich_claim_facts(
         value, _source = _pick_best_candidate(candidates)
         result[field] = value
 
-    for fname, facts, doc_type in per_source:
-        gangapada = facts.get("hospital", "")
-        if gangapada and "gangapada" in gangapada.lower():
-            result["hospital"] = gangapada
-            break
+    _sanitize_consultation_date(result, per_source, case_text, reference_year)
 
     emergency_nature = _infer_nature_of_admission(case_text, "other")
     if emergency_nature == "Emergency":

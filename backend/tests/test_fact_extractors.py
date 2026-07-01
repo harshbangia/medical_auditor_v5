@@ -212,6 +212,27 @@ class Case165ClaimDetailsTests(unittest.TestCase):
         self.assertEqual(facts["date_of_admission"], "19/06/2026")
         self.assertNotEqual(facts["date_of_admission"], "24/06/2026")
 
+    def test_treatment_sheet_timestamp_not_consultation(self):
+        chart = """
+=== Source document: ward_chart_scan.pdf ===
+INDOOR CASE PAPER
+WARD / BED NO: ICU-3
+Date & Time: 24/6/26
+Unstable Angina
+"""
+        facts = enrich_claim_facts(chart)
+        self.assertEqual(facts["consultation_date"], "")
+
+    def test_lab_receiving_date_not_consultation(self):
+        case = CASE165_LAB + "\n" + """
+=== Source document: ward_chart_scan.pdf ===
+INDOOR CASE PAPER
+WARD / BED NO: ICU-3
+Date & Time: 24/06/2026
+"""
+        facts = enrich_claim_facts(case)
+        self.assertEqual(facts["consultation_date"], "")
+
 
 if __name__ == "__main__":
     unittest.main()
