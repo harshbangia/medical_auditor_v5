@@ -1,3 +1,4 @@
+import argparse
 import os
 import sys
 
@@ -11,7 +12,16 @@ from backend.db.schema_upgrade import upgrade_schema
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Create database tables for medical_auditor_v5")
+    parser.add_argument(
+        "--legacy-upgrade",
+        action="store_true",
+        help="Run ALTER TABLE patches for old databases (usually not needed).",
+    )
+    args = parser.parse_args()
+
     print("=== Database init ===", flush=True)
+    print("Tip: stop glowix first if step 3 hangs — sudo systemctl stop glowix", flush=True)
     if _missing:
         print(f"ERROR: missing .env keys: {_missing}", flush=True)
         return 1
@@ -19,20 +29,24 @@ def main() -> int:
     print(f"Target: host={DB_HOST} db={DB_NAME}", flush=True)
     pw = env("DB_PASSWORD") or ""
     print(f"Password loaded from .env: {'yes' if pw else 'NO'} (len={len(pw)})", flush=True)
-    print("Step 1/3: testing connection (10s timeout)...", flush=True)
+    print("Step 1/2: testing connection (10s timeout)...", flush=True)
     probe = check_db_connection()
     if not probe.get("ok"):
         print(f"ERROR: cannot connect — {probe.get('error')}", flush=True)
-        print("Tip: ensure DB_PASSWORD in .env matches psql (no extra quotes/spaces).", flush=True)
-        print("Tip: add DB_SSLMODE=require to .env for RDS.", flush=True)
         return 1
     print("  connected", flush=True)
 
-    print("Step 2/3: creating tables...", flush=True)
+    print("Step 2/2: creating tables from models...", flush=True)
     Base.metadata.create_all(bind=engine)
-    print("Step 3/3: applying schema upgrades...", flush=True)
-    upgrade_schema(engine)
-    print("  schema upgrades done", flush=True)
+    print("  tables created", flush=True)
+
+    if args.legacy_upgrade:
+        print("Optional: legacy column patches...", flush=True)
+        upgrade_schema(engine)
+        print("  legacy patches done", flush=True)
+    else:
+        print("Skipped legacy column patches (use --legacy-upgrade only for old DBs).", flush=True)
+
     print("Tables created successfully", flush=True)
     return 0
 
