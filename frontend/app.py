@@ -292,6 +292,76 @@ current_user = st.session_state.get("current_user") or {}
 is_admin = current_user.get("role") == "admin"
 
 
+def render_admin_user_audit_history(user_id: int, user_email: str):
+    st.markdown("---")
+    hcol1, hcol2 = st.columns([5, 1])
+    with hcol1:
+        st.markdown(f"### Audit report history — {user_email}")
+    with hcol2:
+        if st.button("Close", key="close_audit_history"):
+            st.session_state.pop("admin_audit_user_id", None)
+            st.session_state.pop("admin_audit_user_email", None)
+            st.session_state.pop("admin_pdf_cache", None)
+            st.rerun()
+
+    try:
+        resp = requests.get(
+            f"{API_BASE}/admin/users/{user_id}/audits",
+            headers=headers,
+            timeout=30,
+        )
+    except requests.exceptions.RequestException as exc:
+        st.error(f"Could not load audit history: {exc}")
+        return
+
+    if resp.status_code == 401:
+        force_logout_and_relogin("Session expired. Please login again.")
+    if resp.status_code != 200:
+        st.error(f"Could not load audit history ({resp.status_code})")
+        return
+
+    audits = resp.json() or []
+    if not audits:
+        st.info("No completed audit reports for this user yet.")
+        return
+
+    for audit in audits:
+        aid = audit.get("id")
+        fname = audit.get("download_filename") or "Audit_Report.pdf"
+        row_l, row_r = st.columns([4, 1])
+        with row_l:
+            st.markdown(f"**{fname}**")
+            details = []
+            if audit.get("completed_at"):
+                details.append(f"Completed: {audit['completed_at']}")
+            if audit.get("audit_ref"):
+                details.append(f"Ref: {audit['audit_ref']}")
+            if details:
+                st.caption(" · ".join(details))
+        with row_r:
+            if st.button("Download", key=f"fetch_pdf_{aid}", use_container_width=True):
+                try:
+                    pdf_resp = requests.get(
+                        f"{API_BASE}/admin/audits/{aid}/pdf",
+                        headers=headers,
+                        timeout=180,
+                    )
+                    if pdf_resp.status_code == 200:
+                        st.download_button(
+                            label="Save PDF",
+                            data=pdf_resp.content,
+                            file_name=fname,
+                            mime="application/pdf",
+                            key=f"save_pdf_{aid}",
+                            use_container_width=True,
+                        )
+                    else:
+                        st.error(f"PDF generation failed ({pdf_resp.status_code})")
+                except requests.exceptions.RequestException as exc:
+                    st.error(f"PDF request failed: {exc}")
+        st.markdown("")
+
+
 def render_admin_dashboard():
     st.markdown(
         """
@@ -330,29 +400,52 @@ def render_admin_dashboard():
     st.markdown("### Per-user activity")
     rows = metrics.get("per_user") or []
     if rows:
-        st.dataframe(
-            [
-                {
-                    "Email": r.get("email"),
-                    "Role": r.get("role"),
-                    "Active": "Yes" if r.get("is_active") else "No",
-                    "Logins": r.get("login_count", 0),
-                    "Cases started": r.get("cases_started", 0),
-                    "Cases completed": r.get("cases_completed", 0),
-                    "Last login": r.get("last_login_at") or "—",
-                }
-                for r in rows
-            ],
-            use_container_width=True,
-            hide_index=True,
-        )
+        header = st.columns([2.2, 0.7, 0.6, 0.6, 0.7, 0.9, 1.0, 1.2])
+        header[0].markdown("**Email**")
+        header[1].markdown("**Role**")
+        header[2].markdown("**Active**")
+        header[3].markdown("**Logins**")
+        header[4].markdown("**Started**")
+        header[5].markdown("**Completed**")
+        header[6].markdown("**Last login**")
+        header[7].markdown("**Reports**")
+
+        for row in rows:
+            cols = st.columns([2.2, 0.7, 0.6, 0.6, 0.7, 0.9, 1.0, 1.2])
+            cols[0].write(row.get("email") or "—")
+            cols[1].write(row.get("role") or "user")
+            cols[2].write("Yes" if row.get("is_active") else "No")
+            cols[3].write(str(row.get("login_count", 0)))
+            cols[4].write(str(row.get("cases_started", 0)))
+            completed = int(row.get("cases_completed") or 0)
+            cols[5].write(str(completed))
+            cols[6].write(row.get("last_login_at") or "—")
+            with cols[7]:
+                if completed > 0:
+                    if st.button(
+                        f"View ({completed})",
+                        key=f"view_audits_{row.get('id')}",
+                        help=f"Open audit report history for {row.get('email')}",
+                    ):
+                        st.session_state["admin_audit_user_id"] = row.get("id")
+                        st.session_state["admin_audit_user_email"] = row.get("email")
+                        st.session_state.pop("admin_pdf_cache", None)
+                        st.rerun()
+                else:
+                    st.caption("—")
     else:
         st.info("No users yet.")
+
+    if st.session_state.get("admin_audit_user_id"):
+        render_admin_user_audit_history(
+            st.session_state["admin_audit_user_id"],
+            st.session_state.get("admin_audit_user_email") or "User",
+        )
 
     st.markdown("### Create user")
     with st.form("create_user_form", clear_on_submit=True):
         new_email = st.text_input("Email")
-        new_password = st.text_input("Temporary password", type="password")
+        new_password = st.text_input("Password", type="password")
         new_role = st.selectbox("Role", ["user", "admin"])
         submitted = st.form_submit_button("Create user")
         if submitted:
@@ -383,20 +476,26 @@ def render_admin_dashboard():
     for row in rows:
         if row.get("id") == current_user.get("id"):
             continue
-        label = f"{row.get('email')} ({row.get('role')})"
+        email = row.get("email") or "unknown"
+        role = row.get("role") or "user"
         active = bool(row.get("is_active"))
-        btn_label = "Deactivate" if active else "Activate"
-        if st.button(btn_label, key=f"toggle_user_{row.get('id')}"):
-            patch = requests.patch(
-                f"{API_BASE}/admin/users/{row.get('id')}",
-                headers=headers,
-                json={"is_active": not active},
-                timeout=30,
-            )
-            if patch.status_code == 200:
-                st.rerun()
-            else:
-                st.error("Could not update user status.")
+        status = "Active" if active else "Inactive"
+        mcol1, mcol2 = st.columns([3, 1])
+        with mcol1:
+            st.markdown(f"**{email}**  \n{role} · {status}")
+        with mcol2:
+            btn_label = f"Deactivate {email}" if active else f"Activate {email}"
+            if st.button(btn_label, key=f"toggle_user_{row.get('id')}", use_container_width=True):
+                patch = requests.patch(
+                    f"{API_BASE}/admin/users/{row.get('id')}",
+                    headers=headers,
+                    json={"is_active": not active},
+                    timeout=30,
+                )
+                if patch.status_code == 200:
+                    st.rerun()
+                else:
+                    st.error("Could not update user status.")
 
 
 PAGE_CSS = """
@@ -565,6 +664,19 @@ PAGE_CSS = """
     [data-testid="stSidebar"] .stButton:last-child > button:hover {
         background: rgba(255, 255, 255, 0.08) !important;
         filter: none !important;
+    }
+
+    /* Sidebar navigation radio */
+    [data-testid="stSidebar"] [data-testid="stRadio"] label,
+    [data-testid="stSidebar"] [data-testid="stRadio"] label span,
+    [data-testid="stSidebar"] [data-testid="stRadio"] label p,
+    [data-testid="stSidebar"] [data-testid="stRadio"] [data-testid="stMarkdownContainer"] p,
+    [data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] label {
+        color: var(--gwx-sidebar-text) !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stRadio"] [data-testid="stWidgetLabel"] p {
+        color: var(--gwx-sidebar-muted) !important;
+        font-weight: 600 !important;
     }
 
     /* ── Main content text ── */
@@ -978,6 +1090,7 @@ if run:
         "audit_id": result.get("audit_ref")
         or f"GMS-{datetime.now().strftime('%Y%m%d')}-{str(uuid.uuid4())[:6]}",
         "audit_date": datetime.now().strftime("%d/%m/%Y"),
+        "audit_timestamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
     }
 
     st.success("Audit Completed")
@@ -1054,7 +1167,10 @@ if "report" in st.session_state:
             res = requests.post(f"{API_BASE}/generate-pdf", json=pdf_payload)
             if res.status_code == 200:
                 st.session_state["pdf_blob"] = res.content
-                st.session_state["pdf_name"] = pdf_download_filename(data)
+                st.session_state["pdf_name"] = pdf_download_filename(
+                    data,
+                    completed_at=meta.get("audit_timestamp"),
+                )
             else:
                 st.error("PDF generation failed")
                 st.session_state.pop("pdf_blob", None)

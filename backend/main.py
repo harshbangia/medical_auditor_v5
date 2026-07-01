@@ -29,6 +29,8 @@ from backend.db.schema_upgrade import upgrade_schema
 from backend.services.audit_store import (
     create_user_account,
     get_admin_metrics,
+    get_completed_audit_report,
+    list_completed_audits_for_user,
     list_user_history,
     record_audit_completed,
     record_audit_started,
@@ -520,6 +522,34 @@ def admin_update_user(user_id: int, data: UserStatusRequest, authorization: str 
     if not set_user_active(user_id, data.is_active):
         raise HTTPException(status_code=404, detail="User not found")
     return {"id": user_id, "is_active": data.is_active}
+
+
+@app.get("/admin/users/{user_id}/audits")
+def admin_user_audits(user_id: int, authorization: str = Header(None)):
+    require_admin(authorization)
+    return list_completed_audits_for_user(user_id)
+
+
+@app.get("/admin/audits/{audit_id}/pdf")
+def admin_audit_pdf(audit_id: int, authorization: str = Header(None)):
+    require_admin(authorization)
+    entry = get_completed_audit_report(audit_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Audit report not found")
+    download_name = entry["download_filename"]
+    fd, tmp_path = tempfile.mkstemp(suffix=".pdf")
+    os.close(fd)
+    try:
+        generate_pdf(entry["report"], tmp_path)
+    except Exception:
+        _unlink_temp(tmp_path)
+        raise
+    return FileResponse(
+        path=tmp_path,
+        filename=download_name,
+        media_type="application/pdf",
+        background=BackgroundTask(_unlink_temp, tmp_path),
+    )
 
 def chunk_text(text, size=3000, overlap=300):
     chunks = []
