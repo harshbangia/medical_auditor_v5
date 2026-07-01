@@ -120,6 +120,7 @@ LOGIN_CSS = """
     }
     [data-testid="stAppViewContainer"] .block-container .stButton > button,
     [data-testid="stAppViewContainer"] .block-container .stButton button,
+    [data-testid="stAppViewContainer"] .block-container [data-testid="stFormSubmitButton"] > button,
     [data-testid="stAppViewContainer"] .block-container button[kind],
     [data-testid="stAppViewContainer"] .block-container button[data-testid="baseButton-secondary"] {
         width: 100% !important;
@@ -134,7 +135,8 @@ LOGIN_CSS = """
         margin-top: 0.5rem !important;
     }
     [data-testid="stAppViewContainer"] .block-container .stButton > button:hover,
-    [data-testid="stAppViewContainer"] .block-container .stButton button:hover {
+    [data-testid="stAppViewContainer"] .block-container .stButton button:hover,
+    [data-testid="stAppViewContainer"] .block-container [data-testid="stFormSubmitButton"] > button:hover {
         filter: brightness(1.05) !important;
         box-shadow: 0 6px 20px rgba(37, 99, 235, 0.4) !important;
     }
@@ -184,14 +186,49 @@ def _handle_api_response(response, action_label="Request"):
     return result
 
 
-def force_logout_and_relogin(message: str):
-    st.error(message)
+def clear_user_workspace():
+    """Drop audit UI state so the next user starts on a clean landing/dashboard."""
+    for key in (
+        "report",
+        "audit_meta",
+        "pdf_blob",
+        "pdf_name",
+        "session_id",
+        "report_edit_mode",
+        "admin_audit_user_id",
+        "admin_audit_user_email",
+        "admin_pdf_cache",
+    ):
+        st.session_state.pop(key, None)
+
+
+def perform_logout():
     st.session_state["is_logged_out"] = True
     st.session_state.pop("token", None)
     st.session_state.pop("current_user", None)
+    clear_user_workspace()
+    st.session_state.pop("app_page", None)
     if "token" in cookies:
         del cookies["token"]
         cookies.save()
+
+
+def complete_login(data: dict):
+    user = data.get("user") or {}
+    st.session_state["token"] = data["access_token"]
+    st.session_state["current_user"] = user
+    st.session_state["force_login"] = False
+    st.session_state["is_logged_out"] = False
+    clear_user_workspace()
+    if user.get("role") == "admin":
+        st.session_state["app_page"] = "Admin Dashboard"
+    else:
+        st.session_state["app_page"] = "Audit"
+
+
+def force_logout_and_relogin(message: str):
+    st.error(message)
+    perform_logout()
     st.rerun()
 
 # =========================
@@ -213,15 +250,21 @@ def login_page():
         unsafe_allow_html=True,
     )
 
-    email = st.text_input("Email")
-    password = st.text_input("Password", type="password")
+    with st.form("login_form", clear_on_submit=False):
+        email = st.text_input("Email")
+        password = st.text_input("Password", type="password")
+        submitted = st.form_submit_button("Login", use_container_width=True)
 
-    if st.button("Login"):
+    if submitted:
+        if not email.strip() or not password:
+            st.warning("Email and password are required.")
+            return
+
         response = requests.post(
             url=f"{API_BASE}/login",
             json={
-                "email": email,
-                "password": password
+                "email": email.strip(),
+                "password": password,
             },
             timeout=30,
         )
@@ -234,38 +277,18 @@ def login_page():
                 detail = response.text
             st.error(detail if isinstance(detail, str) else "Login failed")
             return
-        else:
-            data = response.json()
 
-            if "access_token" in data:
-                st.success("Login successful")
+        data = response.json()
+        if "access_token" not in data:
+            st.error("Login failed")
+            return
 
-                st.session_state["token"] = data["access_token"]
-                st.session_state["current_user"] = data.get("user") or {}
-                st.session_state["force_login"] = False
-                st.session_state["is_logged_out"] = False
+        st.success("Login successful")
+        complete_login(data)
+        st.rerun()
 
-                # 🔥 set cookie
-                cookies["token"] = data["access_token"]
-                cookies.save()
 
-                st.rerun()
-            else:
-                st.error("Login failed")
-
-# 🔥 DO NOT RESTORE IF USER LOGGED OUT
 if "token" not in st.session_state:
-
-    if not st.session_state.get("is_logged_out"):
-
-        cookie_token = cookies.get("token")
-
-        if cookie_token:
-            st.session_state["token"] = cookie_token
-
-# 🔥 THEN CHECK LOGIN
-if "token" not in st.session_state:
-
     login_page()
     st.stop()
 
@@ -869,9 +892,7 @@ else:
 if page == "Admin Dashboard":
     render_admin_dashboard()
     if st.sidebar.button("Logout"):
-        st.session_state["is_logged_out"] = True
-        st.session_state.pop("token", None)
-        st.session_state.pop("current_user", None)
+        perform_logout()
         st.rerun()
     st.stop()
 
@@ -916,14 +937,7 @@ uploaded_files = st.sidebar.file_uploader("📂 Upload Case Documents", accept_m
 run = st.sidebar.button("🚀 Run Audit")
 
 if st.sidebar.button("Logout"):
-
-    # 🔥 set logout flag
-    st.session_state["is_logged_out"] = True
-
-    # 🔥 clear token from session
-    st.session_state.pop("token", None)
-    st.session_state.pop("current_user", None)
-
+    perform_logout()
     st.rerun()
 
 # =========================
