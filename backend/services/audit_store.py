@@ -76,6 +76,67 @@ def record_audit_completed(
         db.close()
 
 
+def list_completed_audits_for_user(user_id: int, limit: int = 100) -> List[Dict[str, Any]]:
+    from backend.utils.pdf_filename import pdf_download_filename
+
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(AuditReport)
+            .filter(AuditReport.user_id == user_id, AuditReport.status == "completed")
+            .order_by(AuditReport.completed_at.desc(), AuditReport.created_at.desc())
+            .limit(limit)
+            .all()
+        )
+        out = []
+        for row in rows:
+            report = {}
+            if row.report_json:
+                try:
+                    report = json.loads(row.report_json)
+                except json.JSONDecodeError:
+                    report = {}
+            completed = row.completed_at or row.created_at
+            out.append({
+                "id": row.id,
+                "audit_ref": row.audit_ref,
+                "patient_name": row.patient_name or _patient_name_from_report(report),
+                "completed_at": completed.strftime("%d-%m-%Y %H:%M") if completed else "",
+                "completed_at_iso": completed.isoformat() if completed else "",
+                "file_count": row.file_count,
+                "download_filename": pdf_download_filename(report, completed_at=completed),
+            })
+        return out
+    finally:
+        db.close()
+
+
+def get_completed_audit_report(audit_id: int) -> Optional[Dict[str, Any]]:
+    db = SessionLocal()
+    try:
+        row = db.query(AuditReport).filter(
+            AuditReport.id == audit_id,
+            AuditReport.status == "completed",
+        ).first()
+        if not row or not row.report_json:
+            return None
+        try:
+            report = json.loads(row.report_json)
+        except json.JSONDecodeError:
+            return None
+        completed = row.completed_at or row.created_at
+        from backend.utils.pdf_filename import pdf_download_filename
+        return {
+            "id": row.id,
+            "user_id": row.user_id,
+            "report": report,
+            "completed_at": completed,
+            "download_filename": pdf_download_filename(report, completed_at=completed),
+        }
+    finally:
+        db.close()
+
+
 def list_user_history(user_id: int, limit: int = 50) -> List[Dict[str, Any]]:
     db = SessionLocal()
     try:
