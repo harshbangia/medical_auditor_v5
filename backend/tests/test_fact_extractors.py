@@ -153,5 +153,65 @@ class ClaimDetailsExtractorTests(unittest.TestCase):
         self.assertIn("handwritten", facts["consultation_date_source"].lower())
 
 
+CASE165_LAB = """
+=== Source document: CURRENT INVESTIGATION REPORT.pdf ===
+DEPARTMENT OF BIOCHEMISTRY
+RECEIVING DATE: 24/06/2026
+REPORTING DATE: 24/06/2026
+Nibedita Health Care
+Gangapada Super Speciality Hospital Pvt. Ltd.
+"""
+
+CASE165_INDOOR = """
+=== Source document: INDOOR CASE PAPER.pdf ===
+INDOOR CASE PAPER
+WARD / BED NO: ICU-3
+Unstable Angina
+Trop-T positive
+chest discomfort x 3d
+Date & Time: 19/06/2026
+Gangapada Super Speciality Hospital Pvt. Ltd.
+"""
+
+CASE165_CT = """
+=== Source document: CT SCAN.pdf ===
+CT SCAN OF THORAX
+Date: 19/06/2026
+BED NO: ICU-3
+"""
+
+
+class Case165ClaimDetailsTests(unittest.TestCase):
+    def test_lab_receiving_date_not_admission(self):
+        facts = enrich_claim_facts(CASE165_LAB)
+        self.assertNotEqual(facts["date_of_admission"], "24/06/2026")
+        self.assertEqual(facts["date_of_admission"], "")
+
+    def test_indoor_case_not_preauth_label(self):
+        facts = enrich_claim_facts(CASE165_INDOOR)
+        prov = facts.get("date_provenance") or {}
+        sources = [
+            e.get("source_label", "")
+            for entries in prov.values()
+            for e in (entries or [])
+            if e.get("source_file") == "INDOOR CASE PAPER.pdf"
+        ]
+        self.assertTrue(sources)
+        self.assertTrue(any("Indoor Case" in s for s in sources))
+        self.assertFalse(any("Pre-Authorization" in s for s in sources))
+
+    def test_emergency_nature_and_gangapada_hospital(self):
+        case = CASE165_INDOOR + "\n" + CASE165_CT + "\n" + CASE165_LAB
+        facts = enrich_claim_facts(case)
+        self.assertEqual(facts["nature_of_admission"], "Emergency")
+        self.assertIn("Gangapada", facts["hospital"])
+
+    def test_icu_imaging_date_used_when_no_explicit_admission(self):
+        case = CASE165_CT + "\n" + CASE165_LAB
+        facts = enrich_claim_facts(case)
+        self.assertEqual(facts["date_of_admission"], "19/06/2026")
+        self.assertNotEqual(facts["date_of_admission"], "24/06/2026")
+
+
 if __name__ == "__main__":
     unittest.main()

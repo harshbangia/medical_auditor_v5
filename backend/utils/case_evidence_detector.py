@@ -54,6 +54,17 @@ _COPD_DIAGNOSIS_RE = re.compile(
 _FILENAME_ECG = re.compile(r"\becg\b|electrocardiogram", re.I)
 _FILENAME_ECHO = re.compile(r"\becho\b|echocardiograph", re.I)
 _FILENAME_CT = re.compile(r"\bct\s*scan\b|\bhrct\b", re.I)
+_PREAUTH_MARKERS = re.compile(
+    r"pre[\s-]?auth(?:orization)?|request\s+for\s+cashless|cashless\s+hospitalization",
+    re.I,
+)
+_EMERGENCY_MARKERS = re.compile(
+    r"\b(?:emergency|casualty|trauma|walk[\s-]?in)\b|unstable\s+angina|\bacs\b|"
+    r"trop-?[ti]\s*\+?|troponin|chest\s+discomfort",
+    re.I,
+)
+_SYMPTOM_CHEST_RE = re.compile(r"chest\s+discomfort\s*x\s*(\d+)\s*d", re.I)
+_SYMPTOM_FEVER_RE = re.compile(r"fever\s*(\d+)\s*[-–]\s*(\d+)\s*days", re.I)
 
 
 def _norm(s: str) -> str:
@@ -88,6 +99,45 @@ def extract_lab_values(case_text: str) -> Dict[str, str]:
     return labs
 
 
+def extract_symptom_durations(case_text: str) -> List[str]:
+    """Pull symptom-duration phrases from treatment sheets and consult notes."""
+    text = case_text or ""
+    durations: List[str] = []
+    m = _SYMPTOM_CHEST_RE.search(text)
+    if m:
+        durations.append(f"{m.group(1)} days (chest discomfort)")
+    m = _SYMPTOM_FEVER_RE.search(text)
+    if m:
+        durations.append(f"{m.group(1)}-{m.group(2)} days (fever)")
+    return list(dict.fromkeys(durations))
+
+
+def _dedupe_strings(items: List[str]) -> List[str]:
+    seen: set = set()
+    out: List[str] = []
+    for item in items:
+        key = _norm(str(item))
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(str(item))
+    return out
+
+
+def _dedupe_checklist(checklist: List[dict]) -> List[dict]:
+    seen: set = set()
+    out: List[dict] = []
+    for item in checklist:
+        if not isinstance(item, dict):
+            continue
+        key = _norm(item.get("area", ""))
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+    return out
+
+
 def detect_case_evidence(case_text: str) -> Dict[str, Any]:
     """Summarise what the uploaded case file actually documents."""
     text = case_text or ""
@@ -119,6 +169,8 @@ def detect_case_evidence(case_text: str) -> Dict[str, Any]:
         "has_mri_report": has_mri,
         "has_icu_care": has_icu,
         "has_copd_diagnosis": has_copd_dx,
+        "symptom_durations": extract_symptom_durations(text),
+        "has_preauth_form": bool(_PREAUTH_MARKERS.search(text)),
     }
 
 
@@ -228,6 +280,23 @@ def apply_case_evidence_corrections(result: dict, case_text: str) -> dict:
             "MRI report present in case file",
         )
 
+    result["clinical_checklist"] = _dedupe_checklist(checklist)
+
+    symptom_durations = evidence.get("symptom_durations") or []
+    if symptom_durations and isinstance(findings, list):
+        if not any(
+            "symptom duration" in _norm(f.get("parameter", ""))
+            for f in findings
+            if isinstance(f, dict)
+        ):
+            findings.append({
+                "parameter": "Symptom duration at presentation",
+                "value": "; ".join(symptom_durations),
+                "normal_range": "",
+                "comment": "From indoor case / treatment sheet",
+                "source": "INDOOR CASE PAPER.pdf",
+            })
+
     # --- Guideline deviations: retract false 'missing' claims ---
     deviations = result.get("guideline_deviations") or []
     if isinstance(deviations, list):
@@ -277,6 +346,7 @@ def apply_case_evidence_corrections(result: dict, case_text: str) -> dict:
         if evidence.get("has_cardiac_workup"):
             _remove_challenge(challenges, "cardiac evaluation")
             _remove_challenge(challenges, "angiography")
+        result["challenge_points"] = _dedupe_strings(challenges)
 
     # --- Observations referencing false gaps ---
     observations = result.get("observations") or []
@@ -325,17 +395,34 @@ def apply_case_evidence_corrections(result: dict, case_text: str) -> dict:
             if labs.get("creatinine"):
                 gap = _fix_creatinine_in_text_blob(str(gap), labs["creatinine"])
             filtered.append(gap)
-        result["documentation_gaps"] = filtered
+        result["documentation_gaps"] = _dedupe_strings(filtered)
+
+    # --- Pre-auth cross-check when no pre-auth form in packet ---
+    if not evidence.get("has_preauth_form"):
+        for obs in observations if isinstance(observations, list) else []:
+            if not isinstance(obs, dict):
+                continue
+            analysis = str(obs.get("analysis") or "")
+            if re.search(r"cross[\s-]?checked\s+with\s+pre[\s-]?auth\s*:\s*yes", analysis, re.I):
+                obs["analysis"] = re.sub(
+                    r"cross[\s-]?checked\s+with\s+pre[\s-]?auth\s*:\s*yes",
+                    "Pre-authorization form not present in uploaded case file",
+                    analysis,
+                    flags=re.I,
+                )
 
     # --- ICU / room category ---
-    if evidence.get("has_icu"):
+    if evidence.get("has_icu_care"):
         tba = result.setdefault("treatment_billing_audit", {})
         if not str(tba.get("room_category_admitted") or "").strip():
             tba["room_category_admitted"] = "ICU"
 
     # --- Nature of admission hint ---
     claim = result.setdefault("claim_details", {})
-    if _norm(claim.get("nature_of_admission", "")) in ("", "unknown"):
+    nature = _norm(claim.get("nature_of_admission", ""))
+    if _EMERGENCY_MARKERS.search(case_text):
+        claim["nature_of_admission"] = "Emergency"
+    elif nature in ("", "unknown"):
         if re.search(r"unstable\s+angina|\bacs\b|chest\s+discomfort", case_text, re.I):
             claim["nature_of_admission"] = "Emergency"
 
@@ -361,6 +448,9 @@ def format_case_evidence_block(case_text: str) -> str:
         flags.append("MRI report present")
     if evidence.get("has_icu_care"):
         flags.append("ICU care documented")
+    durations = evidence.get("symptom_durations") or []
+    if durations:
+        flags.append("symptom duration: " + "; ".join(durations))
     if not evidence.get("has_copd_diagnosis") and flags:
         lines.append(
             "Note: COPD/spirometry not clearly documented — do not treat as COPD case unless stated."
