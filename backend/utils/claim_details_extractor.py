@@ -15,8 +15,20 @@ _QUERY_LETTER_MARKERS = re.compile(
     re.I,
 )
 _PREAUTH_MARKERS = re.compile(
-    r"pre[\s-]?auth|cashless\s+hospitalization|request\s+for\s+cashless|"
-    r"date\s+of\s+first\s+consultation|date\s+of\s+admission",
+    r"pre[\s-]?auth(?:orization)?|request\s+for\s+cashless",
+    re.I,
+)
+_INDOOR_CASE_MARKERS = re.compile(
+    r"treatment\s+sheet|indoor\s+case|ward\s*/\s*bed\s+no|icu[\s-]?\d",
+    re.I,
+)
+_LAB_REPORT_MARKERS = re.compile(
+    r"department\s+of\s+(?:biochemistry|haematology|immunology|pathology)|"
+    r"receiving\s+date|reporting\s+date|end\s+of\s+report",
+    re.I,
+)
+_RADIOLOGY_MARKERS = re.compile(
+    r"ct\s+scan|hrct|echocardiography|consultant\s+radiologist|impression\s*:-",
     re.I,
 )
 _CLINICAL_MARKERS = re.compile(
@@ -42,6 +54,12 @@ _CONSULT_PATTERNS = [
     re.compile(rf"date\s*of\s*consultation\s*[:.]?\s*{_DATE_NUMERIC}", re.I),
     re.compile(rf"date\s*[:.]?\s*{_DATE_NUMERIC}\s*name\s*[:.]", re.I),
     re.compile(rf"body\s*:\s*date\s*[:.]?\s*{_DATE_NUMERIC}", re.I),
+    re.compile(rf"date\s*&\s*time\s*[:.]?\s*{_DATE_NUMERIC}", re.I),
+]
+
+_TREATMENT_SHEET_DATE_PATTERNS = [
+    re.compile(rf"date\s*&\s*time\s*[:.]?\s*{_DATE_NUMERIC}", re.I),
+    re.compile(rf"^date\s*[:.]?\s*{_DATE_NUMERIC}", re.I | re.M),
 ]
 
 _CLINICAL_CONSULT_BLOCK = re.compile(
@@ -63,11 +81,11 @@ _HOSPITAL_PATTERNS = [
     re.compile(r"name\s*of\s*the\s+hospital\s*[:.]?\s*([^\n]{5,80})", re.I),
 ]
 
-_ICU_ADMISSION_DATE_PATTERNS = [
-    re.compile(rf"receiving\s*date\s*[:.]?\s*{_DATE_NUMERIC}", re.I),
-    re.compile(rf"receiving\s*date\s*[:.]?\s*{_DATE_TEXT}", re.I),
-    re.compile(rf"date\s*[:.]?\s*{_DATE_NUMERIC}.*?bed\s*no\s*[:.]?\s*icu", re.I | re.S),
-    re.compile(rf"admitted\s+with\s+[^.\n]{{0,80}}\s*{_DATE_NUMERIC}", re.I),
+_ICU_IMAGING_DATE_PATTERNS = [
+    re.compile(
+        rf"date\s*[:.]?\s*{_DATE_NUMERIC}.{{0,200}}?bed\s*no\s*[:.]?\s*icu",
+        re.I | re.S,
+    ),
 ]
 
 _PROPOSED_HOSPITALIZATION_PATTERNS = [
@@ -220,8 +238,12 @@ def _classify_document(fname: str, text: str) -> str:
         bump("pre_auth", 12)
     if re.search(r"request\s+for\s+cashless|cashless\s+hospitalization", blob, re.I):
         bump("pre_auth", 6)
-    if re.search(r"date\s+of\s+first\s+consultation|date\s+of\s+admission", blob, re.I):
-        bump("pre_auth", 8)
+    if _LAB_REPORT_MARKERS.search(blob):
+        bump("lab_report", 14)
+    if _RADIOLOGY_MARKERS.search(blob):
+        bump("radiology", 14)
+    if _INDOOR_CASE_MARKERS.search(blob):
+        bump("indoor_case", 14)
     if _DISCHARGE_MARKERS.search(blob) and re.search(r"date\s*of\s*discharge\s*[:.]", blob, re.I):
         bump("discharge", 14)
     if _CLINICAL_MARKERS.search(blob) or re.search(r"consultation\s+note", blob, re.I):
@@ -233,6 +255,12 @@ def _classify_document(fname: str, text: str) -> str:
         bump("query_letter", 2)
     if re.search(r"pre[\s-]?auth|preauth", name):
         bump("pre_auth", 2)
+    if re.search(r"indoor\s+case|treatment", name):
+        bump("indoor_case", 4)
+    if re.search(r"investigation|lab", name):
+        bump("lab_report", 4)
+    if re.search(r"ct\s*scan|echo|ecg|mri|x-?ray|radiol", name):
+        bump("radiology", 4)
     if "discharge" in name:
         bump("discharge", 2)
     if re.search(r"clinical|consult", name):
@@ -242,14 +270,21 @@ def _classify_document(fname: str, text: str) -> str:
 
     if not scores:
         return "other"
+    # Indoor case charts often mention cashless/insurance — do not label them pre-auth.
+    if scores.get("indoor_case", 0) >= 10 and scores.get("pre_auth", 0) < 18:
+        scores.pop("pre_auth", None)
+    if not scores:
+        return "other"
     return max(scores.items(), key=lambda item: item[1])[0]
 
 
 def _document_medium(doc_type: str) -> str:
     if doc_type == "query_letter":
         return "computer-generated"
-    if doc_type in ("pre_auth", "clinical"):
+    if doc_type in ("pre_auth", "clinical", "indoor_case"):
         return "handwritten/scanned"
+    if doc_type in ("lab_report", "radiology"):
+        return "typed report"
     if doc_type == "discharge":
         return "typed or handwritten"
     return "document"
@@ -260,6 +295,9 @@ def _source_label(fname: str, doc_type: str) -> str:
     type_name = {
         "query_letter": "Query Letter",
         "pre_auth": "Pre-Authorization Form",
+        "indoor_case": "Indoor Case Paper / Treatment Sheet",
+        "lab_report": "Lab / Investigation Report",
+        "radiology": "Radiology / Imaging Report",
         "clinical": "Clinical Document",
         "discharge": "Discharge Summary",
         "bill": "Bill / Receipt",
@@ -312,14 +350,37 @@ def _extract_proposed_hospitalization(text: str, reference_year: Optional[int] =
 
 def _infer_nature_of_admission(text: str, doc_type: str) -> str:
     blob = text or ""
-    if re.search(r"\b(?:emergency|casualty|trauma|walk[\s-]?in)\b", blob, re.I):
+    if re.search(
+        r"\b(?:emergency|casualty|trauma|walk[\s-]?in)\b|unstable\s+angina|\bacs\b|"
+        r"trop-?[ti]\s*\+?|troponin|chest\s+discomfort",
+        blob,
+        re.I,
+    ):
         return "Emergency"
-    if doc_type in ("query_letter", "pre_auth") or re.search(
-        r"proposed\s*date\s*of\s*hospitalization|pre[\s-]?auth|elective|planned\s*admission",
+    if doc_type == "query_letter" or re.search(
+        r"proposed\s*date\s*of\s*hospitalization|elective|planned\s*admission",
         blob,
         re.I,
     ):
         return "Planned / Elective"
+    return ""
+
+
+def _extract_hospital(text: str) -> str:
+    gangapada = re.search(
+        r"(Gangapada\s+Super\s+Speciality\s+Hospital(?:\s+Pvt\.?\s+Ltd\.?)?[^\n]{0,40})",
+        text or "",
+        re.I,
+    )
+    if gangapada:
+        return re.sub(r"\s+", " ", gangapada.group(1).strip())
+    for pat in _HOSPITAL_PATTERNS:
+        m = pat.search(text or "")
+        if m:
+            name = re.sub(r"\s+", " ", m.group(1).strip())
+            low = name.lower()
+            if len(name) >= 8 and "patient" not in low and "request for cashless" not in low:
+                return name
     return ""
 
 
@@ -333,24 +394,15 @@ def _extract_room_category(text: str) -> str:
     return ""
 
 
-def _extract_hospital(text: str) -> str:
-    for pat in _HOSPITAL_PATTERNS:
-        m = pat.search(text or "")
-        if m:
-            name = re.sub(r"\s+", " ", m.group(1).strip())
-            low = name.lower()
-            if len(name) >= 8 and "patient" not in low and "request for cashless" not in low:
-                return name
-    return ""
-
-
 def _extract_admission_date(text: str, doc_type: str, reference_year: Optional[int]) -> str:
-    """Actual admission — ICU receiving dates and explicit admission lines."""
-    if doc_type == "query_letter":
+    """Actual admission only — never from lab receiving/reporting dates."""
+    if doc_type in ("query_letter", "lab_report"):
         return ""
     val = _first_match(_EXPLICIT_ADMISSION_PATTERNS, text, reference_year)
-    if not val:
-        val = _first_match(_ICU_ADMISSION_DATE_PATTERNS, text, reference_year)
+    if not val and doc_type == "indoor_case":
+        val = _first_match(_TREATMENT_SHEET_DATE_PATTERNS, text, reference_year)
+    if not val and doc_type == "radiology" and re.search(r"icu", text or "", re.I):
+        val = _first_match(_ICU_IMAGING_DATE_PATTERNS, text, reference_year)
     if val and not _is_plausible_for_claim(val, reference_year):
         return ""
     return val
@@ -364,7 +416,7 @@ def _extract_facts_for_document(
     doc_type = _classify_document(fname, text)
     clinical_dates = _clinical_consult_dates(text, reference_year) if doc_type == "clinical" else []
     consult = clinical_dates[0] if clinical_dates else ""
-    if not consult and doc_type in ("pre_auth", "other", "clinical"):
+    if not consult and doc_type in ("pre_auth", "indoor_case", "other", "clinical"):
         consult = _first_match(_CONSULT_PATTERNS, text, reference_year)
 
     admission = _extract_admission_date(text, doc_type, reference_year)
@@ -394,16 +446,20 @@ def _field_priority(doc_type: str, field: str) -> int:
     table = {
         "consultation_date": {
             "pre_auth": 100,
-            "clinical": 95,
+            "indoor_case": 95,
+            "clinical": 90,
             "query_letter": 40,
             "other": 30,
         },
         "date_of_admission": {
             "pre_auth": 100,
-            "clinical": 90,
-            "bill": 75,
-            "discharge": 70,
+            "indoor_case": 95,
+            "clinical": 88,
+            "radiology": 75,
+            "bill": 70,
+            "discharge": 65,
             "query_letter": 20,
+            "lab_report": 5,
             "other": 30,
         },
         "proposed_hospitalization_date": {
@@ -419,14 +475,18 @@ def _field_priority(doc_type: str, field: str) -> int:
         },
         "hospital": {
             "query_letter": 100,
+            "lab_report": 90,
             "pre_auth": 80,
+            "indoor_case": 75,
             "clinical": 70,
+            "radiology": 70,
             "bill": 60,
         },
         "nature_of_admission": {
-            "pre_auth": 100,
+            "indoor_case": 100,
+            "pre_auth": 95,
+            "clinical": 80,
             "query_letter": 90,
-            "clinical": 20,
         },
         "room_category_eligible": {
             "pre_auth": 90,
@@ -516,6 +576,8 @@ def _detect_date_discrepancies(
 
         by_canonical: Dict[str, List[Dict[str, str]]] = {}
         for entry in entries:
+            if field == "date_of_admission" and entry.get("document_type") == "lab_report":
+                continue
             canon = _canonical_date_key(entry["value"], reference_year)
             if not canon:
                 continue
@@ -667,7 +729,18 @@ def enrich_claim_facts(
         value, _source = _pick_best_candidate(candidates)
         result[field] = value
 
-    if not result["nature_of_admission"] and (result["date_of_admission"] or result["proposed_hospitalization_date"]):
+    for fname, facts, doc_type in per_source:
+        gangapada = facts.get("hospital", "")
+        if gangapada and "gangapada" in gangapada.lower():
+            result["hospital"] = gangapada
+            break
+
+    emergency_nature = _infer_nature_of_admission(case_text, "other")
+    if emergency_nature == "Emergency":
+        result["nature_of_admission"] = "Emergency"
+    elif not result["nature_of_admission"] and (
+        result["date_of_admission"] or result["proposed_hospitalization_date"]
+    ):
         result["nature_of_admission"] = "Planned / Elective"
 
     return result
