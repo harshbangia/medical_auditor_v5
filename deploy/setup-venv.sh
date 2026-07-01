@@ -21,6 +21,10 @@ pip install --upgrade pip
 pip install -r requirements.txt
 
 echo ""
+echo "DB init:"
+echo "  source venv/bin/activate && python backend/db/init_db.py"
+echo "  source venv/bin/activate && python scripts/create_user.py admin@example.com pass admin"
+echo ""
 echo "Done. Activate with: source $ROOT/venv/bin/activate"
 echo "Backend:  $ROOT/venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 8000"
 echo "Streamlit: $ROOT/venv/bin/streamlit run frontend/app.py"
