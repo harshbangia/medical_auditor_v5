@@ -282,6 +282,7 @@ def _build_audit_prompt(
     clinical_synthesis: str = "",
     claim_facts_block: str = "",
     guidelines_used: Optional[List[str]] = None,
+    case_evidence_block: str = "",
 ) -> str:
     imaging_block = image_analysis.strip() or "No clinical images were extracted from uploaded PDFs."
     has_images = bool(image_analysis.strip())
@@ -390,12 +391,17 @@ Before finalising JSON, self-check: every clinical_findings row appears verbatim
 in at least one observations[].analysis block.
 
 clinical_checklist rules:
-- Mark "MRI Report" as YES if a typed MRI/radiology report with IMPRESSION is in the case text.
+- Mark "MRI Report" as YES only when an MRI (not CT/HRCT) report is in the case file.
+- Mark "CT Scan Report" as YES when CT/HRCT thorax report with impression is present.
+- Mark "Antibiotic Therapy" as YES when antibiotics are prescribed or culture/sensitivity is reported.
+- Mark "Cardiac Assessment" as YES when ECG, echocardiography, troponin, Holter, or CAG planning is documented.
 - Mark "Medication Trials" as YES if prescription documents Zenoxa/Tegretol/Lyrica etc.
 - Do NOT mark medication trials NO when oxcarbazepine/carbamazepine brands are in prescriptions.
+- Adult serum creatinine is typically 0.5–15 mg/dl; if OCR shows >15, re-read the lab report for a decimal point (e.g. 1.9 not 19).
+- Do NOT challenge missing spirometry unless COPD is explicitly diagnosed in the case documents.
 
 Typed MRI in case text: if IMPRESSION mentions neurovascular conflict / grade III, populate
-imaging_findings from that report — do NOT claim MRI report is missing.
+imaging_findings from that report — do NOT claim MRI report is missing when CT/HRCT is present instead.
 
 {"Clinical images WERE analyzed — use IMAGE ANALYSIS below as imaging evidence." if has_images else "No image analysis available — flag missing imaging in documentation_gaps if clinically required by guideline."}
 
@@ -434,6 +440,8 @@ Return ONLY JSON:
 {insurance_facts_block}
 
 {claim_facts_block}
+
+{case_evidence_block}
 
 {clinical_synthesis}
 
@@ -486,6 +494,7 @@ def run_audit(
     insurance_facts=None,
     clinical_synthesis=None,
     claim_facts=None,
+    case_evidence_block=None,
 ):
     """
     Run adversarial audit. Pass image_analysis_text if already computed (pipeline parallelism).
@@ -517,6 +526,9 @@ def run_audit(
     insurance_block = _format_insurance_facts_block(insurance_facts or {})
     claim_block = _format_claim_facts_block(claim_facts or {})
     synthesis_block = (clinical_synthesis or "").strip()
+    if case_evidence_block is None:
+        from backend.utils.case_evidence_detector import format_case_evidence_block
+        case_evidence_block = format_case_evidence_block(case_text)
 
     prompt = _build_audit_prompt(
         case_context,
@@ -527,6 +539,7 @@ def run_audit(
         insurance_facts_block=insurance_block,
         clinical_synthesis=synthesis_block,
         claim_facts_block=claim_block,
+        case_evidence_block=case_evidence_block or "",
         guidelines_used=guidelines_used,
     )
 

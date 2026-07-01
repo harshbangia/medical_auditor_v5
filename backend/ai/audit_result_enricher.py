@@ -13,10 +13,11 @@ from typing import Any, Dict, List, Optional
 from backend.ai.clinical_synthesizer import synthesize_clinical_visits
 from backend.ai.drug_normalizer import build_medication_evidence_section, find_brands_in_text
 from backend.utils.claim_details_extractor import merge_claim_details_into_result, enrich_claim_facts
+from backend.utils.case_evidence_detector import apply_case_evidence_corrections
 from backend.utils.insurance_extractor import merge_insurance_into_result, _extract_policy_period
 
 _MRI_REPORT_RE = re.compile(
-    r"mri\s+report|impression\s*:|neurovascular\s+conflict|grade\s+iii",
+    r"\bmri\s+(?:brain|spine|report|of\s+)|neurovascular\s+conflict|grade\s+iii",
     re.I,
 )
 _ANTINEURALGIC_BRANDS = {
@@ -324,5 +325,6 @@ def enrich_audit_result(
     _seed_clinical_findings_from_visits(result, case_text)
     _fix_mri_documentation(result, case_text)
     _fix_medication_documentation(result, case_text)
+    apply_case_evidence_corrections(result, case_text)
     _ensure_observations_echo_clinical_findings(result)
     return result
