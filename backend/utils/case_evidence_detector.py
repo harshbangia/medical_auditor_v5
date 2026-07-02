@@ -180,15 +180,62 @@ def _dedupe_checklist(checklist: List[dict]) -> List[dict]:
     return out
 
 
+_NON_CLINICAL_DOC_RE = re.compile(
+    r"wording|guideline|policy\s+wording|terms\s+and\s+conditions|schedule\s+of\s+benefits",
+    re.I,
+)
+
+
+def _is_non_clinical_document(fname: str, body: str) -> bool:
+    name = (fname or "").lower()
+    if _NON_CLINICAL_DOC_RE.search(name):
+        return True
+    head = (body or "")[:2500].lower()
+    if re.search(r"policy\s+wording|schedule\s+of\s+benefits|general\s+terms|exclusions\s+apply", head):
+        return True
+    doc_type = _classify_document(fname, body)
+    if doc_type == "policy":
+        return True
+    return False
+
+
+def clinical_case_text(case_text: str) -> str:
+    """Case text with policy wordings and clinical guidelines removed."""
+    blocks = _split_source_blocks(case_text)
+    if not blocks:
+        return case_text or ""
+    kept = [
+        body for fname, body in blocks
+        if not _is_non_clinical_document(fname, body)
+    ]
+    return "\n\n".join(kept) if kept else (case_text or "")
+
+
+def _has_clinical_mri_report(case_text: str) -> bool:
+    for fname, body in _split_source_blocks(case_text):
+        if _is_non_clinical_document(fname, body):
+            continue
+        doc_type = _classify_document(fname, body)
+        if doc_type not in ("radiology", "clinical", "indoor_case", "pre_auth", "discharge"):
+            continue
+        if _MRI_REPORT_RE.search(body) and re.search(
+            r"mri\s+(?:brain|spine|report|of\s+)|magnetic\s+resonance\s+imaging\s+report",
+            body,
+            re.I,
+        ):
+            return True
+    return False
+
+
 def detect_case_evidence(case_text: str) -> Dict[str, Any]:
     """Summarise what the uploaded case file actually documents."""
-    text = case_text or ""
+    text = clinical_case_text(case_text)
     low = text.lower()
 
     has_antibiotics = bool(_ANTIBIOTIC_MARKERS.search(text))
     has_cardiac = bool(_CARDIAC_MARKERS.search(text))
     has_ct = bool(_CT_REPORT_RE.search(text)) or bool(_FILENAME_CT.search(text))
-    has_mri = bool(_MRI_REPORT_RE.search(text))
+    has_mri = _has_clinical_mri_report(case_text)
     has_icu = bool(_ICU_MARKERS.search(text))
     has_copd_dx = bool(_COPD_DIAGNOSIS_RE.search(text))
 
@@ -421,6 +468,26 @@ def apply_case_evidence_corrections(result: dict, case_text: str) -> dict:
             "YES",
             "MRI report present in case file",
         )
+    else:
+        _set_checklist(
+            ["MRI Report"],
+            "NO",
+            "No MRI report in uploaded clinical records",
+        )
+        imaging = result.get("imaging_findings") or []
+        if isinstance(imaging, list):
+            result["imaging_findings"] = [
+                item for item in imaging
+                if isinstance(item, dict) and "mri" not in _norm(item.get("type", ""))
+            ]
+        for dev in result.get("guideline_deviations") or []:
+            if not isinstance(dev, dict):
+                continue
+            if "mri" in _norm(dev.get("issue", "")) and not evidence.get("has_ct_report"):
+                _downgrade_deviation(
+                    dev,
+                    "No MRI report attached in submitted records; remove MRI-specific references.",
+                )
 
     result["clinical_checklist"] = _dedupe_checklist(checklist)
 

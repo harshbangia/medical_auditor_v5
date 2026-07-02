@@ -98,6 +98,7 @@ _MEMBER_RE = re.compile(
     r"member\s*(?:code|id|no|number)?\s*[:.]?\s*([A-Z0-9][A-Z0-9\-/]{4,})",
     re.I,
 )
+_MEMBER_POLICY_BASE_RE = re.compile(r"^([A-Z]?\d{5,})")
 
 _BAD_INSURANCE_VALUES = {
     "policy_number": _POLICY_FALSE_POSITIVES | {"", "-", "—", "na", "n/a", "not available", "unknown"},
@@ -245,19 +246,37 @@ def extract_insurance_from_text(text: str, source: str = "") -> Dict[str, str]:
 
     m = _MEMBER_RE.search(text)
     if m:
-        facts["member_code"] = m.group(1).strip()
+        member = m.group(1).strip()
+        facts["member_code"] = member
+        base = _MEMBER_POLICY_BASE_RE.match(member)
+        if base and not facts["policy_number"]:
+            facts["policy_number"] = base.group(1)
 
     return facts
 
 
+def _is_policy_wording_source(filename: str, text: str) -> bool:
+    name = (filename or "").lower()
+    blob = (text or "").lower()
+    if "wording" in name or "terms and conditions" in name:
+        return True
+    if re.search(r"policy\s+wording|schedule\s+of\s+benefits|general\s+terms", blob):
+        return True
+    return False
+
+
 def _source_priority(filename: str, text: str) -> int:
     name = (filename or "").lower()
+    if _is_policy_wording_source(filename, text):
+        return 15
     if "query" in name or "querr" in name or _INSURANCE_LETTER_MARKERS.search(text or ""):
         return 100
+    if "schedule" in name or re.search(r"tax\s+invoice|period\s+of\s+insurance", text or "", re.I):
+        return 110
     if "policy" in name:
         return 90
     if "pre auth" in name or "preauth" in name:
-        return 70
+        return 85
     return 50
 
 

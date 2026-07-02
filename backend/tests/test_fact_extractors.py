@@ -234,5 +234,64 @@ Date & Time: 24/06/2026
         self.assertEqual(facts["consultation_date"], "")
 
 
+CASE68_QUERY = """
+=== Source document: query_letter.pdf ===
+QUERY LETTER    Date: 24 Jun 2026  Claim Incident : 2026062400280
+Member Code : H1486808-3-1
+Policy No : H1486808
+Patient Name Vasudha Dnyanoba Bokde
+"""
+
+CASE68_POLICY_WORDING = """
+=== Source document: Family Health Protector Policy Wording.pdf ===
+Family Health Protector Policy Wording
+MRI and CT scan coverage as per policy terms and magnetic resonance imaging benefits.
+"""
+
+CASE68_BILL = """
+=== Source document: hospital_bill.pdf ===
+Hospital Name: Ruby Hall Clinic
+FINAL BILL SUMMARY
+Total Hospital Bill: Rs. 1,45,680.00
+Net Payable Amount: Rs. 1,40,000.00
+"""
+
+CASE68_PREAUTH = """
+=== Source document: preauth.pdf ===
+REQUEST FOR CASHLESS HOSPITALIZATION
+Name of the Hospital: Ruby Hall Clinic
+Date of first consultation: 15/03/2026
+Policy No : H1486808
+"""
+
+
+class Case68ExtractorTests(unittest.TestCase):
+    def test_policy_number_from_member_code(self):
+        facts = extract_insurance_from_text(CASE68_QUERY)
+        self.assertEqual(facts["policy_number"], "H1486808")
+
+    def test_policy_wording_does_not_override_schedule(self):
+        combined = CASE68_QUERY + "\n" + CASE68_POLICY_WORDING
+        facts = enrich_insurance_facts(combined)
+        self.assertEqual(facts["policy_number"], "H1486808")
+
+    def test_hospital_and_bill_from_documents(self):
+        case = CASE68_PREAUTH + "\n" + CASE68_BILL
+        facts = enrich_claim_facts(case)
+        self.assertIn("Ruby Hall", facts["hospital"])
+        self.assertIn("Rs.", facts["total_hospital_bill"])
+
+    def test_consult_date_not_query_letter_header(self):
+        case = CASE68_QUERY + "\n" + CASE68_PREAUTH
+        facts = enrich_claim_facts(case)
+        self.assertEqual(facts["consultation_date"], "15/03/2026")
+
+    def test_merge_financial_review_from_bill(self):
+        facts = enrich_claim_facts(CASE68_BILL)
+        result = {"claim_details": {}, "financial_review": {}}
+        merge_claim_details_into_result(result, facts)
+        self.assertIn("Rs.", result["financial_review"]["total_hospital_bill"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -194,6 +194,43 @@ class CaseEvidenceDetectorTests(unittest.TestCase):
         self.assertEqual(fixed["observations"][0]["answer"], "Partially Supported")
         self.assertIn("ECG", fixed["observations"][0]["analysis"])
 
+    def test_policy_wording_mri_not_counted_as_report(self):
+        case = """
+=== Source document: Family Health Protector Policy Wording.pdf ===
+MRI and magnetic resonance imaging are covered under this policy wording.
+=== Source document: clinical_note.pdf ===
+Patient admitted with chest pain. CT scan report attached.
+"""
+        evidence = detect_case_evidence(case)
+        self.assertFalse(evidence["has_mri_report"])
+
+    def test_strips_hallucinated_mri_from_imaging_findings(self):
+        case = """
+=== Source document: policy_wording.pdf ===
+MRI coverage terms in policy wording document.
+=== Source document: notes.pdf ===
+Clinical notes only.
+"""
+        result = {
+            "clinical_checklist": [],
+            "imaging_findings": [
+                {"type": "MRI Brain", "finding": "Normal", "clinical_correlation": "", "consistency_with_diagnosis": ""},
+            ],
+            "guideline_deviations": [
+                {"issue": "Missing MRI documentation", "case_evidence": "No MRI", "severity": "High"},
+            ],
+            "claim_details": {},
+            "treatment_billing_audit": {},
+        }
+        fixed = apply_case_evidence_corrections(result, case)
+        self.assertFalse(any("mri" in (i.get("type") or "").lower() for i in fixed["imaging_findings"]))
+        mri_rows = [
+            i for i in fixed["clinical_checklist"]
+            if isinstance(i, dict) and "mri" in (i.get("area") or "").lower()
+        ]
+        self.assertTrue(mri_rows)
+        self.assertEqual(mri_rows[0]["available"], "NO")
+
 
 if __name__ == "__main__":
     unittest.main()
