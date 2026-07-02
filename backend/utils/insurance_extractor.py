@@ -149,6 +149,10 @@ def _is_valid_policy_number(val: str) -> bool:
         return False
     if val.lower() in _POLICY_FALSE_POSITIVES:
         return False
+    if not re.fullmatch(r"[A-Z0-9][A-Z0-9\-/]{4,}", val, re.I):
+        return False
+    if re.search(r"[\s|_\[\]{}\\]", val):
+        return False
     if not re.search(r"\d", val):
         return False
     if val.isalpha():
@@ -432,6 +436,11 @@ def _should_overwrite_insurance_field(field: str, current: str, extracted: str) 
         return False
     cur = str(current or "").strip()
     bad = _BAD_INSURANCE_VALUES.get(field, set())
+    if field == "policy_number":
+        if not _is_valid_policy_number(extracted):
+            return False
+        if _is_valid_policy_number(cur) and not _should_overwrite_insurance_field_score(cur, extracted):
+            return False
     if not cur or cur.lower() in bad:
         return True
     if field == "policy_number" and cur.lower() in _POLICY_FALSE_POSITIVES:
@@ -439,6 +448,21 @@ def _should_overwrite_insurance_field(field: str, current: str, extracted: str) 
     if field == "policy_period" and not cur:
         return True
     return False
+
+
+def _should_overwrite_insurance_field_score(current: str, extracted: str) -> bool:
+    """Prefer member-code style policy IDs over noisy OCR fragments."""
+    def score(val: str) -> int:
+        s = 0
+        if re.fullmatch(r"[A-Z]\d{6,}(?:-\d+-\d+)?", val, re.I):
+            s += 50
+        if re.fullmatch(r"[A-Z]\d{5,}", val, re.I):
+            s += 30
+        if re.search(r"[\s|_\[\]{}\\]", val):
+            s -= 40
+        return s
+
+    return score(extracted) > score(current)
 
 
 def merge_insurance_into_result(result: dict, facts: Dict[str, str]) -> dict:
