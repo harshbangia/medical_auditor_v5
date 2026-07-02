@@ -13,7 +13,11 @@ from typing import Any, Dict, List, Optional
 from backend.ai.clinical_synthesizer import synthesize_clinical_visits
 from backend.ai.drug_normalizer import build_medication_evidence_section, find_brands_in_text
 from backend.utils.claim_details_extractor import merge_claim_details_into_result, enrich_claim_facts
-from backend.utils.case_evidence_detector import apply_case_evidence_corrections
+from backend.utils.case_evidence_detector import (
+    apply_case_evidence_corrections,
+    clinical_case_text,
+    _has_clinical_mri_report,
+)
 from backend.utils.insurance_extractor import merge_insurance_into_result, _extract_policy_period
 
 _MRI_REPORT_RE = re.compile(
@@ -113,7 +117,11 @@ def _seed_clinical_findings_from_visits(result: dict, case_text: str) -> None:
 
 
 def _fix_mri_documentation(result: dict, case_text: str) -> None:
-    if not _MRI_REPORT_RE.search(case_text or ""):
+    if not _has_clinical_mri_report(case_text):
+        return
+
+    scoped = clinical_case_text(case_text)
+    if not _MRI_REPORT_RE.search(scoped or ""):
         return
 
     imaging = result.setdefault("imaging_findings", [])
@@ -125,7 +133,7 @@ def _fix_mri_documentation(result: dict, case_text: str) -> None:
         finding = "Neurovascular conflict"
         m = re.search(
             r"grade\s+iii\s+neurovascular\s+conflict|neurovascular\s+conflict",
-            case_text,
+            scoped,
             re.I,
         )
         if m:

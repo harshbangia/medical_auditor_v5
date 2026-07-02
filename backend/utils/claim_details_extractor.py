@@ -88,8 +88,35 @@ _HOSPITAL_PATTERNS = [
     re.compile(r"(Kokilaben\s+Dhirubh?ai\s+Ambani\s+Hospital[^\n]{0,80})", re.I),
     re.compile(r"(Gangapada\s+Super\s+Speciality\s+Hospital[^\n]{0,60})", re.I),
     re.compile(r"(Nibedita\s+Health\s+Care[^\n]{0,60})", re.I),
+    re.compile(
+        r"(?:hospital\s*name|name\s*of\s*(?:the\s+)?hospital|treating\s+hospital|"
+        r"provider\s*name|name\s*of\s*provider)\s*[:.]?\s*([^\n]{5,100})",
+        re.I,
+    ),
     re.compile(r"name\s*of\s*the\s+hospital\s*[:.]?\s*([^\n]{5,80})", re.I),
+    re.compile(
+        r"\b((?:[A-Z][A-Za-z.&'()-]+(?:\s+[A-Z][A-Za-z.&'()-]+){0,6})\s+"
+        r"Hospital(?:\s+(?:&|and)\s+[A-Za-z.&'() \-]{3,60})?)\b",
+    ),
 ]
+
+_TOTAL_BILL_PATTERNS = [
+    re.compile(
+        r"(?:total\s*(?:hospital\s+)?(?:bill|amount|charges?)|grand\s*total|"
+        r"net\s*(?:amount|payable|bill)|amount\s*(?:claimed|payable|due))\s*[:.]?\s*"
+        r"(?:rs\.?|inr|₹)?\s*([\d,]+(?:\.\d{1,2})?)",
+        re.I,
+    ),
+    re.compile(
+        r"(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d{1,2})?)\s*/?\s*-?\s*(?:only)?",
+        re.I,
+    ),
+]
+
+_QUERY_LETTER_HEADER_DATE = re.compile(
+    r"query\s*letter.*?date\s*[:.]?\s*(\d{1,2}\s+\w+\s+\d{4})",
+    re.I | re.S,
+)
 
 _ICU_IMAGING_DATE_PATTERNS = [
     re.compile(
@@ -264,6 +291,8 @@ def _classify_document(fname: str, text: str) -> str:
         bump("clinical", 10)
     if re.search(r"bill|invoice|receipt|amount\s+paid", blob, re.I):
         bump("bill", 8)
+    if re.search(r"policy\s+wording|schedule\s+of\s+benefits|general\s+terms", blob, re.I):
+        bump("policy", 14)
 
     if re.search(r"query|querr", name):
         bump("query_letter", 2)
@@ -387,8 +416,46 @@ def _extract_hospital(text: str) -> str:
             name = re.sub(r"\s+", " ", m.group(1).strip())
             low = name.lower()
             if len(name) >= 8 and "patient" not in low and "request for cashless" not in low:
-                return name
+                if not re.search(r"^(?:date|policy|member|claim)\b", low):
+                    return name
     return ""
+
+
+def _format_inr_amount(raw: str) -> str:
+    val = (raw or "").replace(",", "").strip()
+    if not val or not re.fullmatch(r"\d+(?:\.\d{1,2})?", val):
+        return ""
+    num = float(val)
+    if num < 100:
+        return ""
+    formatted = f"{num:,.2f}".rstrip("0").rstrip(".")
+    if "." in formatted:
+        parts = formatted.split(".")
+        parts[0] = parts[0].replace(",", "")
+        parts[0] = f"{int(parts[0]):,}"
+        formatted = ".".join(parts)
+    else:
+        formatted = f"{int(num):,}"
+    return f"Rs. {formatted}"
+
+
+def _extract_bill_amount(text: str) -> str:
+    """Best-effort total from hospital bill / invoice text."""
+    if not text or not re.search(r"bill|invoice|receipt|charges|payable", text, re.I):
+        return ""
+    best = ""
+    best_val = 0.0
+    for pat in _TOTAL_BILL_PATTERNS:
+        for m in pat.finditer(text):
+            raw = m.group(1).replace(",", "")
+            try:
+                val = float(raw)
+            except ValueError:
+                continue
+            if val > best_val:
+                best_val = val
+                best = raw
+    return _format_inr_amount(best) if best else ""
 
 
 def _extract_room_category(text: str) -> str:
@@ -466,6 +533,7 @@ def _extract_facts_for_document(
         "proposed_hospitalization_date": proposed,
         "date_of_discharge": discharge,
         "hospital": _extract_hospital(text),
+        "total_hospital_bill": _extract_bill_amount(text),
         "nature_of_admission": _infer_nature_of_admission(text, doc_type),
         "room_category_eligible": _extract_room_category(text),
         "_doc_type": doc_type,
@@ -515,7 +583,13 @@ def _field_priority(doc_type: str, field: str) -> int:
             "discharge": 85,
             "radiology": 50,
             "lab_report": 30,
-            "bill": 60,
+            "bill": 85,
+        },
+        "total_hospital_bill": {
+            "bill": 100,
+            "pre_auth": 40,
+            "discharge": 70,
+            "other": 20,
         },
         "nature_of_admission": {
             "indoor_case": 100,
@@ -724,6 +798,35 @@ def _sanitize_consultation_date(
         result["consultation_date_source"] = ""
         return
 
+    provenance = result.get("date_provenance") or {}
+    consult_entries = provenance.get("consultation_date") or []
+    if consult_entries:
+        matching = [e for e in consult_entries if e.get("value") == consult]
+        if matching and all(e.get("document_type") == "query_letter" for e in matching):
+            if not re.search(r"first\s+consultation|date\s+of\s+consultation", case_text or "", re.I):
+                result["consultation_date"] = ""
+                result["consultation_date_source"] = ""
+                return
+    else:
+        matching_types = [
+            doc_type for _fname, facts, doc_type in per_source
+            if facts.get("consultation_date") == consult
+        ]
+        if matching_types and all(dt == "query_letter" for dt in matching_types):
+            if not re.search(r"first\s+consultation|date\s+of\s+consultation", case_text or "", re.I):
+                result["consultation_date"] = ""
+                result["consultation_date_source"] = ""
+                return
+
+    ql_match = _QUERY_LETTER_HEADER_DATE.search(case_text or "")
+    if ql_match:
+        ql_parsed = _parse_flexible_date(ql_match.group(1).strip(), reference_year)
+        ql_key = ql_parsed.strftime("%Y-%m-%d") if ql_parsed else ""
+        if ql_key and ql_key == consult_key:
+            result["consultation_date"] = ""
+            result["consultation_date_source"] = ""
+            return
+
     admission_key = _canonical_date_key(result.get("date_of_admission", ""), reference_year)
     if not admission_key or not consult_key:
         return
@@ -783,6 +886,7 @@ def enrich_claim_facts(
         "hospital": "",
         "nature_of_admission": "",
         "room_category_eligible": "",
+        "total_hospital_bill": "",
         "date_provenance": provenance,
         "all_document_dates": all_document_dates,
         "date_discrepancies": discrepancies,
@@ -797,7 +901,7 @@ def enrich_claim_facts(
         result[field] = value
         result[f"{field}_source"] = source
 
-    for field in ("hospital", "nature_of_admission", "room_category_eligible"):
+    for field in ("hospital", "nature_of_admission", "room_category_eligible", "total_hospital_bill"):
         candidates = [
             (facts.get(field, ""), _field_priority(doc_type, field), fname, doc_type)
             for fname, facts, doc_type in per_source
@@ -877,6 +981,13 @@ def merge_claim_details_into_result(result: dict, facts: Dict[str, Any]) -> dict
         current = str(tba.get("room_category_eligible") or "").strip()
         if not current or current.lower() in _UNKNOWN_ADMISSION:
             tba["room_category_eligible"] = room
+
+    bill_total = facts.get("total_hospital_bill", "")
+    if bill_total:
+        fin = result.setdefault("financial_review", {})
+        current_bill = str(fin.get("total_hospital_bill") or "").strip()
+        if not current_bill or current_bill.lower() in _UNKNOWN_ADMISSION:
+            fin["total_hospital_bill"] = bill_total
 
     if claim.get("date_of_admission") and not claim.get("date_of_discharge"):
         gaps = result.setdefault("documentation_gaps", [])
