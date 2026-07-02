@@ -60,7 +60,19 @@ def _findings_contain(clinical_findings: List[dict], needle: str) -> bool:
 
 
 def _seed_clinical_findings_from_visits(result: dict, case_text: str) -> None:
-    visits = synthesize_clinical_visits(case_text)
+    scoped = clinical_case_text(case_text)
+    brands = [b for b in find_brands_in_text(scoped) if b.lower() in _ANTINEURALGIC_BRANDS]
+    diag = _norm(str((result.get("claim_details") or {}).get("diagnosis", "")))
+    tn_case = bool(
+        brands
+        or "neuralgia" in diag
+        or "trigeminal" in diag
+        or re.search(r"\btrigeminal\s+neuralgia\b", scoped, re.I)
+    )
+    if not tn_case:
+        return
+
+    visits = synthesize_clinical_visits(scoped)
     if not visits:
         return
 
@@ -79,7 +91,7 @@ def _seed_clinical_findings_from_visits(result: dict, case_text: str) -> None:
         v["follow_up_after"] for v in visits if v.get("follow_up_after")
     ))
 
-    brands = find_brands_in_text(case_text)
+    brands = find_brands_in_text(scoped)
     antineuralgic = [b.capitalize() for b in brands if b.lower() in _ANTINEURALGIC_BRANDS]
     med_comment = ", ".join(antineuralgic) + " prescribed" if antineuralgic else "From prescription pages"
 
@@ -87,7 +99,7 @@ def _seed_clinical_findings_from_visits(result: dict, case_text: str) -> None:
         findings.append(_clinical_row(
             "Symptom duration at presentation",
             symptom_vals[0],
-            "Facial/trigeminal pain duration at first consult",
+            "Symptom duration documented at consultation",
             "Handwritten consultation note",
         ))
 

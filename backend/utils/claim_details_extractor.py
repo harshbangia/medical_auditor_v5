@@ -107,11 +107,9 @@ _TOTAL_BILL_PATTERNS = [
         r"(?:rs\.?|inr|₹)?\s*([\d,]+(?:\.\d{1,2})?)",
         re.I,
     ),
-    re.compile(
-        r"(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d{1,2})?)\s*/?\s*-?\s*(?:only)?",
-        re.I,
-    ),
 ]
+
+_MIN_HOSPITAL_BILL_INR = 5000
 
 _QUERY_LETTER_HEADER_DATE = re.compile(
     r"query\s*letter.*?date\s*[:.]?\s*(\d{1,2}\s+\w+\s+\d{4})",
@@ -409,15 +407,44 @@ def _infer_nature_of_admission(text: str, doc_type: str) -> str:
     return ""
 
 
+def _looks_like_ocr_garbage(val: str) -> bool:
+    v = (val or "").strip()
+    if not v:
+        return True
+    if re.search(r"[|\[\]{}\\^=`~]", v):
+        return True
+    clean = sum(c.isalnum() or c.isspace() or c in ".&'/-()," for c in v)
+    if clean / max(len(v), 1) < 0.82:
+        return True
+    words = re.findall(r"[A-Za-z]{3,}", v)
+    return len(words) == 0
+
+
+def _is_plausible_hospital_name(val: str) -> bool:
+    v = (val or "").strip()
+    if len(v) < 6 or len(v) > 120:
+        return False
+    if _looks_like_ocr_garbage(v):
+        return False
+    low = v.lower()
+    if any(tok in low for tok in ("hospital", "clinic", "nursing", "medical", "health", "institute")):
+        return True
+    words = re.findall(r"[A-Z][A-Za-z.&'()-]{2,}", v)
+    return len(words) >= 2
+
+
 def _extract_hospital(text: str) -> str:
     for pat in _HOSPITAL_PATTERNS:
         m = pat.search(text or "")
         if m:
             name = re.sub(r"\s+", " ", m.group(1).strip())
+            name = re.split(r"\s+(?:where|date|policy|member|claim)\b", name, maxsplit=1, flags=re.I)[0]
+            name = name.strip(" .-|([")
             low = name.lower()
             if len(name) >= 8 and "patient" not in low and "request for cashless" not in low:
                 if not re.search(r"^(?:date|policy|member|claim)\b", low):
-                    return name
+                    if _is_plausible_hospital_name(name):
+                        return name
     return ""
 
 
@@ -455,6 +482,8 @@ def _extract_bill_amount(text: str) -> str:
             if val > best_val:
                 best_val = val
                 best = raw
+    if best_val < _MIN_HOSPITAL_BILL_INR:
+        return ""
     return _format_inr_amount(best) if best else ""
 
 
@@ -926,6 +955,31 @@ def _should_overwrite_claim_field(current: str, extracted: str) -> bool:
     return bool(extracted and not _is_bad_date(extracted))
 
 
+def _should_overwrite_hospital(current: str, extracted: str) -> bool:
+    if not extracted or not _is_plausible_hospital_name(extracted):
+        return False
+    cur = str(current or "").strip()
+    if not cur or cur.lower() in _UNKNOWN_ADMISSION or _looks_like_ocr_garbage(cur):
+        return True
+    if _is_plausible_hospital_name(cur):
+        return False
+    return True
+
+
+def _should_overwrite_bill_total(current: str, extracted: str) -> bool:
+    if not extracted:
+        return False
+    cur = str(current or "").strip()
+    if not cur or cur.lower() in _UNKNOWN_ADMISSION:
+        return True
+    try:
+        cur_num = float(re.sub(r"[^\d.]", "", cur.replace(",", "")) or "0")
+        ext_num = float(re.sub(r"[^\d.]", "", extracted.replace(",", "")) or "0")
+    except ValueError:
+        return True
+    return ext_num >= cur_num
+
+
 def _should_overwrite_admission_nature(current: str, extracted: str) -> bool:
     if not extracted:
         return False
@@ -949,6 +1003,9 @@ def merge_claim_details_into_result(result: dict, facts: Dict[str, Any]) -> dict
             continue
         if key == "nature_of_admission":
             if _should_overwrite_admission_nature(str(claim.get(key) or ""), val):
+                claim[key] = val
+        elif key == "hospital":
+            if _should_overwrite_hospital(str(claim.get(key) or ""), val):
                 claim[key] = val
         elif _should_overwrite_claim_field(str(claim.get(key) or ""), val):
             claim[key] = val
@@ -983,11 +1040,12 @@ def merge_claim_details_into_result(result: dict, facts: Dict[str, Any]) -> dict
             tba["room_category_eligible"] = room
 
     bill_total = facts.get("total_hospital_bill", "")
-    if bill_total:
+    if bill_total and _should_overwrite_bill_total(
+        str((result.get("financial_review") or {}).get("total_hospital_bill") or ""),
+        bill_total,
+    ):
         fin = result.setdefault("financial_review", {})
-        current_bill = str(fin.get("total_hospital_bill") or "").strip()
-        if not current_bill or current_bill.lower() in _UNKNOWN_ADMISSION:
-            fin["total_hospital_bill"] = bill_total
+        fin["total_hospital_bill"] = bill_total
 
     if claim.get("date_of_admission") and not claim.get("date_of_discharge"):
         gaps = result.setdefault("documentation_gaps", [])

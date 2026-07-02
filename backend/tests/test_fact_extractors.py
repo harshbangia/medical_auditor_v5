@@ -292,6 +292,32 @@ class Case68ExtractorTests(unittest.TestCase):
         merge_claim_details_into_result(result, facts)
         self.assertIn("Rs.", result["financial_review"]["total_hospital_bill"])
 
+    def test_rejects_ocr_garbage_policy_and_hospital(self):
+        garbage = """
+=== Source document: preauth_scan.pdf ===
+Policy No : Hid |6lol 714 | ale
+Name of the Hospital: where Admitted | (Y] AIT ID/Y IA INIAITIN!
+"""
+        ins = extract_insurance_from_text(garbage)
+        self.assertEqual(ins["policy_number"], "")
+        facts = enrich_claim_facts(garbage)
+        self.assertEqual(facts["hospital"], "")
+
+    def test_rejects_small_bill_line_item(self):
+        bill = """
+=== Source document: receipt.pdf ===
+Hospital bill charges
+Rs. 2,660 for injection
+"""
+        facts = enrich_claim_facts(bill)
+        self.assertEqual(facts["total_hospital_bill"], "")
+
+    def test_keeps_better_existing_policy_on_merge(self):
+        result = {"insurance_details": {"policy_number": "H1607192-1-0"}}
+        facts = {"policy_number": "Hid6lol", "policy_period": "", "insurance_company": "", "claim_incident_number": ""}
+        merge_insurance_into_result(result, facts)
+        self.assertEqual(result["insurance_details"]["policy_number"], "H1607192-1-0")
+
 
 if __name__ == "__main__":
     unittest.main()
