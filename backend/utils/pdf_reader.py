@@ -29,8 +29,14 @@ VISION_OCR_ENABLED = os.getenv("VISION_OCR_ENABLED", "1") not in ("0", "false", 
 # Default to gpt-4o (not mini) — handwritten medical notes need the bigger model.
 VISION_OCR_MODEL = os.getenv("VISION_OCR_MODEL", "gpt-4o")
 MAX_VISION_OCR_PAGES = int(os.getenv("MAX_VISION_OCR_PAGES", "25"))
-VISION_OCR_DPI = int(os.getenv("VISION_OCR_DPI", "220"))
+# 300 DPI (up from 220) — handwriting transcription accuracy is DPI-sensitive.
+VISION_OCR_DPI = int(os.getenv("VISION_OCR_DPI", "300"))
 VISION_OCR_MIN_NATIVE_CHARS = int(os.getenv("VISION_OCR_MIN_NATIVE_CHARS", "120"))
+# A page with an embedded image and fewer than this many machine-readable words
+# is treated as "scan-like" and sent to vision transcription — even if it has a
+# printed letterhead. This catches scanned pages whose handwritten body would
+# otherwise be skipped because the letterhead alone cleared the char threshold.
+VISION_SCANLIKE_MAX_WORDS = int(os.getenv("VISION_SCANLIKE_MAX_WORDS", "90"))
 
 _CLINICAL_KEYWORDS = re.compile(
     r"\b(x-?ray|radiograph|ct\s|mri|ultrasound|usg|ecg|ekg|echo|histopath|biopsy|"
@@ -257,30 +263,37 @@ def _transcribe_page_with_vision(image_b64: str, page_num: int, source_name: str
 
 
 def _page_image_for_transcription(doc, pdf_path: str, page_num: int) -> str:
-    """Prefer the embedded page image (faster, no re-render); else render via fitz."""
-    try:
-        page = doc[page_num - 1]
-        embedded = page.get_images(full=True)
-        for img in embedded:
-            try:
-                base_image = doc.extract_image(img[0])
-                raw = base_image.get("image") or b""
-                width = int(base_image.get("width") or 0)
-                height = int(base_image.get("height") or 0)
-                if len(raw) < 8000 or width < 400 or height < 400:
-                    continue
-                return base64.b64encode(raw).decode()
-            except Exception:
-                continue
-    except Exception:
-        pass
+    """Render the FULL page at high DPI for vision transcription.
 
+    v6: we render the whole page rather than pulling a single embedded image.
+    A full-page render captures handwriting in the margins, stamps, and
+    signatures that a cropped embedded image would miss — and it removes the
+    old size gate (400x400 / 8 KB) that silently dropped legitimate scans.
+    Embedded-image extraction is kept only as a last-resort fallback.
+    """
     try:
         rendered = _render_pages_fitz(pdf_path, page_num, page_num, dpi=VISION_OCR_DPI)
         if rendered:
-            return _page_to_b64(rendered[0], quality=80)
+            return _page_to_b64(rendered[0], quality=85)
     except Exception as exc:
         print(f"⚠️ Could not render page {page_num} for vision transcription: {exc}")
+
+    # Fallback: largest embedded image on the page (no minimum-size gate).
+    try:
+        page = doc[page_num - 1]
+        best_raw = b""
+        for img in page.get_images(full=True):
+            try:
+                base_image = doc.extract_image(img[0])
+                raw = base_image.get("image") or b""
+                if len(raw) > len(best_raw):
+                    best_raw = raw
+            except Exception:
+                continue
+        if best_raw:
+            return base64.b64encode(best_raw).decode()
+    except Exception:
+        pass
     return ""
 
 
@@ -353,9 +366,20 @@ def extract_text_and_images(pdf_path, source_name: str = ""):
         for meta in page_meta:
             page_num = meta["page"]
             text_after_ocr = (page_ocr_text.get(page_num) or "").strip()
-            if len(text_after_ocr) >= VISION_OCR_MIN_NATIVE_CHARS:
+            native_words = len((meta.get("text") or "").split())
+            has_image = meta["image_count"] > 0
+
+            # (a) Low-text page → always a candidate.
+            low_text = len(text_after_ocr) < VISION_OCR_MIN_NATIVE_CHARS
+            # (b) Scan-like page: has an image but little machine text (e.g. a
+            #     printed letterhead over a handwritten body). Previously these
+            #     were skipped once the letterhead cleared the char threshold,
+            #     so the handwriting was never read.
+            scan_like = has_image and native_words < VISION_SCANLIKE_MAX_WORDS
+
+            if not (low_text or scan_like):
                 continue
-            if meta["image_count"] == 0 and len(text_after_ocr) > 0:
+            if not has_image and len(text_after_ocr) > 0:
                 # Truly text-light page with no image — nothing for vision to read.
                 continue
             candidates.append(page_num)
