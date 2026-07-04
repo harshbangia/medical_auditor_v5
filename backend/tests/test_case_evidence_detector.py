@@ -209,7 +209,7 @@ Patient admitted with chest pain. CT scan report attached.
 === Source document: policy_wording.pdf ===
 MRI coverage terms in policy wording document.
 === Source document: notes.pdf ===
-Clinical notes only.
+Clinical notes only. Trigeminal neuralgia evaluation.
 """
         result = {
             "clinical_checklist": [],
@@ -219,7 +219,7 @@ Clinical notes only.
             "guideline_deviations": [
                 {"issue": "Missing MRI documentation", "case_evidence": "No MRI", "severity": "High"},
             ],
-            "claim_details": {},
+            "claim_details": {"diagnosis": "Trigeminal neuralgia"},
             "treatment_billing_audit": {},
         }
         fixed = apply_case_evidence_corrections(result, case)
@@ -230,6 +230,27 @@ Clinical notes only.
         ]
         self.assertTrue(mri_rows)
         self.assertEqual(mri_rows[0]["available"], "NO")
+
+    def test_no_mri_checklist_for_cardiology(self):
+        case = """
+=== Source document: notes.pdf ===
+Unstable angina, ECG and troponin done. CABG planned.
+"""
+        result = {
+            "clinical_checklist": [
+                {"area": "MRI Report", "available": "NO", "remarks": "missing"},
+            ],
+            "imaging_findings": [],
+            "guideline_deviations": [],
+            "claim_details": {"diagnosis": "Unstable angina / CAD"},
+            "treatment_billing_audit": {},
+        }
+        fixed = apply_case_evidence_corrections(result, case)
+        mri_rows = [
+            i for i in fixed["clinical_checklist"]
+            if isinstance(i, dict) and "mri" in (i.get("area") or "").lower()
+        ]
+        self.assertFalse(mri_rows)
 
 
 if __name__ == "__main__":

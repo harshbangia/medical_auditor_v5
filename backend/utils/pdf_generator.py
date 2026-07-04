@@ -145,6 +145,33 @@ def generate_pdf(data, filename="audit_report.pdf"):
         ))
         content.append(Spacer(1, 12))
 
+    # Doctor registration validation
+    content.extend(section("Doctor Registration Validation", styles))
+    dv = data.get("doctor_validation") or {}
+    content.append(kv_table([
+        ("Overall status", dv.get("overall_status") or "—"),
+        ("Flagged", "YES" if dv.get("flagged") else "NO"),
+        ("Summary", dv.get("summary") or "—"),
+    ], header=False))
+    doc_rows = []
+    for d in dv.get("doctors") or []:
+        if not isinstance(d, dict):
+            continue
+        doc_rows.append([
+            d.get("doctor_name") or "—",
+            d.get("registration_number") or "—",
+            d.get("status") or "—",
+            d.get("message") or "—",
+        ])
+    if doc_rows:
+        content.append(Spacer(1, 6))
+        content.append(data_table(
+            ["Doctor", "Registration no.", "Status", "Validation notes"],
+            doc_rows,
+            col_widths=[100, 90, 90, 220],
+        ))
+    content.append(Spacer(1, 12))
+
     # Compliance verdict
     verdict = (data.get("compliance_verdict") or "").strip()
     if verdict:
@@ -181,6 +208,36 @@ def generate_pdf(data, filename="audit_report.pdf"):
         ch_rows = [[str(i + 1), pt] for i, pt in enumerate(challenges)]
         content.append(data_table(["#", "Challenge point"], ch_rows, col_widths=[30, 470]))
         content.append(Spacer(1, 12))
+
+    # Fraud / abuse identification (reference-auditor style)
+    content.extend(section("Fraud / Abuse Identification", styles))
+    fa = data.get("fraud_abuse") or {}
+    content.append(kv_table([
+        ("Risk level", fa.get("risk_level") or "—"),
+        ("Summary", fa.get("summary") or "—"),
+    ], header=False))
+    fa_rows = []
+    for item in (fa.get("findings") or data.get("fraud_abuse_findings") or []):
+        if not isinstance(item, dict):
+            continue
+        fa_rows.append([
+            item.get("category") or "—",
+            item.get("indicator") or "—",
+            item.get("severity") or "—",
+            item.get("evidence") or "—",
+            item.get("recommendation") or "—",
+        ])
+    if fa_rows:
+        content.append(Spacer(1, 6))
+        content.append(data_table(
+            ["Category", "Indicator", "Severity", "Evidence", "Recommendation"],
+            fa_rows,
+            col_widths=[70, 100, 50, 140, 140],
+        ))
+    else:
+        content.append(Spacer(1, 4))
+        content.append(kv_table([("Findings", "None identified")], header=False))
+    content.append(Spacer(1, 12))
 
     # 4. Imaging Findings
     imaging = data.get("imaging_findings") or []
@@ -261,16 +318,40 @@ def generate_pdf(data, filename="audit_report.pdf"):
     ])))
     content.append(Spacer(1, 12))
 
-    # 9. Financial Review
-    content.extend(section("9. Financial Review", styles))
+    # 9. Financial Review + Claim Savings (highlighted)
+    content.extend(section("9. Financial Review & Claim Savings", styles))
     fin = data.get("financial_review") or {}
-    content.append(kv_table(_rows_from_dict(fin, [
-        ("total_hospital_bill", "Total hospital bill"),
-        ("non_payable_amount", "Non-payable amount"),
-        ("net_claimable_amount", "Net claimable amount"),
-        ("recommended_approval_amount", "Recommended approval amount"),
-        ("patient_liability", "Patient liability"),
-    ])))
+    savings = data.get("claim_savings") or {}
+    content.append(kv_table([
+        ("Total hospital claim", savings.get("total_claim_amount") or fin.get("total_hospital_bill") or "—"),
+        ("Admissible amount", savings.get("admissible_amount") or fin.get("net_claimable_amount") or "—"),
+        ("Amount saved (highlighted)", savings.get("amount_saved") or fin.get("amount_saved") or "—"),
+        ("Savings percentage (highlighted)", savings.get("savings_percentage") or fin.get("savings_percentage") or "—"),
+        ("Non-payable amount", fin.get("non_payable_amount") or "—"),
+        ("Recommended approval amount", fin.get("recommended_approval_amount") or "—"),
+        ("Patient liability", fin.get("patient_liability") or "—"),
+    ], header=False))
+    content.append(Spacer(1, 6))
+    save_rows = []
+    for row in savings.get("line_items") or []:
+        if not isinstance(row, dict):
+            continue
+        save_rows.append([
+            row.get("item") or "—",
+            row.get("billed_amount") or "—",
+            row.get("admissible_amount") or "—",
+            row.get("amount_saved") or "—",
+            row.get("reason") or "—",
+        ])
+    if save_rows:
+        content.append(data_table(
+            ["Item", "Billed", "Admissible", "Amount saved", "Reason"],
+            save_rows,
+            col_widths=[110, 70, 80, 80, 160],
+        ))
+    if savings.get("notes"):
+        content.append(Spacer(1, 4))
+        content.append(kv_table([("Notes", savings.get("notes"))], header=False))
     content.append(Spacer(1, 12))
 
     # 10. Timeline

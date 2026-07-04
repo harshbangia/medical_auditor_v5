@@ -387,6 +387,45 @@ def _remove_challenge(challenges: List[str], needle: str) -> None:
             challenges.remove(c)
 
 
+def _mri_clinically_relevant(result: dict, case_text: str, evidence: Dict[str, Any]) -> bool:
+    """MRI checklist only for neuro / explicit MRI indications — not cardiology."""
+    if evidence.get("has_mri_report"):
+        return True
+    claim = result.get("claim_details") or {}
+    blob = " ".join([
+        str(claim.get("diagnosis") or ""),
+        str(claim.get("procedure_or_surgery") or ""),
+        (case_text or "")[:6000],
+    ]).lower()
+
+    neuro = bool(re.search(
+        r"trigeminal|neuralgia|stroke|cva|seizure|epilepsy|brain\s+tumor|"
+        r"meningitis|neuropathy|parkinson|migraine|neurovascular|mvd\b|"
+        r"intracranial|spinal\s+cord",
+        blob,
+        re.I,
+    ))
+    if neuro:
+        return True
+
+    # Cardiology / ACS / hypoglycemia / general medical — MRI not required
+    non_mri = bool(re.search(
+        r"\b(?:cad|acs|cabg|pci|stent|angina|myocardial|troponin|ecg|echo|"
+        r"hypoglyc|diabetes|chest\s+pain|unstable\s+angina|stemi|nstemi|"
+        r"coronary|cardiac|cardiology)\b",
+        blob,
+        re.I,
+    ))
+    if non_mri:
+        return False
+
+    # Default: only require MRI checklist if guideline/deviations already mention it
+    for dev in result.get("guideline_deviations") or []:
+        if isinstance(dev, dict) and "mri" in _norm(dev.get("issue", "")):
+            return True
+    return False
+
+
 def apply_case_evidence_corrections(result: dict, case_text: str) -> dict:
     """Fix labs, checklist, deviations, and challenges using deterministic evidence."""
     if not result or result.get("error"):
@@ -462,13 +501,16 @@ def apply_case_evidence_corrections(result: dict, case_text: str) -> dict:
             "CT/HRCT thorax report present in case file",
         )
 
+    # MRI checklist only when clinically relevant (neurology / explicit MRI indication).
+    # Cardiology / ACS / hypoglycemia cases must NOT show "MRI Report: NO".
+    mri_relevant = _mri_clinically_relevant(result, case_text, evidence)
     if evidence.get("has_mri_report"):
         _set_checklist(
             ["MRI Report"],
             "YES",
             "MRI report present in case file",
         )
-    else:
+    elif mri_relevant:
         _set_checklist(
             ["MRI Report"],
             "NO",
@@ -487,6 +529,28 @@ def apply_case_evidence_corrections(result: dict, case_text: str) -> dict:
                 _downgrade_deviation(
                     dev,
                     "No MRI report attached in submitted records; remove MRI-specific references.",
+                )
+    else:
+        # Remove irrelevant MRI checklist rows and hallucinated MRI imaging findings.
+        result["clinical_checklist"] = [
+            item for item in checklist
+            if not (isinstance(item, dict) and "mri" in _norm(item.get("area", "")))
+        ]
+        checklist = result["clinical_checklist"]
+        imaging = result.get("imaging_findings") or []
+        if isinstance(imaging, list):
+            result["imaging_findings"] = [
+                item for item in imaging
+                if isinstance(item, dict) and "mri" not in _norm(item.get("type", ""))
+            ]
+        for dev in result.get("guideline_deviations") or []:
+            if not isinstance(dev, dict):
+                continue
+            if "mri" in _norm(dev.get("issue", "")):
+                _downgrade_deviation(
+                    dev,
+                    "MRI is not clinically indicated for this presentation; "
+                    "do not treat missing MRI as a documentation gap.",
                 )
 
     result["clinical_checklist"] = _dedupe_checklist(checklist)

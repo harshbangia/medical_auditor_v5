@@ -19,6 +19,9 @@ from backend.utils.case_evidence_detector import (
     _has_clinical_mri_report,
 )
 from backend.utils.insurance_extractor import merge_insurance_into_result, _extract_policy_period
+from backend.utils.doctor_registration import validate_doctor_registrations
+from backend.utils.fraud_abuse_detector import detect_fraud_abuse
+from backend.utils.claim_savings import build_claim_savings
 
 _MRI_REPORT_RE = re.compile(
     r"\bmri\s+(?:brain|spine|report|of\s+)|neurovascular\s+conflict|grade\s+iii",
@@ -329,6 +332,67 @@ def _ensure_claim_from_case_text(
     merge_claim_details_into_result(result, facts)
 
 
+_PPI_RE = re.compile(
+    r"panto(?:prazole)?|pentaprazole|pantocid|pantop|\bpan\s*40\b|\bppi\b",
+    re.I,
+)
+
+
+def _strip_ppi_from_text(val: str) -> str:
+    if not val or not _PPI_RE.search(val):
+        return val
+    parts = re.split(r"[,;\n]", val)
+    kept = [p.strip() for p in parts if p.strip() and not _PPI_RE.search(p)]
+    return "; ".join(kept)
+
+
+def _remove_ppi_exclusions(result: dict) -> None:
+    """Never treat pantoprazole / routine PPIs as unadvised or non-payable."""
+    tba = result.setdefault("treatment_billing_audit", {})
+    if isinstance(tba, dict):
+        excluded = str(tba.get("excluded_items_billed") or "")
+        cleaned = _strip_ppi_from_text(excluded)
+        tba["excluded_items_billed"] = cleaned
+
+    fin = result.setdefault("financial_review", {})
+    if isinstance(fin, dict):
+        for key in ("non_payable_amount", "patient_liability"):
+            val = str(fin.get(key) or "")
+            if _PPI_RE.search(val) and not re.search(r"\d", val):
+                fin[key] = _strip_ppi_from_text(val)
+
+    for key in ("challenge_points", "documentation_gaps"):
+        items = result.get(key) or []
+        if isinstance(items, list):
+            result[key] = [
+                i for i in items
+                if not (isinstance(i, str) and _PPI_RE.search(i)
+                        and re.search(r"unadvised|non[\s-]?payable|exclud|not\s+required|unnecessary", i, re.I))
+            ]
+
+    for dev in result.get("guideline_deviations") or []:
+        if not isinstance(dev, dict):
+            continue
+        blob = f"{dev.get('issue', '')} {dev.get('case_evidence', '')}"
+        if _PPI_RE.search(blob) and re.search(r"unadvised|non[\s-]?payable|exclud", blob, re.I):
+            dev["case_evidence"] = (
+                "Pantoprazole / PPI is routine ulcer prophylaxis and is not treated "
+                "as an unadvised or non-payable medicine by default."
+            )
+            dev["severity"] = "Low"
+
+    for obs in result.get("observations") or []:
+        if not isinstance(obs, dict):
+            continue
+        analysis = str(obs.get("analysis") or "")
+        if _PPI_RE.search(analysis) and re.search(r"unadvised|non[\s-]?payable|exclud", analysis, re.I):
+            obs["analysis"] = (
+                analysis
+                + " Note: Pantoprazole (PPI) is standard inpatient ulcer prophylaxis "
+                "and should not be flagged as unadvised or non-payable solely for being a PPI."
+            )
+
+
 def enrich_audit_result(
     result: dict,
     case_text: str,
@@ -346,5 +410,12 @@ def enrich_audit_result(
     _fix_mri_documentation(result, case_text)
     _fix_medication_documentation(result, case_text)
     apply_case_evidence_corrections(result, case_text)
+    _remove_ppi_exclusions(result)
     _ensure_observations_echo_clinical_findings(result)
+
+    # Doctor registration, fraud/abuse, claim savings (reference-auditor style sections)
+    result["doctor_validation"] = validate_doctor_registrations(case_text)
+    result["fraud_abuse"] = detect_fraud_abuse(case_text, result, claim_facts)
+    result["fraud_abuse_findings"] = (result.get("fraud_abuse") or {}).get("findings") or []
+    result["claim_savings"] = build_claim_savings(result, case_text, claim_facts)
     return result

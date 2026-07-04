@@ -16,6 +16,7 @@ from backend.ai.audit_result_enricher import enrich_audit_result
 from backend.ai.clinical_synthesizer import build_clinical_synthesis_section
 from backend.utils.insurance_extractor import enrich_insurance_facts, merge_insurance_into_result
 from backend.utils.claim_details_extractor import enrich_claim_facts, merge_claim_details_into_result
+from backend.utils.guideline_alignment import assert_guideline_alignment, GuidelineMismatchError
 from backend.utils.pdf_reader import extract_text_and_images
 
 ProgressFn = Callable[[str, int, str], None]
@@ -128,8 +129,14 @@ def _ensure_result_shape(result: dict) -> dict:
     for _k in (
         "total_hospital_bill", "non_payable_amount", "net_claimable_amount",
         "recommended_approval_amount", "patient_liability",
+        "amount_saved", "savings_percentage",
     ):
         result["financial_review"].setdefault(_k, "")
+    result.setdefault("doctor_validation", {})
+    result.setdefault("fraud_abuse", {})
+    result.setdefault("fraud_abuse_findings", [])
+    result.setdefault("claim_savings", {})
+    result.setdefault("guideline_alignment", {})
     result.setdefault("timeline", [])
     result.setdefault("observations", [])
     result.setdefault("inference", "")
@@ -276,6 +283,20 @@ def run_full_audit(
                 index, chunks = fut.result()
                 guideline_stores.append((name, index, chunks))
 
+        # Hard gate: do not run audit when guideline specialty ≠ case specialty
+        progress("alignment", 68, "Checking guideline–case alignment…")
+        claim_dx = (claim_facts or {}).get("diagnosis") or ""
+        try:
+            alignment = assert_guideline_alignment(
+                guideline_names,
+                case_profile,
+                case_text=case_text,
+                claim_diagnosis=claim_dx,
+            )
+        except GuidelineMismatchError as exc:
+            progress("failed", 100, str(exc))
+            raise RuntimeError(str(exc)) from exc
+
         case_hint = (
             f"{case_profile.get('diagnosis', '')} | "
             f"{', '.join(normalize_str_list(case_profile.get('procedures')))}"
@@ -321,6 +342,7 @@ def run_full_audit(
         result = merge_claim_details_into_result(result, claim_facts)
         result = enrich_audit_result(result, case_text, insurance_facts, claim_facts)
         result["document_sources"] = source_summaries
+        result["guideline_alignment"] = alignment
 
         if all([
             not result.get("patient_details"),
