@@ -19,7 +19,6 @@ from backend.utils.case_evidence_detector import (
     _has_clinical_mri_report,
 )
 from backend.utils.insurance_extractor import merge_insurance_into_result, _extract_policy_period
-from backend.utils.doctor_registration import validate_doctor_registrations
 from backend.utils.fraud_abuse_detector import detect_fraud_abuse
 from backend.utils.claim_savings import build_claim_savings
 
@@ -413,9 +412,177 @@ def enrich_audit_result(
     _remove_ppi_exclusions(result)
     _ensure_observations_echo_clinical_findings(result)
 
-    # Doctor registration, fraud/abuse, claim savings (reference-auditor style sections)
-    result["doctor_validation"] = validate_doctor_registrations(case_text)
+    # Fraud/abuse, claim savings, inference + report summary bullets
     result["fraud_abuse"] = detect_fraud_abuse(case_text, result, claim_facts)
     result["fraud_abuse_findings"] = (result.get("fraud_abuse") or {}).get("findings") or []
     result["claim_savings"] = build_claim_savings(result, case_text, claim_facts)
+    _ensure_inference_and_summary(result)
     return result
+
+
+def _clean_bullets(items: Any) -> List[str]:
+    out: List[str] = []
+    if not isinstance(items, list):
+        return out
+    for item in items:
+        text = str(item or "").strip().lstrip("•-* ").strip()
+        if text and text not in out:
+            out.append(text)
+    return out
+
+
+def _build_report_summary_bullets(result: dict) -> List[str]:
+    """Deterministic brief gist of the full report."""
+    bullets: List[str] = []
+    patient = result.get("patient_details") or {}
+    claim = result.get("claim_details") or {}
+    ins = result.get("insurance_details") or {}
+    fa = result.get("fraud_abuse") or {}
+    savings = result.get("claim_savings") or {}
+    fin = result.get("financial_review") or {}
+
+    name = patient.get("name") or "Patient"
+    age = patient.get("age") or ""
+    sex = patient.get("sex") or ""
+    demo = ", ".join(p for p in [str(age), str(sex)] if p and str(p) != "—")
+    bullets.append(
+        f"Patient: {name}" + (f" ({demo})" if demo else "")
+        + (f"; Hospital: {claim.get('hospital')}" if claim.get("hospital") else "")
+    )
+
+    dx = claim.get("diagnosis") or ""
+    proc = claim.get("procedure_or_surgery") or ""
+    if dx or proc:
+        line = "Clinical: "
+        if dx:
+            line += dx
+        if proc:
+            line += f"; Procedure: {proc}" if dx else f"Procedure: {proc}"
+        bullets.append(line)
+
+    dates = []
+    if claim.get("date_of_admission"):
+        dates.append(f"Admission {claim['date_of_admission']}")
+    if claim.get("date_of_discharge"):
+        dates.append(f"Discharge {claim['date_of_discharge']}")
+    if claim.get("nature_of_admission"):
+        dates.append(claim["nature_of_admission"])
+    if dates:
+        bullets.append("Stay: " + " · ".join(dates))
+
+    if ins.get("insurance_company") or ins.get("policy_number"):
+        bullets.append(
+            "Policy: "
+            + (ins.get("insurance_company") or "Insurer N/A")
+            + (f", Policy {ins['policy_number']}" if ins.get("policy_number") else "")
+        )
+
+    verdict = (result.get("compliance_verdict") or "").strip()
+    if verdict:
+        bullets.append(f"Compliance verdict: {verdict}")
+
+    risk = (fa.get("risk_level") or "").strip()
+    findings = fa.get("findings") or []
+    if risk:
+        if findings:
+            top = findings[0].get("indicator") if isinstance(findings[0], dict) else str(findings[0])
+            bullets.append(f"Fraud/abuse risk: {risk}" + (f" — {top}" if top else ""))
+        else:
+            bullets.append(f"Fraud/abuse risk: {risk}")
+
+    gaps = result.get("documentation_gaps") or []
+    if gaps:
+        bullets.append(f"Key documentation gap: {gaps[0]}")
+
+    amount_saved = savings.get("amount_saved") or fin.get("amount_saved")
+    savings_pct = savings.get("savings_percentage") or fin.get("savings_percentage")
+    total_claim = savings.get("total_claim_amount") or fin.get("total_hospital_bill")
+    if total_claim and total_claim != "—":
+        save_line = f"Financial: claim {total_claim}"
+        if amount_saved and amount_saved != "—":
+            save_line += f"; amount saved {amount_saved}"
+        if savings_pct and savings_pct != "—":
+            save_line += f" ({savings_pct})"
+        bullets.append(save_line)
+
+    inference = (result.get("inference") or result.get("auditor_conclusion") or "").strip()
+    if inference:
+        # Keep recommendation short
+        short = inference.split(".")[0].strip()
+        if short:
+            bullets.append(f"Recommendation: {short}.")
+
+    return bullets[:8]
+
+
+def _ensure_inference_and_summary(result: dict) -> None:
+    """Ensure a clear inference paragraph and brief bullet summary of the report."""
+    claim = result.get("claim_details") or {}
+    fa = result.get("fraud_abuse") or {}
+    savings = result.get("claim_savings") or {}
+    verdict = (result.get("compliance_verdict") or "").strip() or "Cannot Determine"
+    risk = (fa.get("risk_level") or "Low").strip()
+    findings = fa.get("findings") or []
+
+    inference = (result.get("inference") or result.get("auditor_conclusion") or "").strip()
+    weak = (
+        not inference
+        or len(inference) < 40
+        or inference.lower() in {"no conclusion generated", "partially compliant", "—", "-"}
+        or inference.lower().startswith("the claim presents partial compliance")
+    )
+
+    if weak:
+        dx = claim.get("diagnosis") or "the stated diagnosis"
+        proc = claim.get("procedure_or_surgery") or "the documented treatment"
+        parts = [
+            f"Based on the uploaded records, the case relates to {dx}"
+            + (f" managed with {proc}" if proc and proc != "the documented treatment" else "")
+            + f". Overall compliance is assessed as {verdict}."
+        ]
+        if risk.lower() == "high" and findings:
+            ind = findings[0].get("indicator") if isinstance(findings[0], dict) else str(findings[0])
+            parts.append(
+                f"High fraud/abuse risk is noted ({ind}); the claim should be held pending "
+                "investigation and hospital clarification."
+            )
+        elif risk.lower() == "medium":
+            parts.append(
+                "Medium fraud/abuse or documentation concerns require clarification before full approval."
+            )
+        else:
+            parts.append(
+                "No high-risk fraud indicators were identified from the available documents."
+            )
+
+        amount_saved = savings.get("amount_saved") or ""
+        savings_pct = savings.get("savings_percentage") or ""
+        if amount_saved and amount_saved not in ("—", "Rs. 0", "Rs. 0.00"):
+            parts.append(
+                f"After audit deductions, estimated amount saved is {amount_saved}"
+                + (f" ({savings_pct})" if savings_pct and savings_pct != "—" else "")
+                + "."
+            )
+
+        gaps = result.get("documentation_gaps") or []
+        if gaps:
+            parts.append(f"Main documentation gap to resolve: {gaps[0]}")
+
+        inference = " ".join(parts)
+        result["inference"] = inference
+        result["auditor_conclusion"] = inference
+    else:
+        result["inference"] = inference
+        result["auditor_conclusion"] = inference
+
+    # Prefer LLM bullets when present and sufficient; otherwise build deterministically.
+    llm_bullets = _clean_bullets(result.get("report_summary"))
+    built = _build_report_summary_bullets(result)
+    if len(llm_bullets) >= 4:
+        # Merge unique extras from deterministic build
+        for b in built:
+            if b not in llm_bullets and len(llm_bullets) < 8:
+                llm_bullets.append(b)
+        result["report_summary"] = llm_bullets[:8]
+    else:
+        result["report_summary"] = built

@@ -132,7 +132,6 @@ def _ensure_result_shape(result: dict) -> dict:
         "amount_saved", "savings_percentage",
     ):
         result["financial_review"].setdefault(_k, "")
-    result.setdefault("doctor_validation", {})
     result.setdefault("fraud_abuse", {})
     result.setdefault("fraud_abuse_findings", [])
     result.setdefault("claim_savings", {})
@@ -141,6 +140,7 @@ def _ensure_result_shape(result: dict) -> dict:
     result.setdefault("observations", [])
     result.setdefault("inference", "")
     result.setdefault("auditor_conclusion", "No conclusion generated")
+    result.setdefault("report_summary", [])
     result.setdefault("remarks", "")
     result.setdefault("qa_section", [])
     result.setdefault("document_sources", [])
