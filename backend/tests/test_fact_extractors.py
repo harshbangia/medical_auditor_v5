@@ -265,6 +265,51 @@ Policy No : H1486808
 """
 
 
+NAVEEN_QUERY = """
+=== Source document: reply-naveen.pdf ===
+QUERY LETTER    Date: 20 Oct 2025
+Claim Incident : 2025101800456
+Member Code : H1509554-1-1 Apex Multispeciality Hospital & Research Centre
+Policy No : H1509554
+Patient Name Mr. Naveen
+Proposed Date of Hospitalization 18 Oct 2025
+IFFCO TOKIO GENERAL INSURANCE COMPANY LIMITED
+"""
+
+NAVEEN_BAD_HOSPITAL_OCR = """
+=== Source document: discharge_scan.pdf ===
+Address: A. Near Civil Hospital
+Patient admitted for observation
+"""
+
+
+class NaveenQueryLetterTests(unittest.TestCase):
+    def test_hospital_and_claim_incident_from_query_letter(self):
+        ins = extract_insurance_from_text(NAVEEN_QUERY, source="reply-naveen.pdf")
+        self.assertEqual(ins["claim_incident_number"], "2025101800456")
+        self.assertEqual(ins["policy_number"], "H1509554")
+        facts = enrich_claim_facts(NAVEEN_QUERY)
+        self.assertIn("Apex", facts["hospital"])
+        self.assertIn("Hospital", facts["hospital"])
+
+    def test_rejects_address_fragment_as_hospital(self):
+        facts = enrich_claim_facts(NAVEEN_BAD_HOSPITAL_OCR)
+        self.assertEqual(facts["hospital"], "")
+
+    def test_merge_clears_garbage_hospital_and_fills_claim_incident(self):
+        result = {
+            "claim_details": {"hospital": "A. Near Civil Hospital"},
+            "insurance_details": {"claim_incident_number": ""},
+        }
+        facts = enrich_claim_facts(NAVEEN_QUERY)
+        ins = extract_insurance_from_text(NAVEEN_QUERY)
+        merge_claim_details_into_result(result, facts)
+        merge_insurance_into_result(result, ins)
+        self.assertIn("Apex", result["claim_details"]["hospital"])
+        self.assertNotIn("Near Civil", result["claim_details"]["hospital"])
+        self.assertEqual(result["insurance_details"]["claim_incident_number"], "2025101800456")
+
+
 class Case68ExtractorTests(unittest.TestCase):
     def test_policy_number_from_member_code(self):
         facts = extract_insurance_from_text(CASE68_QUERY)
