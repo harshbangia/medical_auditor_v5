@@ -390,15 +390,32 @@ cite only one duration when clinical_findings lists several:
 Before finalising JSON, self-check: every clinical_findings row appears verbatim or paraphrased
 in at least one observations[].analysis block.
 
-clinical_checklist rules:
-- Mark "MRI Report" as YES only when an MRI (not CT/HRCT) report is in the case file.
-- Mark "CT Scan Report" as YES when CT/HRCT thorax report with impression is present.
+clinical_checklist rules (specialty-aware — only include clinically relevant rows):
+- Include "MRI Report" ONLY for neurology / brain / spine / neuralgia cases where MRI is indicated.
+  NEVER include MRI Report for cardiology, ACS, CABG, hypoglycemia, or general medical cases.
+- Mark "CT Scan Report" as YES when CT/HRCT report with impression is present.
 - Mark "Antibiotic Therapy" as YES when antibiotics are prescribed or culture/sensitivity is reported.
 - Mark "Cardiac Assessment" as YES when ECG, echocardiography, troponin, Holter, or CAG planning is documented.
-- Mark "Medication Trials" as YES if prescription documents Zenoxa/Tegretol/Lyrica etc.
+- Mark "Medication Trials" as YES if prescription documents Zenoxa/Tegretol/Lyrica etc. (neuralgia cases only).
 - Do NOT mark medication trials NO when oxcarbazepine/carbamazepine brands are in prescriptions.
 - Adult serum creatinine is typically 0.5–15 mg/dl; if OCR shows >15, re-read the lab report for a decimal point (e.g. 1.9 not 19).
 - Do NOT challenge missing spirometry unless COPD is explicitly diagnosed in the case documents.
+
+Medication / billing rules (critical):
+- Pantoprazole / Pan / Pantop / Pantocid / PPI is ROUTINE inpatient ulcer prophylaxis.
+  NEVER list pantoprazole (or OCR variant "pentaprazole") as unadvised, excluded, non-payable,
+  or unnecessary medicine. Do not put PPI in excluded_items_billed or non_payable_amount.
+- Only flag medicines that are truly contraindicated (allergy), policy-excluded by name, or
+  clinically inappropriate for the diagnosis.
+
+Fraud / abuse section:
+- Populate fraud_abuse_findings for misrepresentation, non-disclosure of PED, conflicting history,
+  date discrepancies, unbundled billing, room upcoding, and fraudulent statements — with evidence.
+
+Financial savings:
+- Populate claim_savings_line_items with billed vs admissible amounts and amount_saved per item.
+- financial_review must include total_hospital_bill, non_payable_amount, net_claimable_amount,
+  amount_saved, and savings_percentage (e.g. "12.5%").
 
 Typed MRI in case text: if IMPRESSION mentions neurovascular conflict / grade III, populate
 imaging_findings from that report — do NOT claim MRI report is missing when CT/HRCT is present instead.
@@ -430,7 +447,10 @@ Return ONLY JSON:
   ],
   "auditor_observation_summary": "Direct narrative: what the hospital did, what guideline requires, where they fall short or must prove more",
   "treatment_billing_audit": {{"room_category_admitted": "", "room_category_eligible": "", "procedures_performed": "", "cross_checked_with_preauth": "", "excluded_items_billed": "", "charges_appropriate": ""}},
-  "financial_review": {{"total_hospital_bill": "", "non_payable_amount": "", "net_claimable_amount": "", "recommended_approval_amount": "", "patient_liability": ""}},
+  "financial_review": {{"total_hospital_bill": "", "non_payable_amount": "", "net_claimable_amount": "", "recommended_approval_amount": "", "patient_liability": "", "amount_saved": "", "savings_percentage": ""}},
+  "fraud_abuse_findings": [{{"category": "misrepresentation|billing_abuse|documentation_abuse|policy_compliance", "indicator": "", "evidence": "", "severity": "High|Medium|Low", "recommendation": ""}}],
+  "claim_savings_line_items": [{{"item": "", "billed_amount": "", "admissible_amount": "", "amount_saved": "", "reason": ""}}],
+  "doctor_details": [{{"doctor_name": "", "registration_number": "", "specialty": ""}}],
   "inference": "",
   "auditor_conclusion": "",
   "remarks": "",

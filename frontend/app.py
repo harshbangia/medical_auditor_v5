@@ -1084,7 +1084,15 @@ if run:
                     st.stop()
                 break
             if data.get("status") == "failed":
-                st.error(data.get("error") or data.get("message") or "Audit failed")
+                err_msg = data.get("error") or data.get("message") or "Audit failed"
+                err_low = str(err_msg).lower()
+                if "do not match the clinical case" in err_low or (
+                    "guideline" in err_low and "match" in err_low
+                ):
+                    st.error("⚠️ Guideline not aligned with clinical documents — audit stopped.")
+                    st.warning(err_msg)
+                else:
+                    st.error(err_msg)
                 st.stop()
 
         progress_bar.progress(1.0, text="Audit complete")
@@ -1318,6 +1326,55 @@ if "report" in st.session_state:
         unsafe_allow_html=True,
     )
 
+    # Doctor registration validation
+    dv = data.get("doctor_validation") or {}
+    st.markdown('<p class="gwx-section-title">Doctor registration validation</p>', unsafe_allow_html=True)
+    if dv.get("flagged"):
+        st.error(dv.get("summary") or "Doctor registration requires verification.")
+    else:
+        st.info(dv.get("summary") or "No doctor registration details extracted.")
+    for d in dv.get("doctors") or []:
+        if not isinstance(d, dict):
+            continue
+        st.markdown(
+            f"""
+            <div class="gwx-card gwx-card-compact">
+            <b class="gwx-field-title">{d.get('doctor_name') or 'Doctor'}</b><br>
+            <span class="gwx-text-soft">Registration no.:</span> {d.get('registration_number') or '—'}<br>
+            <span class="gwx-text-soft">Status:</span> {d.get('status') or '—'}<br>
+            <i class="gwx-comment">{d.get('message') or ''}</i>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if d.get("nmc_search_url"):
+            st.markdown(f"[Verify on NMC Indian Medical Register]({d['nmc_search_url']})")
+
+    # Fraud / abuse identification
+    fa = data.get("fraud_abuse") or {}
+    st.markdown('<p class="gwx-section-title">Fraud / abuse identification</p>', unsafe_allow_html=True)
+    risk = (fa.get("risk_level") or "—").lower()
+    if risk == "high":
+        st.error(f"**Risk level: {fa.get('risk_level')}** — {fa.get('summary') or ''}")
+    elif risk == "medium":
+        st.warning(f"**Risk level: {fa.get('risk_level')}** — {fa.get('summary') or ''}")
+    else:
+        st.info(f"**Risk level: {fa.get('risk_level') or 'Low'}** — {fa.get('summary') or 'No indicators identified.'}")
+    for item in fa.get("findings") or data.get("fraud_abuse_findings") or []:
+        if not isinstance(item, dict):
+            continue
+        st.markdown(
+            f"""
+            <div class="gwx-card gwx-card-compact">
+            <b class="gwx-field-title">{item.get('indicator') or 'Indicator'}</b>
+            <span class="gwx-text-soft">({item.get('category') or '—'} · {item.get('severity') or '—'})</span><br>
+            <span class="gwx-text-soft">Evidence:</span> {item.get('evidence') or '—'}<br>
+            <i class="gwx-comment">{item.get('recommendation') or ''}</i>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
     verdict = (data.get("compliance_verdict") or "").strip()
     if verdict:
         v_lower = verdict.lower()
@@ -1428,19 +1485,44 @@ if "report" in st.session_state:
     )
 
     fin = data.get("financial_review") or {}
-    st.markdown('<p class="gwx-section-title">Financial review</p>', unsafe_allow_html=True)
+    savings = data.get("claim_savings") or {}
+    st.markdown('<p class="gwx-section-title">Financial review & claim savings</p>', unsafe_allow_html=True)
+    amount_saved = savings.get("amount_saved") or fin.get("amount_saved") or "—"
+    savings_pct = savings.get("savings_percentage") or fin.get("savings_percentage") or "—"
     st.markdown(
         f"""
-        <div class='gwx-card'>
-        <p class='gwx-row'><strong>Total hospital bill:</strong> {fin.get('total_hospital_bill') or '—'}</p>
+        <div class='gwx-card' style="border-left:4px solid #16a34a;">
+        <p class='gwx-row'><strong>Total hospital claim:</strong> {savings.get('total_claim_amount') or fin.get('total_hospital_bill') or '—'}</p>
+        <p class='gwx-row'><strong>Admissible amount:</strong> {savings.get('admissible_amount') or fin.get('net_claimable_amount') or '—'}</p>
+        <p class='gwx-row' style="background:#dcfce7;padding:8px 10px;border-radius:8px;">
+        <strong>Amount saved:</strong> {amount_saved}
+        &nbsp;&nbsp;|&nbsp;&nbsp;
+        <strong>Savings %:</strong> {savings_pct}
+        </p>
         <p class='gwx-row'><strong>Non-payable amount:</strong> {fin.get('non_payable_amount') or '—'}</p>
-        <p class='gwx-row'><strong>Net claimable amount:</strong> {fin.get('net_claimable_amount') or '—'}</p>
         <p class='gwx-row'><strong>Recommended approval amount:</strong> {fin.get('recommended_approval_amount') or '—'}</p>
         <p class='gwx-row'><strong>Patient liability:</strong> {fin.get('patient_liability') or '—'}</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
+    line_items = savings.get("line_items") or []
+    if line_items:
+        st.dataframe(
+            [
+                {
+                    "Item": r.get("item"),
+                    "Billed": r.get("billed_amount"),
+                    "Admissible": r.get("admissible_amount"),
+                    "Amount saved": r.get("amount_saved"),
+                    "Reason": r.get("reason"),
+                }
+                for r in line_items
+                if isinstance(r, dict)
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
 
     st.markdown('<p class="gwx-section-title">Timeline</p>', unsafe_allow_html=True)
     for t in data.get("timeline", []):

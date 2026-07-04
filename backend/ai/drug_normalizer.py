@@ -190,17 +190,38 @@ KNOWN_DRUG_BRANDS: Dict[str, Tuple[str, str, str]] = {
         "long-acting basal insulin",
         "Standard basal insulin for T1DM / advanced T2DM.",
     ),
-    # ── PPIs / GI ──
+    # ── PPIs / GI (routine ward meds — do NOT treat as unadvised / non-payable by default) ──
     "pan": (
         "pantoprazole",
         "PPI",
-        "Standard PPI for GERD / ulcer prophylaxis. Often a non-payable line item if used "
-        "purely as ward-stay prophylaxis without indication.",
+        "Standard PPI for GERD / stress-ulcer prophylaxis. Routine and clinically appropriate "
+        "in most inpatient stays — do NOT list as unadvised, excluded, or non-payable solely "
+        "because it is a PPI.",
     ),
     "pantop": (
         "pantoprazole",
         "PPI",
-        "Standard PPI; scrutinise indication for payability.",
+        "Standard PPI for ulcer prophylaxis. Do NOT flag as unadvised or non-payable by default.",
+    ),
+    "pantoprazole": (
+        "pantoprazole",
+        "PPI",
+        "Standard PPI for ulcer prophylaxis. Do NOT flag as unadvised or non-payable by default.",
+    ),
+    "pentaprazole": (
+        "pantoprazole",
+        "PPI",
+        "OCR variant of pantoprazole. Routine PPI — do NOT flag as unadvised or non-payable.",
+    ),
+    "pantocid": (
+        "pantoprazole",
+        "PPI",
+        "Brand of pantoprazole. Routine PPI — do NOT flag as unadvised or non-payable by default.",
+    ),
+    "pan40": (
+        "pantoprazole",
+        "PPI",
+        "Pantoprazole 40 mg. Routine PPI — do NOT flag as unadvised or non-payable by default.",
     ),
     "rantac": (
         "ranitidine",
