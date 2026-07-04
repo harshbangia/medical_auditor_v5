@@ -88,17 +88,41 @@ _HOSPITAL_PATTERNS = [
     re.compile(r"(Kokilaben\s+Dhirubh?ai\s+Ambani\s+Hospital[^\n]{0,80})", re.I),
     re.compile(r"(Gangapada\s+Super\s+Speciality\s+Hospital[^\n]{0,60})", re.I),
     re.compile(r"(Nibedita\s+Health\s+Care[^\n]{0,60})", re.I),
+    # IFFCO-style query letter: Member Code : H1509554-1-1 <Hospital Name>
+    re.compile(
+        r"member\s*(?:code|id|no|number)?\s*[:.]?\s*[A-Z0-9][A-Z0-9\-/]{4,}\s+"
+        r"([A-Za-z0-9][A-Za-z0-9.&'()/\- ]{4,90}?"
+        r"(?:Hospital|Clinic|Nursing\s+Home|Medical\s+Centre|Medical\s+Center|"
+        r"Institute|Healthcare|Health\s+Care)[A-Za-z0-9.&'()/\- ]{0,40})",
+        re.I,
+    ),
     re.compile(
         r"(?:hospital\s*name|name\s*of\s*(?:the\s+)?hospital|treating\s+hospital|"
-        r"provider\s*name|name\s*of\s*provider)\s*[:.]?\s*([^\n]{5,100})",
+        r"provider\s*name|name\s*of\s*provider|hospital\s*/\s*nursing\s*home)\s*[:.]?\s*"
+        r"([^\n]{5,100})",
         re.I,
     ),
     re.compile(r"name\s*of\s*the\s+hospital\s*[:.]?\s*([^\n]{5,80})", re.I),
+    # Proper hospital names — require at least one real word before Hospital (not address crumbs)
     re.compile(
-        r"\b((?:[A-Z][A-Za-z.&'()-]+(?:\s+[A-Z][A-Za-z.&'()-]+){0,6})\s+"
-        r"Hospital(?:\s+(?:&|and)\s+[A-Za-z.&'() \-]{3,60})?)\b",
+        r"\b((?:[A-Z][A-Za-z.&'()-]{2,}(?:\s+[A-Z][A-Za-z.&'()-]{1,}){0,6})\s+"
+        r"(?:Hospital|Clinic|Nursing\s+Home|Medical\s+(?:Centre|Center|Institute)|Institute)"
+        r"(?:\s+(?:&|and)\s+[A-Za-z.&'() \-]{3,60})?)\b",
     ),
 ]
+
+# Address / location crumbs that OCR often mistakes for hospital names.
+_HOSPITAL_ADDRESS_PREFIXES = re.compile(
+    r"^(?:near|opp\.?|opposite|behind|adjacent|beside|next\s+to|plot|sector|road|street|"
+    r"village|dist\.?|district|tehsil|taluka|pin|pincode|address|location|"
+    r"[A-Z]\.|[A-Z]\s*\)|[0-9]+[./\-])",
+    re.I,
+)
+_HOSPITAL_ADDRESS_TOKENS = {
+    "near", "opp", "opposite", "behind", "adjacent", "beside", "plot", "sector",
+    "road", "street", "village", "dist", "district", "tehsil", "taluka", "pin",
+    "pincode", "address", "location", "civil", "bus", "stand", "market", "chowk",
+}
 
 _TOTAL_BILL_PATTERNS = [
     re.compile(
@@ -292,7 +316,7 @@ def _classify_document(fname: str, text: str) -> str:
     if re.search(r"policy\s+wording|schedule\s+of\s+benefits|general\s+terms", blob, re.I):
         bump("policy", 14)
 
-    if re.search(r"query|querr", name):
+    if re.search(r"query|querr|reply", name):
         bump("query_letter", 2)
     if re.search(r"pre[\s-]?auth|preauth", name):
         bump("pre_auth", 2)
@@ -420,32 +444,94 @@ def _looks_like_ocr_garbage(val: str) -> bool:
     return len(words) == 0
 
 
+def _looks_like_address_not_hospital(val: str) -> bool:
+    """Reject OCR crumbs like 'A. Near Civil Hospital' or 'Opp. Bus Stand Hospital'."""
+    v = (val or "").strip()
+    if not v:
+        return True
+    if _HOSPITAL_ADDRESS_PREFIXES.search(v):
+        return True
+    words = [w.lower() for w in re.findall(r"[A-Za-z]{2,}", v)]
+    if not words:
+        return True
+    # Single meaningful word + Hospital (e.g. "Civil Hospital") is weak; address tokens worse
+    address_hits = sum(1 for w in words if w in _HOSPITAL_ADDRESS_TOKENS)
+    if address_hits >= 1 and len(words) <= 4:
+        return True
+    # Leading single-letter token ("A Near...", "B Hospital")
+    if re.match(r"^[A-Z]\b", v) and len(words) <= 4:
+        return True
+    return False
+
+
+def _score_hospital_name(val: str) -> int:
+    """Higher is better. Address crumbs and garbage score <= 0."""
+    v = (val or "").strip()
+    if not _is_plausible_hospital_name(v):
+        return -1
+    score = 10
+    low = v.lower()
+    if re.search(r"\bhospital\b", low):
+        score += 20
+    if re.search(r"\b(?:clinic|nursing\s+home|institute|medical\s+centre|medical\s+center)\b", low):
+        score += 15
+    if re.search(r"\b(?:super\s+speciality|multispeciality|multi[\s-]?specialty)\b", low):
+        score += 8
+    words = re.findall(r"[A-Za-z]{3,}", v)
+    score += min(len(words), 6) * 3
+    if len(v) >= 20:
+        score += 5
+    if _looks_like_address_not_hospital(v):
+        return -1
+    if _looks_like_ocr_garbage(v):
+        return -1
+    return score
+
+
 def _is_plausible_hospital_name(val: str) -> bool:
     v = (val or "").strip()
-    if len(v) < 6 or len(v) > 120:
+    if len(v) < 8 or len(v) > 120:
         return False
     if _looks_like_ocr_garbage(v):
         return False
+    if _looks_like_address_not_hospital(v):
+        return False
     low = v.lower()
-    if any(tok in low for tok in ("hospital", "clinic", "nursing", "medical", "health", "institute")):
-        return True
-    words = re.findall(r"[A-Z][A-Za-z.&'()-]{2,}", v)
-    return len(words) >= 2
+    if any(tok in low for tok in ("patient", "request for cashless", "policy", "member code")):
+        return False
+    if not any(tok in low for tok in ("hospital", "clinic", "nursing", "medical", "health", "institute")):
+        return False
+    words = re.findall(r"[A-Za-z]{3,}", v)
+    # Need a real proper name, not just "Civil Hospital" / "Near Hospital"
+    content_words = [w for w in words if w.lower() not in _HOSPITAL_ADDRESS_TOKENS | {"hospital", "clinic", "nursing", "home", "medical", "centre", "center", "institute", "healthcare", "health", "care"}]
+    return len(content_words) >= 1 and len(words) >= 2
+
+
+def _clean_hospital_candidate(raw: str) -> str:
+    name = re.sub(r"\s+", " ", (raw or "").strip())
+    name = re.split(
+        r"\s+(?:where|date|policy|member|claim|proposed|patient|age|sex|gender)\b",
+        name,
+        maxsplit=1,
+        flags=re.I,
+    )[0]
+    name = name.strip(" .-|([,:;")
+    return name
 
 
 def _extract_hospital(text: str) -> str:
+    """Pick the best hospital name from all pattern matches (never address crumbs)."""
+    candidates: List[Tuple[str, int]] = []
     for pat in _HOSPITAL_PATTERNS:
-        m = pat.search(text or "")
-        if m:
-            name = re.sub(r"\s+", " ", m.group(1).strip())
-            name = re.split(r"\s+(?:where|date|policy|member|claim)\b", name, maxsplit=1, flags=re.I)[0]
-            name = name.strip(" .-|([")
-            low = name.lower()
-            if len(name) >= 8 and "patient" not in low and "request for cashless" not in low:
-                if not re.search(r"^(?:date|policy|member|claim)\b", low):
-                    if _is_plausible_hospital_name(name):
-                        return name
-    return ""
+        for m in pat.finditer(text or ""):
+            name = _clean_hospital_candidate(m.group(1))
+            score = _score_hospital_name(name)
+            if score > 0:
+                candidates.append((name, score))
+    if not candidates:
+        return ""
+    candidates.sort(key=lambda x: x[1], reverse=True)
+    return candidates[0][0]
 
 
 def _format_inr_amount(raw: str) -> str:
@@ -956,14 +1042,13 @@ def _should_overwrite_claim_field(current: str, extracted: str) -> bool:
 
 
 def _should_overwrite_hospital(current: str, extracted: str) -> bool:
-    if not extracted or not _is_plausible_hospital_name(extracted):
+    if not extracted or _score_hospital_name(extracted) <= 0:
         return False
     cur = str(current or "").strip()
-    if not cur or cur.lower() in _UNKNOWN_ADMISSION or _looks_like_ocr_garbage(cur):
+    if not cur or cur.lower() in _UNKNOWN_ADMISSION or _score_hospital_name(cur) <= 0:
         return True
-    if _is_plausible_hospital_name(cur):
-        return False
-    return True
+    # Prefer higher-quality hospital names (query-letter full names beat address crumbs)
+    return _score_hospital_name(extracted) > _score_hospital_name(cur)
 
 
 def _should_overwrite_bill_total(current: str, extracted: str) -> bool:
@@ -1009,6 +1094,11 @@ def merge_claim_details_into_result(result: dict, facts: Dict[str, Any]) -> dict
                 claim[key] = val
         elif _should_overwrite_claim_field(str(claim.get(key) or ""), val):
             claim[key] = val
+
+    # Drop address-like / OCR-garbage hospital names left by the LLM
+    current_hospital = str(claim.get("hospital") or "").strip()
+    if current_hospital and _score_hospital_name(current_hospital) <= 0:
+        claim["hospital"] = ""
 
     for field in _PRIMARY_DATE_FIELDS + ("proposed_hospitalization_date",):
         source = facts.get(f"{field}_source", "")
