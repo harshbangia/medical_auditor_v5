@@ -20,7 +20,7 @@ class GuidelineAlignmentTests(unittest.TestCase):
         result = check_guideline_alignment(
             ["Hypoglycemia Guideline RG.pdf"],
             profile,
-            case_text="Chest pain, ECG changes, troponin elevated",
+            case_text="Chest pain, ECG changes, troponin elevated. Planned CABG.",
         )
         self.assertFalse(result["aligned"])
 
@@ -33,12 +33,45 @@ class GuidelineAlignmentTests(unittest.TestCase):
         )
         self.assertTrue(result["aligned"])
 
+    def test_allows_matching_guideline_despite_comorbid_noise(self):
+        """Right guideline must pass even if OCR mentions other specialties."""
+        profile = {
+            "diagnosis": "Hypoglycemia under evaluation with chest pain under evaluation",
+            "procedures": [],
+        }
+        result = check_guideline_alignment(
+            ["Hypoglycemia Guideline RG.pdf"],
+            profile,
+            case_text=(
+                "Hypoglycemia under evaluation. Chest pain. Creatinine 1.2. "
+                "Fever on day 2. Infection workup. ICU observation."
+            ),
+        )
+        self.assertTrue(result["aligned"])
+
+    def test_allows_when_guideline_topic_in_case_text_only(self):
+        profile = {"diagnosis": "Under evaluation", "procedures": []}
+        result = check_guideline_alignment(
+            ["Hypoglycemia Guideline RG.pdf"],
+            profile,
+            case_text="Patient admitted with hypoglycemia and low blood sugar.",
+        )
+        self.assertTrue(result["aligned"])
+
+    def test_allows_unclassified_guideline_filename(self):
+        result = check_guideline_alignment(
+            ["General Medical Protocol v2.pdf"],
+            {"diagnosis": "Unstable angina"},
+            case_text="CAD",
+        )
+        self.assertTrue(result["aligned"])
+
     def test_assert_raises_on_mismatch(self):
         with self.assertRaises(GuidelineMismatchError):
             assert_guideline_alignment(
                 ["Hypoglycemia Guideline RG.pdf"],
                 {"diagnosis": "Trigeminal neuralgia"},
-                case_text="Facial pain neuralgia MVD planned",
+                case_text="Facial pain neuralgia MVD planned.",
             )
 
 
