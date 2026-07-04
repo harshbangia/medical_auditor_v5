@@ -28,10 +28,13 @@ PDF_DPI = int(os.getenv("PDF_DPI", "150"))
 VISION_OCR_ENABLED = os.getenv("VISION_OCR_ENABLED", "1") not in ("0", "false", "False", "")
 # Default to gpt-4o (not mini) — handwritten medical notes need the bigger model.
 VISION_OCR_MODEL = os.getenv("VISION_OCR_MODEL", "gpt-4o")
-MAX_VISION_OCR_PAGES = int(os.getenv("MAX_VISION_OCR_PAGES", "25"))
-# 300 DPI (up from 220) — handwriting transcription accuracy is DPI-sensitive.
-VISION_OCR_DPI = int(os.getenv("VISION_OCR_DPI", "300"))
+MAX_VISION_OCR_PAGES = int(os.getenv("MAX_VISION_OCR_PAGES", "12"))
+# 250 DPI (up from 220) — better handwriting accuracy without bloating payloads.
+VISION_OCR_DPI = int(os.getenv("VISION_OCR_DPI", "250"))
 VISION_OCR_MIN_NATIVE_CHARS = int(os.getenv("VISION_OCR_MIN_NATIVE_CHARS", "120"))
+# Vision transcription is API/IO-bound → parallelise across pages. This is the
+# single biggest lever on wall-clock time for handwriting-heavy claim files.
+VISION_OCR_WORKERS = max(1, int(os.getenv("VISION_OCR_WORKERS", "5")))
 # A page with an embedded image and fewer than this many machine-readable words
 # is treated as "scan-like" and sent to vision transcription — even if it has a
 # printed letterhead. This catches scanned pages whose handwritten body would
@@ -395,27 +398,55 @@ def extract_text_and_images(pdf_path, source_name: str = ""):
                 f"🧠 Vision transcription on {len(candidates)} text-light page(s) "
                 f"using {VISION_OCR_MODEL}"
             )
+            # Render page images sequentially (fast, CPU-bound via fitz), then
+            # transcribe them in PARALLEL (slow, API-bound). Sequential
+            # transcription of every scan-like page was the 12-minute regression.
             doc_for_ocr = fitz.open(pdf_path)
-            transcribed_blocks = []
+            rendered_imgs = []
             try:
                 for page_num in candidates:
                     image_b64 = _page_image_for_transcription(doc_for_ocr, pdf_path, page_num)
-                    if not image_b64:
-                        continue
-                    transcript = _transcribe_page_with_vision(image_b64, page_num, source_name)
-                    if not transcript:
-                        continue
-                    header = (
-                        f"=== Page {page_num} — vision transcription"
-                        f"{f' ({source_name})' if source_name else ''} ==="
-                    )
-                    block = f"{header}\n{transcript}"
-                    transcribed_blocks.append(block)
-                    page_ocr_text[page_num] = (
-                        page_ocr_text.get(page_num, "") + "\n" + transcript
-                    ).strip()
+                    if image_b64:
+                        rendered_imgs.append((page_num, image_b64))
             finally:
                 doc_for_ocr.close()
+
+            transcripts = {}
+            if rendered_imgs:
+                workers = min(VISION_OCR_WORKERS, len(rendered_imgs))
+                if workers <= 1:
+                    for page_num, b64 in rendered_imgs:
+                        transcripts[page_num] = _transcribe_page_with_vision(
+                            b64, page_num, source_name
+                        )
+                else:
+                    from concurrent.futures import ThreadPoolExecutor, as_completed
+                    with ThreadPoolExecutor(max_workers=workers) as pool:
+                        futures = {
+                            pool.submit(_transcribe_page_with_vision, b64, pn, source_name): pn
+                            for pn, b64 in rendered_imgs
+                        }
+                        for fut in as_completed(futures):
+                            pn = futures[fut]
+                            try:
+                                transcripts[pn] = fut.result()
+                            except Exception as exc:
+                                print(f"⚠️ Vision transcription failed for page {pn}: {exc}")
+                                transcripts[pn] = ""
+
+            transcribed_blocks = []
+            for page_num, _b64 in rendered_imgs:
+                transcript = (transcripts.get(page_num) or "").strip()
+                if not transcript:
+                    continue
+                header = (
+                    f"=== Page {page_num} — vision transcription"
+                    f"{f' ({source_name})' if source_name else ''} ==="
+                )
+                transcribed_blocks.append(f"{header}\n{transcript}")
+                page_ocr_text[page_num] = (
+                    page_ocr_text.get(page_num, "") + "\n" + transcript
+                ).strip()
             if transcribed_blocks:
                 full_text = (full_text + "\n\n" + "\n\n".join(transcribed_blocks)).strip()
                 added_chars = sum(len(b) for b in transcribed_blocks)

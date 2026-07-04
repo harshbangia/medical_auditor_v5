@@ -39,7 +39,8 @@ _SPECIALTY_KEYWORDS: Dict[str, Tuple[str, ...]] = {
     ),
     "gastroenterology": (
         "gastro", "hepatic", "pancrea", "gi bleed", "cholecyst",
-        "appendic", "cirrhosis", "hepatitis",
+        "appendic", "cirrhosis", "hepatitis", "hemorrhoid", "haemorrhoid",
+        "piles", "anal fissure", "fistula", "proctolog", "hernia",
     ),
     "nephrology": (
         "nephro", "dialysis", "ckd", "aki", "renal failure", "kidney failure",
@@ -75,6 +76,7 @@ _PRIMARY_DIAGNOSIS_KEYWORDS: Dict[str, Tuple[str, ...]] = {
     ),
     "gastroenterology": (
         "gi bleed", "cholecyst", "appendic", "cirrhosis", "pancreatitis",
+        "hemorrhoid", "haemorrhoid", "piles", "anal fissure", "fistula-in-ano",
     ),
     "nephrology": (
         "dialysis", "ckd", "aki", "renal failure", "kidney failure",

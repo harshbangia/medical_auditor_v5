@@ -84,6 +84,45 @@ remove/downgrade unsupported content, never invent it.
 - Full end-to-end run requires your environment (OpenAI key, S3, PyMuPDF), which
   isn't available in this workspace — run your existing `backend/tests` there.
 
+## Hotfix round (after first live run — Naveen Kumar report)
+
+The first live run surfaced two problems: a 12-minute runtime and a few new
+regressions. Fixed:
+
+1. **Performance — vision OCR was fully sequential.** Every scan-like page was a
+   serial gpt-4o high-detail call. Now the page renders happen sequentially
+   (fast) and the transcription calls run in a thread pool
+   (`VISION_OCR_WORKERS`, default 5). Also: `MAX_VISION_OCR_PAGES` lowered
+   25 → 12 (per document) and `VISION_OCR_DPI` 300 → 250. Expected wall-clock
+   drops from ~12 min to a few minutes on a 5-PDF handwritten claim.
+2. **Date guard was too aggressive.** It deleted the *real* admission date
+   (`18/10/2023`, corroborated by both the pre-auth and the discharge) because
+   it was 2 years from the query-letter's proposed date — leaving empty
+   admission fields and a summary that contradicted the claim block.
+   `enforce_date_plausibility` is now **corroboration-aware**: it never deletes a
+   date the deterministic extractor chose as a document-of-record value, and
+   only scrubs *uncorroborated* out-of-window dates from LLM free text (so the
+   rogue `18/01/2023` follow-up is still removed). Impossible dates (future /
+   pre-2015) are always dropped. Conflicting-but-plausible dates are surfaced in
+   the discrepancy table, not silently deleted.
+3. **"Emergency" on a planned pre-auth.** The LLM set Emergency (it saw ICU);
+   nothing overrode it. New `correct_nature_of_admission` forces
+   "Planned / Elective" when planned markers (pre-auth / proposed hospitalisation)
+   are present and no explicit emergency-admission marker exists.
+4. **Duplicated hospital name** ("SHRI HARI … Shri Hari …") is de-duplicated in
+   `canonicalize_entities` when the tail merely repeats the head.
+5. **Specialty tables widened** (hemorrhoids / piles / fistula / hernia →
+   gastroenterology) so mismatched auto-selected guidelines are flagged.
+
+Note on the guideline still showing `6_orthopedics_goi.pdf` for a hemorrhoids
+case: that guideline was almost certainly **manually selected** in the UI
+(`report_confidence` was Medium with no manual-review flag, which only happens
+for a user-chosen guideline). If it was auto-selected, the new specialty
+cross-check now drops confidence below 0.6 and raises the manual-review flag.
+Either way, if the S3 catalogue has no proctology/GI guideline, the audit should
+be run against the closest correct protocol or the case flagged for review —
+the engine can't audit hemorrhoids meaningfully against an orthopedics guideline.
+
 ## Suggested next steps (from the redesign doc, not yet built)
 Phases 1–5: per-page `PageRecord` ingestion with structured/ensemble
 transcription, the `facts/` layer with a `Fact` provenance model, semantic

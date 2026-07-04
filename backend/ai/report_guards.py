@@ -22,7 +22,10 @@ from typing import Any, Dict, List, Optional
 from backend.utils.claim_details_extractor import (
     _claim_reference_year,
     _parse_date_year,
+    _canonical_date_key,
     _score_hospital_name,
+    _EMERGENCY_ADMISSION_MARKERS,
+    _PLANNED_MARKERS,
 )
 
 # ---------------------------------------------------------------------------
@@ -204,50 +207,95 @@ def _scrub_dates_in_text(value: str, ref_year: Optional[int]) -> str:
     return _DATE_TOKEN.sub(_repl, value)
 
 
-def enforce_date_plausibility(result: dict, case_text: str) -> int:
-    """Drop out-of-window dates wherever they appear. Returns count removed."""
-    ref_year = _claim_reference_year(case_text)
-    removed = 0
+def _impossible_year(year: Optional[int]) -> bool:
+    """A date that cannot belong to any real claim (far future or ancient)."""
+    if year is None:
+        return False
+    now_year = datetime.now().year
+    return year < _ABSOLUTE_MIN_YEAR or year > now_year + 1
 
-    # Primary claim date fields
+
+def enforce_date_plausibility(result: dict, case_text: str) -> int:
+    """Remove only implausible dates, and NEVER delete a corroborated one.
+
+    Two classes of removal:
+      * IMPOSSIBLE dates (year < 2015 or in the future) — always dropped.
+      * Out-of-window OUTLIERS in LLM free text (timeline / clinical_findings)
+        that are NOT corroborated by the extractor's document-of-record dates.
+
+    Primary claim dates chosen by the deterministic extractor are trusted: they
+    already passed document-type-aware validation and drive the discrepancy
+    table. Deleting them (as an earlier version did) produced empty admission
+    fields and a summary that contradicted the claim block — worse than the
+    conflict it tried to hide.
+    """
+    ref_year = _claim_reference_year(case_text)
     claim = result.get("claim_details") or {}
-    for field in (
+    primary_fields = (
         "consultation_date", "date_of_admission",
         "date_of_discharge", "proposed_hospitalization_date",
-    ):
+    )
+
+    # Corroborated set = the extractor's picks (kept unless truly impossible).
+    trusted_keys = set()
+    for field in primary_fields:
         val = str(claim.get(field) or "").strip()
-        if val and not _date_token_plausible(val, ref_year):
+        if val and not _impossible_year(_parse_date_year(val, ref_year)):
+            key = _canonical_date_key(val, ref_year)
+            if key:
+                trusted_keys.add(key)
+
+    def _token_is_bad(token: str) -> bool:
+        year = _parse_date_year(token, ref_year)
+        if _impossible_year(year):
+            return True
+        key = _canonical_date_key(token, ref_year)
+        if key and key in trusted_keys:
+            return False  # corroborated by a document-of-record date → keep
+        return not _year_is_plausible(year, ref_year)  # uncorroborated outlier
+
+    removed = 0
+
+    # 1) Primary claim dates: only remove the truly impossible.
+    for field in primary_fields:
+        val = str(claim.get(field) or "").strip()
+        if val and _impossible_year(_parse_date_year(val, ref_year)):
             claim[field] = ""
             claim[f"{field}_source"] = ""
             removed += 1
 
-    # Timeline rows: blank the date but keep the event
+    # 2) Timeline free-text dates: blank bad ones, keep the event.
     for row in result.get("timeline") or []:
         if not isinstance(row, dict):
             continue
         d = str(row.get("date") or "").strip()
-        if d and not _date_token_plausible(d, ref_year):
+        if d and _token_is_bad(d):
             row["date"] = ""
-            row.setdefault("notes", []).append("date removed: outside claim window")
+            row.setdefault("notes", []).append("date removed: implausible/uncorroborated")
             removed += 1
 
-    # clinical_findings: dates hide inside value/comment (this is the 18/01/2023 leak)
+    # 3) clinical_findings: dates hide inside value/comment (the 18/01/2023 leak).
     for row in result.get("clinical_findings") or []:
         if not isinstance(row, dict):
             continue
         for key in ("value", "comment", "parameter"):
             original = str(row.get(key) or "")
-            scrubbed = _scrub_dates_in_text(original, ref_year)
+
+            def _repl(match: "re.Match") -> str:
+                tok = match.group(0)
+                return "[date unreadable]" if _token_is_bad(tok) else tok
+
+            scrubbed = _DATE_TOKEN.sub(_repl, original)
             if scrubbed != original:
                 row[key] = scrubbed
                 removed += 1
 
-    # all_document_dates provenance list
+    # 4) all_document_dates provenance: drop only impossible dates.
     kept = []
     for entry in (claim.get("all_document_dates") or []):
         if isinstance(entry, dict):
             v = str(entry.get("value") or "")
-            if v and not _date_token_plausible(v, ref_year):
+            if v and _impossible_year(_parse_date_year(v, ref_year)):
                 removed += 1
                 continue
         kept.append(entry)
@@ -255,6 +303,25 @@ def enforce_date_plausibility(result: dict, case_text: str) -> int:
         claim["all_document_dates"] = kept
 
     return removed
+
+
+def correct_nature_of_admission(result: dict, case_text: str) -> None:
+    """Force Planned/Elective on pre-auth/planned cases, overriding an LLM guess.
+
+    A pre-authorisation request or a query letter with a *proposed* date of
+    hospitalisation is planned/elective by definition. The LLM sometimes writes
+    "Emergency" after seeing an ICU/HDU room — this corrects that unless the
+    documents contain an explicit emergency-admission marker.
+    """
+    claim = result.get("claim_details") or {}
+    blob = case_text or ""
+    has_planned = bool(_PLANNED_MARKERS.search(blob)) or bool(
+        str(claim.get("proposed_hospitalization_date") or "").strip()
+    )
+    has_emergency = bool(_EMERGENCY_ADMISSION_MARKERS.search(blob))
+    current = str(claim.get("nature_of_admission") or "").strip()
+    if has_planned and not has_emergency and current.lower() != "planned / elective":
+        claim["nature_of_admission"] = "Planned / Elective"
 
 
 # ---------------------------------------------------------------------------
@@ -294,7 +361,8 @@ def canonicalize_entities(result: dict) -> None:
     claim = result.get("claim_details") or {}
     hospital = str(claim.get("hospital") or "").strip()
     if hospital:
-        cleaned = _HOSPITAL_ADDRESS_TAIL.sub("", hospital).strip(" ,.-")
+        cleaned = _dedupe_hospital_name(hospital)
+        cleaned = _HOSPITAL_ADDRESS_TAIL.sub("", cleaned).strip(" ,.-")
         cleaned = _fix_ocr_words(cleaned)
         cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
         # Only keep the cleaned form if it still looks like a real hospital name
@@ -302,6 +370,40 @@ def canonicalize_entities(result: dict) -> None:
             claim["hospital"] = cleaned
         elif _score_hospital_name(hospital) <= 0:
             claim["hospital"] = ""
+
+
+_FACILITY_KEYWORD = re.compile(
+    r"\b(?:hospital|clinic|nursing\s+home|medical\s+centre|medical\s+center|institute|healthcare)\b",
+    re.I,
+)
+_FACILITY_FILLER = {
+    "hospital", "clinic", "nursing", "home", "medical", "centre", "center",
+    "institute", "healthcare", "health", "care", "multispeciality",
+    "multispecialty", "speciality", "specialty", "super", "the", "and", "&",
+}
+
+
+def _dedupe_hospital_name(name: str) -> str:
+    """Collapse a name repeated by concatenated sources.
+
+    'SHRI HARI MULTISPECIALITY HOSPITAL Shri Hari Multispeciality Hospital'
+    → 'SHRI HARI MULTISPECIALITY HOSPITAL'. Only truncates when the tail is a
+    repetition of the head (its distinctive words already appear), so genuine
+    long names ('… Hospital and Medical Research Institute') are preserved.
+    """
+    m = _FACILITY_KEYWORD.search(name)
+    if not m:
+        return name
+    head = name[: m.end()].strip()
+    tail = name[m.end():].strip(" ,.-")
+    if not tail:
+        return name
+    head_words = {w for w in re.findall(r"[a-z]+", head.lower())}
+    tail_words = {w for w in re.findall(r"[a-z]+", tail.lower())}
+    distinctive_tail = tail_words - _FACILITY_FILLER
+    if distinctive_tail and distinctive_tail <= head_words:
+        return head
+    return name
 
 
 # ---------------------------------------------------------------------------
@@ -385,6 +487,7 @@ def apply_report_guards(
 
     financials_stripped = strip_fabricated_financials(result, case_text, claim_facts)
     enforce_date_plausibility(result, case_text)
+    correct_nature_of_admission(result, case_text)
     canonicalize_entities(result)
     compute_report_confidence(
         result, source_summaries, guideline_selection, financials_stripped
