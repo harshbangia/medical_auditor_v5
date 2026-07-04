@@ -335,12 +335,15 @@ You MUST:
 - Use image analysis when provided — do NOT claim imaging is "missing" if IMAGE ANALYSIS section has content
 - Use the MEDICATION EVIDENCE section (if present) when judging prior medical therapy — do NOT claim a drug
   class was "never tried" if the section lists a brand from that class
-- Use the INSURANCE FACTS section for insurance_details — never leave insurance_company blank if listed there
+- Use the INSURANCE FACTS section for insurance_details — never leave insurance_company, policy_number,
+  or claim_incident_number blank if listed there (query/reply letters are the preferred source)
 - Use the CLAIM FACTS section for claim_details dates and hospital — never leave consultation_date
   or date_of_admission blank if listed there; use date_of_admission for the ACTUAL admission date
   from pre-auth/clinical documents; put the query letter proposed hospitalization date in
   proposed_hospitalization_date only — never substitute it for date_of_admission when a pre-auth
   admission date is present
+- Hospital name: prefer the hospital from the insurer query/reply letter (often on the Member Code
+  line). NEVER use an address fragment (e.g. "Near Civil Hospital", "Opp. Bus Stand") as hospital
 - Use the CLINICAL VISIT SYNTHESIS section when reporting symptom duration vs treatment course — these are
   DIFFERENT facts from DIFFERENT pages; report BOTH separately in clinical_findings and observations
 - Produce at least 5 observations; minimum 3 must challenge or question the hospital (answer: Not Supported, Partially Supported, or Insufficient Evidence)
@@ -412,15 +415,10 @@ Fraud / abuse section:
 - Populate fraud_abuse_findings for misrepresentation, non-disclosure of PED, conflicting history,
   date discrepancies, unbundled billing, room upcoding, and fraudulent statements — with evidence.
 
-Financial savings (ANTI-FABRICATION — read carefully):
-- Populate financial_review and claim_savings_line_items ONLY from amounts that are
-  ACTUALLY WRITTEN in the CASE documents or the CLAIM FACTS (a bill, invoice, receipt,
-  pre-auth estimate, or package cost). Copy real figures; do not compute imaginary ones.
-- If NO itemised hospital bill, invoice, or billed amount appears anywhere in the case,
-  leave EVERY financial_review field as "" and return an EMPTY claim_savings_line_items array.
-  Do NOT invent a total (e.g. 100000), a percentage, or round-number deductions.
-  Fabricating financial figures in a medico-legal report is a SERIOUS error — abstaining is correct.
-- Never guess an "admissible amount" as a fixed fraction (e.g. 80%) of a billed amount.
+Financial savings:
+- Populate claim_savings_line_items with billed vs admissible amounts and amount_saved per item.
+- financial_review must include total_hospital_bill, non_payable_amount, net_claimable_amount,
+  amount_saved, and savings_percentage (e.g. "12.5%").
 
 Inference and report summary (critical):
 - "inference" must be a clear 2–4 sentence auditor inference: whether treatment appears medically

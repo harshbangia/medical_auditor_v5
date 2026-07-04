@@ -34,25 +34,6 @@ def generate_pdf(data, filename="audit_report.pdf"):
     content.append(Paragraph(f"<b>Ref:</b> {ref} &nbsp;&nbsp; <b>Date:</b> {rdate}", styles["Normal"]))
     content.append(Spacer(1, 12))
 
-    # Confidence / manual-review banner (v6 abstention signal)
-    confidence = (data.get("report_confidence") or "").strip()
-    if confidence:
-        color = {"High": "#1a7f37", "Medium": "#b7791f", "Low": "#b42318"}.get(confidence, "#333")
-        content.append(Paragraph(
-            f'<b>Report confidence:</b> <font color="{color}">{confidence}</font>',
-            styles["Normal"],
-        ))
-    if data.get("manual_review_required"):
-        reasons = data.get("manual_review_reasons") or []
-        reason_text = " ".join(f"({i+1}) {r}" for i, r in enumerate(reasons)) or \
-            "Key facts could not be reliably established from the documents."
-        content.append(Paragraph(
-            f'<font color="#b42318"><b>⚠ MANUAL REVIEW REQUIRED.</b> {reason_text}</font>',
-            styles["Normal"],
-        ))
-    if confidence or data.get("manual_review_required"):
-        content.append(Spacer(1, 12))
-
     # Guideline(s)
     content.extend(section("Guideline(s) Referenced", styles))
     guidelines_used = data.get("guidelines_used") or []
@@ -314,48 +295,37 @@ def generate_pdf(data, filename="audit_report.pdf"):
     content.extend(section("9. Financial Review & Claim Savings", styles))
     fin = data.get("financial_review") or {}
     savings = data.get("claim_savings") or {}
-    fin_unavailable = (
-        fin.get("status") == "not_available" or savings.get("status") == "not_available"
-    )
-    if fin_unavailable:
-        note = fin.get("note") or savings.get("notes") or (
-            "Financial review not available — no itemised hospital bill was found in the "
-            "uploaded documents. Figures were not estimated to avoid fabrication."
-        )
-        content.append(kv_table([("Financial review", note)], header=False))
-        content.append(Spacer(1, 12))
-    else:
-        content.append(kv_table([
-            ("Total hospital claim", savings.get("total_claim_amount") or fin.get("total_hospital_bill") or "—"),
-            ("Admissible amount", savings.get("admissible_amount") or fin.get("net_claimable_amount") or "—"),
-            ("Amount saved (highlighted)", savings.get("amount_saved") or fin.get("amount_saved") or "—"),
-            ("Savings percentage (highlighted)", savings.get("savings_percentage") or fin.get("savings_percentage") or "—"),
-            ("Non-payable amount", fin.get("non_payable_amount") or "—"),
-            ("Recommended approval amount", fin.get("recommended_approval_amount") or "—"),
-            ("Patient liability", fin.get("patient_liability") or "—"),
-        ], header=False))
-        content.append(Spacer(1, 6))
-        save_rows = []
-        for row in savings.get("line_items") or []:
-            if not isinstance(row, dict):
-                continue
-            save_rows.append([
-                row.get("item") or "—",
-                row.get("billed_amount") or "—",
-                row.get("admissible_amount") or "—",
-                row.get("amount_saved") or "—",
-                row.get("reason") or "—",
-            ])
-        if save_rows:
-            content.append(data_table(
-                ["Item", "Billed", "Admissible", "Amount saved", "Reason"],
-                save_rows,
-                col_widths=[110, 70, 80, 80, 160],
-            ))
-        if savings.get("notes"):
-            content.append(Spacer(1, 4))
-            content.append(kv_table([("Notes", savings.get("notes"))], header=False))
-        content.append(Spacer(1, 12))
+    content.append(kv_table([
+        ("Total hospital claim", savings.get("total_claim_amount") or fin.get("total_hospital_bill") or "—"),
+        ("Admissible amount", savings.get("admissible_amount") or fin.get("net_claimable_amount") or "—"),
+        ("Amount saved (highlighted)", savings.get("amount_saved") or fin.get("amount_saved") or "—"),
+        ("Savings percentage (highlighted)", savings.get("savings_percentage") or fin.get("savings_percentage") or "—"),
+        ("Non-payable amount", fin.get("non_payable_amount") or "—"),
+        ("Recommended approval amount", fin.get("recommended_approval_amount") or "—"),
+        ("Patient liability", fin.get("patient_liability") or "—"),
+    ], header=False))
+    content.append(Spacer(1, 6))
+    save_rows = []
+    for row in savings.get("line_items") or []:
+        if not isinstance(row, dict):
+            continue
+        save_rows.append([
+            row.get("item") or "—",
+            row.get("billed_amount") or "—",
+            row.get("admissible_amount") or "—",
+            row.get("amount_saved") or "—",
+            row.get("reason") or "—",
+        ])
+    if save_rows:
+        content.append(data_table(
+            ["Item", "Billed", "Admissible", "Amount saved", "Reason"],
+            save_rows,
+            col_widths=[110, 70, 80, 80, 160],
+        ))
+    if savings.get("notes"):
+        content.append(Spacer(1, 4))
+        content.append(kv_table([("Notes", savings.get("notes"))], header=False))
+    content.append(Spacer(1, 12))
 
     # 10. Timeline
     content.extend(section("10. Timeline", styles))
