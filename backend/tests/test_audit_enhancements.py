@@ -9,8 +9,11 @@ from backend.utils.guideline_alignment import (
 )
 from backend.utils.fraud_abuse_detector import detect_fraud_abuse
 from backend.utils.claim_savings import build_claim_savings
-from backend.utils.doctor_registration import extract_doctor_registrations, validate_doctor_registrations
-from backend.ai.audit_result_enricher import enrich_audit_result, _remove_ppi_exclusions
+from backend.ai.audit_result_enricher import (
+    enrich_audit_result,
+    _remove_ppi_exclusions,
+    _ensure_inference_and_summary,
+)
 from backend.ai.drug_normalizer import build_medication_evidence_section
 
 
@@ -20,7 +23,7 @@ class GuidelineAlignmentTests(unittest.TestCase):
         result = check_guideline_alignment(
             ["Hypoglycemia Guideline RG.pdf"],
             profile,
-            case_text="Chest pain, ECG changes, troponin elevated",
+            case_text="Chest pain, ECG changes, troponin elevated. Planned CABG.",
         )
         self.assertFalse(result["aligned"])
 
@@ -33,12 +36,45 @@ class GuidelineAlignmentTests(unittest.TestCase):
         )
         self.assertTrue(result["aligned"])
 
+    def test_allows_matching_guideline_despite_comorbid_noise(self):
+        """Right guideline must pass even if OCR mentions other specialties."""
+        profile = {
+            "diagnosis": "Hypoglycemia under evaluation with chest pain under evaluation",
+            "procedures": [],
+        }
+        result = check_guideline_alignment(
+            ["Hypoglycemia Guideline RG.pdf"],
+            profile,
+            case_text=(
+                "Hypoglycemia under evaluation. Chest pain. Creatinine 1.2. "
+                "Fever on day 2. Infection workup. ICU observation."
+            ),
+        )
+        self.assertTrue(result["aligned"])
+
+    def test_allows_when_guideline_topic_in_case_text_only(self):
+        profile = {"diagnosis": "Under evaluation", "procedures": []}
+        result = check_guideline_alignment(
+            ["Hypoglycemia Guideline RG.pdf"],
+            profile,
+            case_text="Patient admitted with hypoglycemia and low blood sugar.",
+        )
+        self.assertTrue(result["aligned"])
+
+    def test_allows_unclassified_guideline_filename(self):
+        result = check_guideline_alignment(
+            ["General Medical Protocol v2.pdf"],
+            {"diagnosis": "Unstable angina"},
+            case_text="CAD",
+        )
+        self.assertTrue(result["aligned"])
+
     def test_assert_raises_on_mismatch(self):
         with self.assertRaises(GuidelineMismatchError):
             assert_guideline_alignment(
                 ["Hypoglycemia Guideline RG.pdf"],
                 {"diagnosis": "Trigeminal neuralgia"},
-                case_text="Facial pain neuralgia MVD planned",
+                case_text="Facial pain neuralgia MVD planned.",
             )
 
 
@@ -113,22 +149,41 @@ class PpiExclusionTests(unittest.TestCase):
         self.assertFalse(any("Pantoprazole" in c for c in result["challenge_points"]))
 
 
-class DoctorRegistrationTests(unittest.TestCase):
-    def test_extracts_registration_number(self):
-        text = "Treating surgeon Dr. Anil Jain Reg. No. MH-12345"
-        docs = extract_doctor_registrations(text)
-        self.assertTrue(docs)
-        self.assertTrue(docs[0]["registration_number"])
-
-    def test_validate_flags_missing(self):
-        out = validate_doctor_registrations("No doctor details here")
-        self.assertTrue(out["flagged"])
-        self.assertEqual(out["overall_status"], "not_found")
+class InferenceSummaryTests(unittest.TestCase):
+    def test_builds_inference_and_bullet_summary(self):
+        result = {
+            "patient_details": {"name": "Mrs. Test", "age": "35", "sex": "Female"},
+            "claim_details": {
+                "hospital": "Test Hospital",
+                "diagnosis": "Hypoglycemia under evaluation",
+                "date_of_admission": "04/12/2025",
+                "date_of_discharge": "08/12/2025",
+                "nature_of_admission": "Emergency",
+            },
+            "insurance_details": {"insurance_company": "IFFCO-TOKIO", "policy_number": "H1607192"},
+            "compliance_verdict": "Partially Compliant",
+            "inference": "The claim presents partial compliance with guidelines.",
+            "fraud_abuse": {"risk_level": "Low", "findings": [], "summary": "None"},
+            "claim_savings": {
+                "total_claim_amount": "Rs. 80,000",
+                "amount_saved": "Rs. 5,000",
+                "savings_percentage": "6.3%",
+            },
+            "financial_review": {},
+            "documentation_gaps": ["Conflicting admission dates must be reconciled."],
+        }
+        _ensure_inference_and_summary(result)
+        self.assertGreater(len(result["inference"]), 40)
+        self.assertNotIn("The claim presents partial compliance with guidelines.", result["inference"])
+        self.assertTrue(result["report_summary"])
+        self.assertTrue(any("Patient:" in b for b in result["report_summary"]))
+        self.assertTrue(any("Recommendation:" in b or "Compliance" in b for b in result["report_summary"]))
 
 
 class EnrichmentIntegrationTests(unittest.TestCase):
     def test_enrich_adds_new_sections(self):
         result = {
+            "patient_details": {"name": "Test Patient"},
             "claim_details": {"diagnosis": "Hypoglycemia under evaluation"},
             "clinical_checklist": [{"area": "MRI Report", "available": "NO", "remarks": "missing"}],
             "treatment_billing_audit": {"excluded_items_billed": "Pantoprazole"},
@@ -138,12 +193,15 @@ class EnrichmentIntegrationTests(unittest.TestCase):
             "guideline_deviations": [],
             "challenge_points": [],
             "documentation_gaps": [],
+            "inference": "",
         }
-        case = "Dr. Sharma Reg No MH-99887. Patient with hypoglycemia. Tab Pan 40 given."
+        case = "Patient with hypoglycemia. Tab Pan 40 given."
         fixed = enrich_audit_result(result, case)
-        self.assertIn("doctor_validation", fixed)
+        self.assertNotIn("doctor_validation", fixed)
         self.assertIn("fraud_abuse", fixed)
         self.assertIn("claim_savings", fixed)
+        self.assertTrue(fixed.get("inference"))
+        self.assertTrue(fixed.get("report_summary"))
         mri_rows = [
             i for i in fixed.get("clinical_checklist") or []
             if isinstance(i, dict) and "mri" in (i.get("area") or "").lower()

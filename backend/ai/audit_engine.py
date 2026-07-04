@@ -417,6 +417,15 @@ Financial savings:
 - financial_review must include total_hospital_bill, non_payable_amount, net_claimable_amount,
   amount_saved, and savings_percentage (e.g. "12.5%").
 
+Inference and report summary (critical):
+- "inference" must be a clear 2–4 sentence auditor inference: whether treatment appears medically
+  necessary, overall compliance stance, and whether to approve / hold / deny — with the main reason.
+  Do NOT write vague lines like "partial compliance with guidelines" alone.
+- "report_summary" must be 5–8 short bullets giving a gist of the WHOLE report:
+  patient/hospital/diagnosis, key clinical points, fraud/abuse or documentation risks,
+  financial claim vs amount saved, and final recommendation.
+- Do NOT include doctor registration validation (handled manually outside this report).
+
 Typed MRI in case text: if IMPRESSION mentions neurovascular conflict / grade III, populate
 imaging_findings from that report — do NOT claim MRI report is missing when CT/HRCT is present instead.
 
@@ -450,8 +459,14 @@ Return ONLY JSON:
   "financial_review": {{"total_hospital_bill": "", "non_payable_amount": "", "net_claimable_amount": "", "recommended_approval_amount": "", "patient_liability": "", "amount_saved": "", "savings_percentage": ""}},
   "fraud_abuse_findings": [{{"category": "misrepresentation|billing_abuse|documentation_abuse|policy_compliance", "indicator": "", "evidence": "", "severity": "High|Medium|Low", "recommendation": ""}}],
   "claim_savings_line_items": [{{"item": "", "billed_amount": "", "admissible_amount": "", "amount_saved": "", "reason": ""}}],
-  "doctor_details": [{{"doctor_name": "", "registration_number": "", "specialty": ""}}],
-  "inference": "",
+  "inference": "2-4 sentences: clinical necessity + claim stance (approve / hold / deny) with the main reason",
+  "report_summary": [
+    "Brief bullet covering patient / hospital / diagnosis",
+    "Brief bullet on key clinical or documentation finding",
+    "Brief bullet on fraud/abuse or compliance risk",
+    "Brief bullet on financial claim vs amount saved",
+    "Brief bullet on final recommendation"
+  ],
   "auditor_conclusion": "",
   "remarks": "",
   "qa_section": []

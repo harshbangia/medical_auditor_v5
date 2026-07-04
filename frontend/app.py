@@ -1326,30 +1326,6 @@ if "report" in st.session_state:
         unsafe_allow_html=True,
     )
 
-    # Doctor registration validation
-    dv = data.get("doctor_validation") or {}
-    st.markdown('<p class="gwx-section-title">Doctor registration validation</p>', unsafe_allow_html=True)
-    if dv.get("flagged"):
-        st.error(dv.get("summary") or "Doctor registration requires verification.")
-    else:
-        st.info(dv.get("summary") or "No doctor registration details extracted.")
-    for d in dv.get("doctors") or []:
-        if not isinstance(d, dict):
-            continue
-        st.markdown(
-            f"""
-            <div class="gwx-card gwx-card-compact">
-            <b class="gwx-field-title">{d.get('doctor_name') or 'Doctor'}</b><br>
-            <span class="gwx-text-soft">Registration no.:</span> {d.get('registration_number') or '—'}<br>
-            <span class="gwx-text-soft">Status:</span> {d.get('status') or '—'}<br>
-            <i class="gwx-comment">{d.get('message') or ''}</i>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        if d.get("nmc_search_url"):
-            st.markdown(f"[Verify on NMC Indian Medical Register]({d['nmc_search_url']})")
-
     # Fraud / abuse identification
     fa = data.get("fraud_abuse") or {}
     st.markdown('<p class="gwx-section-title">Fraud / abuse identification</p>', unsafe_allow_html=True)
@@ -1563,7 +1539,29 @@ if "report" in st.session_state:
 
     st.markdown('<p class="gwx-section-title">Inference</p>', unsafe_allow_html=True)
     conclusion = (data.get("inference") or data.get("auditor_conclusion") or "").strip() or "—"
-    st.success(conclusion)
+    st.markdown(
+        f"""
+        <div class="gwx-card">
+        <p class="gwx-row-tight" style="white-space:pre-line">{conclusion}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown('<p class="gwx-section-title">Report summary</p>', unsafe_allow_html=True)
+    summary_bullets = data.get("report_summary") or []
+    if summary_bullets:
+        bullets_html = "".join(f"<li>{b}</li>" for b in summary_bullets)
+        st.markdown(
+            f"""
+            <div class="gwx-card" style="border-left:4px solid #2563eb;">
+            <ul style="margin:0.25rem 0 0.25rem 1.1rem; line-height:1.6;">{bullets_html}</ul>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        st.info("No summary available.")
 
     st.markdown('<p class="gwx-section-title">Remarks</p>', unsafe_allow_html=True)
     st.info(data.get("remarks") or "—")

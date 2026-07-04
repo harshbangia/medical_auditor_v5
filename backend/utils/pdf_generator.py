@@ -145,33 +145,6 @@ def generate_pdf(data, filename="audit_report.pdf"):
         ))
         content.append(Spacer(1, 12))
 
-    # Doctor registration validation
-    content.extend(section("Doctor Registration Validation", styles))
-    dv = data.get("doctor_validation") or {}
-    content.append(kv_table([
-        ("Overall status", dv.get("overall_status") or "—"),
-        ("Flagged", "YES" if dv.get("flagged") else "NO"),
-        ("Summary", dv.get("summary") or "—"),
-    ], header=False))
-    doc_rows = []
-    for d in dv.get("doctors") or []:
-        if not isinstance(d, dict):
-            continue
-        doc_rows.append([
-            d.get("doctor_name") or "—",
-            d.get("registration_number") or "—",
-            d.get("status") or "—",
-            d.get("message") or "—",
-        ])
-    if doc_rows:
-        content.append(Spacer(1, 6))
-        content.append(data_table(
-            ["Doctor", "Registration no.", "Status", "Validation notes"],
-            doc_rows,
-            col_widths=[100, 90, 90, 220],
-        ))
-    content.append(Spacer(1, 12))
-
     # Compliance verdict
     verdict = (data.get("compliance_verdict") or "").strip()
     if verdict:
@@ -391,10 +364,18 @@ def generate_pdf(data, filename="audit_report.pdf"):
         ))
     content.append(Spacer(1, 12))
 
-    # 12. Inference
+    # 12. Inference + Report Summary
     content.extend(section("12. Inference", styles))
     conclusion = (data.get("inference") or data.get("auditor_conclusion") or "").strip()
-    content.append(kv_table([("Conclusion", conclusion or "—")], header=False))
+    content.append(kv_table([("Inference", conclusion or "—")], header=False))
+    content.append(Spacer(1, 8))
+    content.extend(section("Report Summary", styles))
+    summary_bullets = data.get("report_summary") or []
+    if summary_bullets:
+        summary_rows = [[str(i + 1), str(b)] for i, b in enumerate(summary_bullets)]
+        content.append(data_table(["#", "Summary point"], summary_rows, col_widths=[30, 470]))
+    else:
+        content.append(kv_table([("Summary", "—")], header=False))
     content.append(Spacer(1, 12))
 
     # 13. Remarks
