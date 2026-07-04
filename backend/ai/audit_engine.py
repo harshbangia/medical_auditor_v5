@@ -335,15 +335,12 @@ You MUST:
 - Use image analysis when provided — do NOT claim imaging is "missing" if IMAGE ANALYSIS section has content
 - Use the MEDICATION EVIDENCE section (if present) when judging prior medical therapy — do NOT claim a drug
   class was "never tried" if the section lists a brand from that class
-- Use the INSURANCE FACTS section for insurance_details — never leave insurance_company, policy_number,
-  or claim_incident_number blank if listed there (query/reply letters are the preferred source)
+- Use the INSURANCE FACTS section for insurance_details — never leave insurance_company blank if listed there
 - Use the CLAIM FACTS section for claim_details dates and hospital — never leave consultation_date
   or date_of_admission blank if listed there; use date_of_admission for the ACTUAL admission date
   from pre-auth/clinical documents; put the query letter proposed hospitalization date in
   proposed_hospitalization_date only — never substitute it for date_of_admission when a pre-auth
   admission date is present
-- Hospital name: prefer the hospital from the insurer query/reply letter (often on the Member Code
-  line). NEVER use an address fragment (e.g. "Near Civil Hospital", "Opp. Bus Stand") as hospital
 - Use the CLINICAL VISIT SYNTHESIS section when reporting symptom duration vs treatment course — these are
   DIFFERENT facts from DIFFERENT pages; report BOTH separately in clinical_findings and observations
 - Produce at least 5 observations; minimum 3 must challenge or question the hospital (answer: Not Supported, Partially Supported, or Insufficient Evidence)

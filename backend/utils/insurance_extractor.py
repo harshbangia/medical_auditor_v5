@@ -89,26 +89,11 @@ _POLICY_PERIOD_PATTERNS = [
     ),
 ]
 
-_CLAIM_PATTERNS = [
-    re.compile(
-        r"claim\s*incident\s*(?:no\.?|number|#)?\s*[:.]?\s*([0-9]{8,}[A-Z0-9.\-]*)",
-        re.I,
-    ),
-    re.compile(
-        r"claim\s*(?:no\.?|number|#)\s*[:.]?\s*([0-9]{8,}[A-Z0-9.\-]*)",
-        re.I,
-    ),
-    re.compile(
-        r"(?:authorization|auth)\s*(?:incident\s*)?(?:no\.?|number|#)?\s*[:.]?\s*"
-        r"([0-9]{8,}[A-Z0-9.\-]*)",
-        re.I,
-    ),
-    # OCR variants: Clalm / lncident / missing spaces
-    re.compile(
-        r"c[li1]a[il1]m\s*[il1]nc[il1]dent\s*[:.]?\s*([0-9]{8,}[A-Z0-9.\-]*)",
-        re.I,
-    ),
-]
+_CLAIM_RE = re.compile(
+    r"(?:claim\s*(?:incident|no|number|#)?|authorization\s*no|auth\s*incident)\s*[:.]?\s*"
+    r"([0-9]{8,}[A-Z0-9.\-]*)",
+    re.I,
+)
 _MEMBER_RE = re.compile(
     r"member\s*(?:code|id|no|number)?\s*[:.]?\s*([A-Z0-9][A-Z0-9\-/]{4,})",
     re.I,
@@ -237,39 +222,6 @@ def _extract_policy_period(text: str) -> str:
     return ""
 
 
-def _is_valid_claim_incident(val: str) -> bool:
-    v = (val or "").strip().rstrip(".")
-    if len(v) < 8 or len(v) > 24:
-        return False
-    if re.search(r"[\s|_\[\]{}\\]", v):
-        return False
-    # Typical IFFCO-style: 2025101800123 or 2025122100030.R1
-    if not re.fullmatch(r"\d{8,}(?:\.[A-Z0-9]{1,4})?", v, re.I):
-        return False
-    return True
-
-
-def _extract_claim_incident(text: str) -> str:
-    for pat in _CLAIM_PATTERNS:
-        for m in pat.finditer(text or ""):
-            val = m.group(1).strip().rstrip(".")
-            # Strip OCR spaces inside numbers: 2025 1018 00123
-            val = re.sub(r"\s+", "", val)
-            if _is_valid_claim_incident(val):
-                return val
-    # Fallback: labeled line with spaced digits
-    m = re.search(
-        r"claim\s*incident[^\n]{0,20}?((?:\d[\d\s]{7,20}\d)(?:\.[A-Z0-9]{1,4})?)",
-        text or "",
-        re.I,
-    )
-    if m:
-        val = re.sub(r"\s+", "", m.group(1).strip().rstrip("."))
-        if _is_valid_claim_incident(val):
-            return val
-    return ""
-
-
 def extract_insurance_from_text(text: str, source: str = "") -> Dict[str, str]:
     """Regex extraction of insurance fields present in typed letter text."""
     facts: Dict[str, str] = {
@@ -292,12 +244,9 @@ def extract_insurance_from_text(text: str, source: str = "") -> Dict[str, str]:
     if period:
         facts["policy_period"] = period
 
-    claim_no = _extract_claim_incident(text)
-    if claim_no:
-        facts["claim_incident_number"] = claim_no
-
-    # Hospital often sits on the member-code line in query letters — also try policy line.
-    # (Hospital is primarily claim_details; insurance path only helps policy/claim IDs.)
+    m = _CLAIM_RE.search(text)
+    if m:
+        facts["claim_incident_number"] = m.group(1).strip().rstrip(".")
 
     m = _MEMBER_RE.search(text)
     if m:
@@ -492,11 +441,6 @@ def _should_overwrite_insurance_field(field: str, current: str, extracted: str) 
             return False
         if _is_valid_policy_number(cur) and not _should_overwrite_insurance_field_score(cur, extracted):
             return False
-    if field == "claim_incident_number":
-        if not _is_valid_claim_incident(extracted):
-            return False
-        if _is_valid_claim_incident(cur):
-            return False
     if not cur or cur.lower() in bad:
         return True
     if field == "policy_number" and cur.lower() in _POLICY_FALSE_POSITIVES:
@@ -533,8 +477,4 @@ def merge_insurance_into_result(result: dict, facts: Dict[str, str]) -> dict:
     for key, val in mapping.items():
         if val and _should_overwrite_insurance_field(key, str(ins.get(key) or ""), val):
             ins[key] = val
-    # Drop invalid claim incident left by LLM
-    cur_claim = str(ins.get("claim_incident_number") or "").strip()
-    if cur_claim and not _is_valid_claim_incident(cur_claim):
-        ins["claim_incident_number"] = ""
     return result
