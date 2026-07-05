@@ -1,8 +1,9 @@
-"""Gate audits only when selected guidelines are clearly unrelated to the case.
+"""Gate audits when selected guidelines are clearly unrelated to the case.
 
-Designed to be permissive: prefer running the audit over false blocks.
-Only hard-stop when the guideline topic is absent from the case AND the
-primary diagnosis clearly belongs to a different specialty.
+Blocks before the LLM audit when the guideline disease/topic and the case
+diagnosis point to different conditions (e.g. enteric-fever guideline on an
+alcohol case). Still allows the audit when the guideline topic appears in the
+uploaded documents (comorbidity / same disease documented elsewhere).
 """
 
 from __future__ import annotations
@@ -11,7 +12,60 @@ import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 
-# Specialty → keywords used for guideline filenames and case matching.
+# Disease-level topics (finer than broad specialty buckets).
+# Order: longer phrases first within each tuple where relevant.
+_DISEASE_TOPICS: Dict[str, Tuple[str, ...]] = {
+    "enteric_fever": (
+        "enteric fever", "enteric", "typhoid", "paratyphoid", "salmonella",
+    ),
+    "alcohol_related": (
+        "alcohol dependence", "alcohol withdrawal", "alcohol use disorder",
+        "alcoholism", "alcoholic", "delirium tremens", "alcohol",
+    ),
+    "hypoglycemia": ("hypoglycemia", "hypoglycaemia", "hypoglyc"),
+    "coronary_disease": (
+        "triple vessel", "unstable angina", "ischemic heart", "ischaemic heart",
+        "coronary", "myocardial", "cabg", "angina", "stemi", "nstemi", "cad",
+    ),
+    "trigeminal_neuralgia": ("trigeminal neuralgia", "trigeminal", "neuralgia"),
+    "stroke_neuro": ("stroke", "cva", "seizure", "epilepsy", "meningitis", "mvd"),
+    "copd_respiratory": ("copd", "asthma", "pneumonia", "ards", "spirometry"),
+    "pancreatitis_gi": (
+        "acute pancreatitis", "necrotizing pancreatitis", "pancreatitis",
+        "cholecyst", "appendic", "gi bleed",
+    ),
+    "hepatitis_liver": ("cirrhosis", "hepatitis", "liver failure", "hepatic"),
+    "renal": ("dialysis", "renal failure", "kidney failure", "ckd", "aki"),
+    "oncology": ("carcinoma", "malignan", "chemotherapy", "metastas", "cancer"),
+    "orthopedic": (
+        "fracture", "arthroscopy", "bankart", "joint replacement", "ligament",
+    ),
+    "diabetes_endocrine": (
+        "diabetic ketoacidosis", "ketoacidosis", "diabetes", "diabetic", "thyroid",
+    ),
+    "malaria_dengue": ("malaria", "dengue", "chikungunya"),
+    "tuberculosis": ("tuberculosis", " tb ", " mdr tb"),
+}
+
+_TOPIC_LABELS: Dict[str, str] = {
+    "enteric_fever": "enteric fever / typhoid",
+    "alcohol_related": "alcohol-related disorder",
+    "hypoglycemia": "hypoglycemia",
+    "coronary_disease": "coronary / cardiac disease",
+    "trigeminal_neuralgia": "trigeminal neuralgia",
+    "stroke_neuro": "neurology / stroke",
+    "copd_respiratory": "respiratory disease (COPD / asthma / pneumonia)",
+    "pancreatitis_gi": "pancreatitis / GI surgery",
+    "hepatitis_liver": "liver / hepatitis / cirrhosis",
+    "renal": "renal disease",
+    "oncology": "oncology / malignancy",
+    "orthopedic": "orthopaedic / fracture",
+    "diabetes_endocrine": "diabetes / endocrine",
+    "malaria_dengue": "malaria / dengue",
+    "tuberculosis": "tuberculosis",
+}
+
+# Specialty → keywords used for guideline filenames and legacy case matching.
 _SPECIALTY_KEYWORDS: Dict[str, Tuple[str, ...]] = {
     "cardiology": (
         "cardio", "cardiac", "coronary", "angina", "acs", "myocardial",
@@ -39,7 +93,9 @@ _SPECIALTY_KEYWORDS: Dict[str, Tuple[str, ...]] = {
     ),
     "gastroenterology": (
         "gastro", "hepatic", "pancrea", "gi bleed", "cholecyst",
-        "appendic", "cirrhosis", "hepatitis",
+        "appendic", "cirrhosis", "hepatitis", "alcohol", "alcoholic",
+        "hemorrhoid", "haemorrhoid", "piles", "anal fissure", "fistula",
+        "proctolog", "hernia",
     ),
     "nephrology": (
         "nephro", "dialysis", "ckd", "aki", "renal failure", "kidney failure",
@@ -49,10 +105,13 @@ _SPECIALTY_KEYWORDS: Dict[str, Tuple[str, ...]] = {
     ),
     "infectious_disease": (
         "sepsis", "malaria", "dengue", "typhoid", "tuberculosis", "covid",
+        "enteric",
+    ),
+    "addiction_psychiatry": (
+        "alcohol", "alcoholism", "alcohol dependence", "substance", "addiction",
     ),
 }
 
-# Strong primary-diagnosis only keywords (avoid comorbidity noise).
 _PRIMARY_DIAGNOSIS_KEYWORDS: Dict[str, Tuple[str, ...]] = {
     "cardiology": (
         "coronary", "angina", "acs", "myocardial", "cabg", "pci", "stent",
@@ -84,6 +143,11 @@ _PRIMARY_DIAGNOSIS_KEYWORDS: Dict[str, Tuple[str, ...]] = {
     ),
     "infectious_disease": (
         "sepsis", "malaria", "dengue", "typhoid", "tuberculosis", "covid",
+        "enteric fever", "enteric",
+    ),
+    "addiction_psychiatry": (
+        "alcohol", "alcoholism", "alcohol dependence", "alcohol withdrawal",
+        "substance abuse", "addiction",
     ),
 }
 
@@ -105,22 +169,34 @@ def _detect(text: str, table: Dict[str, Tuple[str, ...]]) -> Set[str]:
     if not blob:
         return set()
     found: Set[str] = set()
-    for specialty, keywords in table.items():
+    for label, keywords in table.items():
         for kw in keywords:
             if kw in blob:
-                found.add(specialty)
+                found.add(label)
                 break
     return found
+
+
+def detect_disease_topics(text: str) -> Set[str]:
+    return _detect(text, _DISEASE_TOPICS)
 
 
 def detect_specialties(text: str) -> Set[str]:
     return _detect(text, _SPECIALTY_KEYWORDS)
 
 
+def disease_topics_from_guidelines(guideline_names: List[str]) -> Set[str]:
+    found: Set[str] = set()
+    for name in guideline_names or []:
+        found |= detect_disease_topics(name)
+    return found
+
+
 def specialties_from_guidelines(guideline_names: List[str]) -> Set[str]:
     found: Set[str] = set()
     for name in guideline_names or []:
         found |= detect_specialties(name)
+        found |= detect_disease_topics(name)
         low = _norm(name)
         if "hypoglyc" in low or "diabetes" in low:
             found.add("endocrinology")
@@ -130,26 +206,59 @@ def specialties_from_guidelines(guideline_names: List[str]) -> Set[str]:
             found.add("neurology")
         if "copd" in low or "asthma" in low or "pneumonia" in low or "respiratory" in low:
             found.add("pulmonology")
+        if "enteric" in low or "typhoid" in low:
+            found.add("infectious_disease")
+        if "alcohol" in low:
+            found.add("addiction_psychiatry")
     return found
 
 
-def _primary_case_specialties(
+def _topic_labels(topics: Set[str]) -> str:
+    if not topics:
+        return "unclassified"
+    return ", ".join(_TOPIC_LABELS.get(t, t.replace("_", " ")) for t in sorted(topics))
+
+
+def _primary_case_blob(
     case_profile: Optional[dict],
     claim_diagnosis: str = "",
-) -> Set[str]:
-    """Use diagnosis / procedures only — not full OCR case text."""
+) -> str:
     profile = case_profile or {}
     procedures = profile.get("procedures") or []
     if isinstance(procedures, list):
         proc_text = " ".join(str(p) for p in procedures)
     else:
         proc_text = str(procedures)
-    primary_blob = " ".join([
+    return " ".join([
         str(profile.get("diagnosis") or ""),
         proc_text,
         claim_diagnosis or "",
     ])
-    return _detect(primary_blob, _PRIMARY_DIAGNOSIS_KEYWORDS)
+
+
+def _primary_case_specialties(
+    case_profile: Optional[dict],
+    claim_diagnosis: str = "",
+) -> Set[str]:
+    return _detect(_primary_case_blob(case_profile, claim_diagnosis), _PRIMARY_DIAGNOSIS_KEYWORDS)
+
+
+def _disease_topic_keywords(topics: Set[str]) -> Tuple[str, ...]:
+    kws: List[str] = []
+    for topic in topics:
+        kws.extend(_DISEASE_TOPICS.get(topic, ()))
+    return tuple(kws)
+
+
+def _disease_topic_present(guide_topics: Set[str], blob: str) -> bool:
+    """True when any keyword for the selected guideline disease appears in case text."""
+    norm = _norm(blob)
+    if not norm or not guide_topics:
+        return False
+    for kw in _disease_topic_keywords(guide_topics):
+        if kw in norm:
+            return True
+    return False
 
 
 def _guideline_topic_present_in_case(
@@ -158,7 +267,6 @@ def _guideline_topic_present_in_case(
     case_text: str,
     claim_diagnosis: str,
 ) -> bool:
-    """True if any keyword for the selected guideline specialty appears in the case."""
     profile = case_profile or {}
     procedures = profile.get("procedures") or []
     if isinstance(procedures, list):
@@ -178,42 +286,93 @@ def _guideline_topic_present_in_case(
     return False
 
 
+def _mismatch_message(
+    guideline_names: List[str],
+    case_labels: str,
+    guide_labels: str,
+) -> str:
+    guidelines = "; ".join(guideline_names)
+    return (
+        f"Selected guideline(s) do not match the clinical case. "
+        f"Case appears related to: {case_labels}. "
+        f"Selected guideline(s) ({guidelines}) appear related to: {guide_labels}. "
+        f"The audit has been stopped. Please select the correct clinical guideline and run again."
+    )
+
+
 def check_guideline_alignment(
     guideline_names: List[str],
     case_profile: Optional[dict],
     case_text: str = "",
     claim_diagnosis: str = "",
 ) -> Dict[str, Any]:
-    """Return alignment result. Default is aligned=True (permissive)."""
+    """Return alignment result. Blocks on clear disease / specialty mismatch."""
+    guide_disease = disease_topics_from_guidelines(guideline_names)
     guide_specs = specialties_from_guidelines(guideline_names)
 
-    # Unknown / generic guideline filename — never block.
+    primary_blob = _primary_case_blob(case_profile, claim_diagnosis)
+    case_disease = detect_disease_topics(primary_blob)
+    case_primary = _primary_case_specialties(case_profile, claim_diagnosis)
+
+    context_blob = " ".join([primary_blob, (case_text or "")[:12000]])
+
+    # --- Disease-topic gate (catches enteric fever vs alcohol, etc.) ---
+    if guide_disease:
+        if _disease_topic_present(guide_disease, context_blob):
+            return {
+                "aligned": True,
+                "case_topics": sorted(case_disease | case_primary),
+                "guideline_topics": sorted(guide_disease),
+                "message": "",
+                "reason": "guideline_disease_in_case",
+            }
+
+        if case_disease & guide_disease:
+            return {
+                "aligned": True,
+                "case_topics": sorted(case_disease),
+                "guideline_topics": sorted(guide_disease),
+                "overlap": sorted(case_disease & guide_disease),
+                "message": "",
+                "reason": "disease_topic_overlap",
+            }
+
+        if case_disease:
+            message = _mismatch_message(
+                guideline_names,
+                _topic_labels(case_disease),
+                _topic_labels(guide_disease),
+            )
+            return {
+                "aligned": False,
+                "case_topics": sorted(case_disease),
+                "guideline_topics": sorted(guide_disease),
+                "message": message,
+                "guidelines": guideline_names,
+                "reason": "disease_topic_mismatch",
+            }
+
+    # --- Specialty gate (legacy; hypoglycemia vs cardiology, etc.) ---
     if not guide_specs:
         return {
             "aligned": True,
-            "case_specialties": [],
+            "case_specialties": sorted(case_primary),
             "guideline_specialties": [],
             "message": "",
             "reason": "guideline_unclassified",
         }
 
-    # If guideline topic appears anywhere in the case, allow.
     if _guideline_topic_present_in_case(
         guide_specs, case_profile, case_text, claim_diagnosis
     ):
         return {
             "aligned": True,
-            "case_specialties": sorted(
-                _primary_case_specialties(case_profile, claim_diagnosis) | guide_specs
-            ),
+            "case_specialties": sorted(case_primary | guide_specs),
             "guideline_specialties": sorted(guide_specs),
-            "overlap": sorted(guide_specs),
             "message": "",
             "reason": "guideline_topic_found_in_case",
         }
 
-    # Guideline topic not found — only block if primary diagnosis is a *different* specialty.
-    case_primary = _primary_case_specialties(case_profile, claim_diagnosis)
     if not case_primary:
         return {
             "aligned": True,
@@ -234,14 +393,10 @@ def check_guideline_alignment(
             "reason": "primary_overlap",
         }
 
-    case_label = ", ".join(sorted(case_primary))
-    guide_label = ", ".join(sorted(guide_specs))
-    guidelines = "; ".join(guideline_names)
-    message = (
-        f"Selected guideline(s) do not match the clinical case. "
-        f"Case primary diagnosis appears related to: {case_label}. "
-        f"Selected guideline(s) ({guidelines}) appear related to: {guide_label}. "
-        f"Please select an appropriate clinical guideline and run the audit again."
+    message = _mismatch_message(
+        guideline_names,
+        _topic_labels(case_primary),
+        _topic_labels(guide_specs),
     )
     return {
         "aligned": False,
@@ -250,7 +405,7 @@ def check_guideline_alignment(
         "overlap": [],
         "message": message,
         "guidelines": guideline_names,
-        "reason": "clear_mismatch",
+        "reason": "specialty_mismatch",
     }
 
 

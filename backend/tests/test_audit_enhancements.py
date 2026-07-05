@@ -77,6 +77,26 @@ class GuidelineAlignmentTests(unittest.TestCase):
                 case_text="Facial pain neuralgia MVD planned.",
             )
 
+    def test_blocks_enteric_fever_guideline_on_alcohol_case(self):
+        profile = {"diagnosis": "Alcohol dependence with withdrawal", "procedures": []}
+        result = check_guideline_alignment(
+            ["Enteric Fever Clinical Guidelines.pdf"],
+            profile,
+            case_text="Patient admitted for alcohol withdrawal and detoxification.",
+            claim_diagnosis="Alcohol dependence",
+        )
+        self.assertFalse(result["aligned"])
+        self.assertEqual(result["reason"], "disease_topic_mismatch")
+
+    def test_blocks_enteric_fever_when_only_claim_diagnosis_differs(self):
+        result = check_guideline_alignment(
+            ["Enteric Fever Guideline.pdf"],
+            {"diagnosis": "Under evaluation", "procedures": []},
+            case_text="Detox and counselling for alcohol use disorder.",
+            claim_diagnosis="Alcohol use disorder",
+        )
+        self.assertFalse(result["aligned"])
+
 
 class FraudAbuseTests(unittest.TestCase):
     def test_detects_history_contradiction(self):
