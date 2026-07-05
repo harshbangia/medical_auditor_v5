@@ -415,15 +415,10 @@ Fraud / abuse section:
 - Populate fraud_abuse_findings for misrepresentation, non-disclosure of PED, conflicting history,
   date discrepancies, unbundled billing, room upcoding, and fraudulent statements — with evidence.
 
-Financial savings (ANTI-FABRICATION — read carefully):
-- Populate financial_review and claim_savings_line_items ONLY from amounts that are
-  ACTUALLY WRITTEN in the CASE documents or the CLAIM FACTS (a bill, invoice, receipt,
-  pre-auth estimate, or package cost). Copy real figures; do not compute imaginary ones.
-- If NO itemised hospital bill, invoice, or billed amount appears anywhere in the case,
-  leave EVERY financial_review field as "" and return an EMPTY claim_savings_line_items array.
-  Do NOT invent a total (e.g. 100000), a percentage, or round-number deductions.
-  Fabricating financial figures in a medico-legal report is a SERIOUS error — abstaining is correct.
-- Never guess an "admissible amount" as a fixed fraction (e.g. 80%) of a billed amount.
+Financial savings:
+- Populate claim_savings_line_items with billed vs admissible amounts and amount_saved per item.
+- financial_review must include total_hospital_bill, non_payable_amount, net_claimable_amount,
+  amount_saved, and savings_percentage (e.g. "12.5%").
 
 Inference and report summary (critical):
 - "inference" must be a clear 2–4 sentence auditor inference: whether treatment appears medically

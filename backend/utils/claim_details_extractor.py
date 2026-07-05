@@ -413,30 +413,20 @@ def _extract_proposed_hospitalization(text: str, reference_year: Optional[int] =
     return _first_match(_PROPOSED_HOSPITALIZATION_PATTERNS, text, reference_year)
 
 
-# Explicit emergency-admission markers only. Lone diagnosis hints (troponin,
-# chest discomfort, ACS) are NOT sufficient — they describe the condition, not
-# how the patient was admitted, and previously misfired "Emergency" on planned
-# pre-auth cases (see Naveen report).
-_EMERGENCY_ADMISSION_MARKERS = re.compile(
-    r"\b(?:emergency\s+(?:admission|department|room|ward)|casualty|"
-    r"emergency\s+medical\s+officer|admitted\s+through\s+(?:the\s+)?(?:emergency|casualty)|"
-    r"walk[\s-]?in\s+emergency|road\s+traffic\s+accident|\brta\b|status\s+epilepticus)\b",
-    re.I,
-)
-_PLANNED_MARKERS = re.compile(
-    r"proposed\s*date\s*of\s*hospitalization|elective|planned\s*(?:admission|surgery|procedure)|"
-    r"pre[\s-]?auth|request\s+for\s+cashless|scheduled\s+for",
-    re.I,
-)
-
-
 def _infer_nature_of_admission(text: str, doc_type: str) -> str:
-    """Evidence-gated. Defaults pre-auth/query documents to Planned; never guesses Emergency."""
     blob = text or ""
-    planned = doc_type in ("query_letter", "pre_auth") or bool(_PLANNED_MARKERS.search(blob))
-    if _EMERGENCY_ADMISSION_MARKERS.search(blob) and not planned:
+    if re.search(
+        r"\b(?:emergency|casualty|trauma|walk[\s-]?in)\b|unstable\s+angina|\bacs\b|"
+        r"trop-?[ti]\s*\+?|troponin|chest\s+discomfort",
+        blob,
+        re.I,
+    ):
         return "Emergency"
-    if planned:
+    if doc_type == "query_letter" or re.search(
+        r"proposed\s*date\s*of\s*hospitalization|elective|planned\s*admission",
+        blob,
+        re.I,
+    ):
         return "Planned / Elective"
     return ""
 

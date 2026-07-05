@@ -7,8 +7,7 @@ from uuid import uuid4
 
 from backend.ai.audit_engine import analyze_case_images, run_audit
 from backend.ai.case_profiler import extract_case_profile, normalize_str_list
-from backend.ai.guideline_selector import select_guideline_ranked
-from backend.ai.report_guards import apply_report_guards
+from backend.ai.guideline_selector import select_guideline
 from backend.rag.guideline_retriever import retrieve_from_guidelines, retrieve_guideline_sections
 from backend.rag.rag_manager import get_or_create_index
 from backend.services.audit_jobs import AuditJob
@@ -145,10 +144,6 @@ def _ensure_result_shape(result: dict) -> dict:
     result.setdefault("remarks", "")
     result.setdefault("qa_section", [])
     result.setdefault("document_sources", [])
-    result.setdefault("report_confidence", "")
-    result.setdefault("manual_review_required", False)
-    result.setdefault("manual_review_reasons", [])
-    result.setdefault("guideline_selection", {})
     inf = (result.get("inference") or "").strip()
     ac = (result.get("auditor_conclusion") or "").strip()
     if inf and not ac:
@@ -263,18 +258,8 @@ def run_full_audit(
 
     progress("guideline", 65, "Loading clinical guideline(s)…")
     guideline_names = _normalize_guideline_list(guideline, guidelines)
-    if guideline_names:
-        guideline_selection = {
-            "best": guideline_names[0], "confidence": 1.0,
-            "source": "user", "candidates": [], "diagnosis": "", "specialty": "",
-        }
-    else:
-        diagnosis_hint = str((claim_facts or {}).get("diagnosis") or "")
-        guideline_selection = select_guideline_ranked(case_text, diagnosis_hint=diagnosis_hint)
-        best = (guideline_selection.get("best") or "").strip().replace('"', "").replace("'", "")
-        if not best:
-            raise RuntimeError("No guideline could be selected for this case")
-        guideline_names = [best]
+    if not guideline_names:
+        guideline_names = [select_guideline(case_text).strip().replace('"', '').replace("'", "")]
 
     guideline_paths: List[str] = []
     for gname in guideline_names:
@@ -358,17 +343,6 @@ def run_full_audit(
         result = enrich_audit_result(result, case_text, insurance_facts, claim_facts)
         result["document_sources"] = source_summaries
         result["guideline_alignment"] = alignment
-
-        # v6 assembly guards: strip fabricated financials, drop implausible dates,
-        # canonicalise OCR'd names, and compute report confidence / manual-review flag.
-        # Runs LAST so it overrides any invented content from upstream stages.
-        result = apply_report_guards(
-            result,
-            case_text,
-            claim_facts=claim_facts,
-            source_summaries=source_summaries,
-            guideline_selection=guideline_selection,
-        )
 
         if all([
             not result.get("patient_details"),

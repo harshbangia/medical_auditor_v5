@@ -134,7 +134,6 @@ _PRIMARY_DIAGNOSIS_KEYWORDS: Dict[str, Tuple[str, ...]] = {
     ),
     "gastroenterology": (
         "gi bleed", "cholecyst", "appendic", "cirrhosis", "pancreatitis",
-        "hemorrhoid", "haemorrhoid", "piles", "anal fissure", "fistula-in-ano",
     ),
     "nephrology": (
         "dialysis", "ckd", "aki", "renal failure", "kidney failure",
