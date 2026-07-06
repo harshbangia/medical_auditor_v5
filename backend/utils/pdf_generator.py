@@ -94,6 +94,9 @@ def generate_pdf(data, filename="audit_report.pdf"):
         ("Procedure / surgery done", c.get("procedure_or_surgery") or "—", ""),
         ("Diagnosis", c.get("diagnosis") or "—", ""),
     ]
+    admission_note = c.get("admission_dates_note") or ""
+    if admission_note:
+        claim_rows.append(("Admission dates (informational)", admission_note, ""))
     content.append(data_table(
         ["Field", "Value", "Source document"],
         claim_rows,

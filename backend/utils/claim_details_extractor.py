@@ -131,6 +131,12 @@ _TOTAL_BILL_PATTERNS = [
         r"(?:rs\.?|inr|₹)?\s*([\d,]+(?:\.\d{1,2})?)",
         re.I,
     ),
+    re.compile(
+        r"(?:estimated\s+(?:cost|amount|expense)|total\s+(?:cost|amount)\s+(?:of\s+)?"
+        r"(?:hospitalization|treatment|package)|package\s+(?:cost|amount|charges?))"
+        r"\s*[:.]?\s*(?:rs\.?|inr|₹)?\s*([\d,]+(?:\.\d{1,2})?)",
+        re.I,
+    ),
 ]
 
 _MIN_HOSPITAL_BILL_INR = 5000
@@ -553,8 +559,16 @@ def _format_inr_amount(raw: str) -> str:
 
 
 def _extract_bill_amount(text: str) -> str:
-    """Best-effort total from hospital bill / invoice text."""
-    if not text or not re.search(r"bill|invoice|receipt|charges|payable", text, re.I):
+    """Best-effort total from hospital bill / invoice / pre-auth estimate text."""
+    if not text:
+        return ""
+    has_billing_context = bool(re.search(
+        r"bill|invoice|receipt|charges|payable|estimated\s+(?:cost|amount)|"
+        r"package\s+(?:cost|amount)|total\s+(?:cost|amount)\s+of",
+        text,
+        re.I,
+    ))
+    if not has_billing_context:
         return ""
     best = ""
     best_val = 0.0
@@ -789,14 +803,17 @@ def _detect_date_discrepancies(
     provenance: Dict[str, List[Dict[str, str]]],
     reference_year: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
+    """Flag conflicting dates for the same field across documents.
+
+    Proposed hospitalization date (query letter) is intentionally NOT compared
+    against actual admission date — both are shown in claim details separately.
+    """
     discrepancies: List[Dict[str, Any]] = []
     compare_fields = ("consultation_date", "date_of_admission", "date_of_discharge")
 
     for field in compare_fields:
         entries = list(provenance.get(field) or [])
-        proposed = provenance.get("proposed_hospitalization_date") or []
-        if field == "date_of_admission" and proposed:
-            entries = entries + proposed
+        # Do NOT merge proposed_hospitalization_date into date_of_admission.
 
         by_canonical: Dict[str, List[Dict[str, str]]] = {}
         for entry in entries:
@@ -823,6 +840,26 @@ def _detect_date_discrepancies(
             "message": message,
         })
     return discrepancies
+
+
+def filter_actionable_date_discrepancies(
+    discrepancies: Optional[List[Dict[str, Any]]],
+) -> List[Dict[str, Any]]:
+    """Discrepancies that should trigger fraud/risk flags (excludes proposed vs actual admission)."""
+    actionable: List[Dict[str, Any]] = []
+    for item in discrepancies or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("field") == "date_of_admission":
+            entries = item.get("entries") or []
+            if any(
+                isinstance(e, dict)
+                and e.get("field") == "proposed_hospitalization_date"
+                for e in entries
+            ):
+                continue
+        actionable.append(item)
+    return actionable
 
 
 def _gather_text_for_file(case_text: str, pdf_path: str, fname: str) -> str:
@@ -1113,14 +1150,31 @@ def merge_claim_details_into_result(result: dict, facts: Dict[str, Any]) -> dict
     discrepancies = facts.get("date_discrepancies") or []
     if discrepancies:
         result["date_discrepancies"] = discrepancies
+        actionable = filter_actionable_date_discrepancies(discrepancies)
         gaps = result.setdefault("documentation_gaps", [])
         challenges = result.setdefault("challenge_points", [])
-        for item in discrepancies:
+        for item in actionable:
             msg = item.get("message", "")
             if msg and msg not in gaps:
                 gaps.insert(0, msg)
             if msg and msg not in challenges:
                 challenges.insert(0, f"Reconcile date discrepancy — {msg}")
+
+    proposed = str(claim.get("proposed_hospitalization_date") or "").strip()
+    actual = str(claim.get("date_of_admission") or "").strip()
+    if proposed and actual:
+        ref_blob = " ".join([
+            str(claim.get("diagnosis") or ""),
+            str((result.get("insurance_details") or {}).get("claim_incident_number") or ""),
+        ])
+        ref_year = _claim_reference_year(ref_blob)
+        if _canonical_date_key(proposed, ref_year) != _canonical_date_key(actual, ref_year):
+            claim["admission_dates_note"] = (
+                f"Proposed hospitalization date: {proposed}. "
+                f"Actual date of admission: {actual}. "
+                "A difference between proposed and actual admission dates is expected for "
+                "planned/elective cases and is not treated as a discrepancy or fraud indicator."
+            )
 
     room = facts.get("room_category_eligible", "")
     if room:

@@ -8,7 +8,8 @@ from backend.utils.guideline_alignment import (
     check_guideline_alignment,
 )
 from backend.utils.fraud_abuse_detector import detect_fraud_abuse
-from backend.utils.claim_savings import build_claim_savings
+from backend.utils.claim_savings import build_claim_savings, has_extractable_financials
+from backend.ai.audit_result_enricher import finalize_financial_sections, seed_treatment_billing_audit
 from backend.ai.audit_result_enricher import (
     enrich_audit_result,
     _remove_ppi_exclusions,
@@ -228,6 +229,62 @@ class EnrichmentIntegrationTests(unittest.TestCase):
         ]
         self.assertFalse(mri_rows)
         self.assertNotIn("Pantoprazole", (fixed.get("treatment_billing_audit") or {}).get("excluded_items_billed") or "")
+
+
+class TreatmentBillingAndFinancialTests(unittest.TestCase):
+    def test_proposed_vs_actual_not_fraud(self):
+        from backend.utils.fraud_abuse_detector import detect_fraud_abuse
+        result = {
+            "date_discrepancies": [],
+            "claim_details": {
+                "proposed_hospitalization_date": "29 Jun 2026",
+                "date_of_admission": "30/06/2026",
+            },
+        }
+        out = detect_fraud_abuse("", result, {})
+        indicators = [f.get("indicator") for f in out.get("findings") or []]
+        self.assertFalse(any("Conflicting dates" in (i or "") for i in indicators))
+
+    def test_seed_treatment_billing_audit(self):
+        result = {
+            "claim_details": {"procedure_or_surgery": "CABG"},
+            "compliance_verdict": "Partially compliant",
+            "treatment_billing_audit": {},
+        }
+        case = "REQUEST FOR CASHLESS HOSPITALISATION Prince Suite room category"
+        facts = {"room_category_eligible": "Prince Suite"}
+        seed_treatment_billing_audit(result, case, facts)
+        tba = result["treatment_billing_audit"]
+        self.assertEqual(tba["procedures_performed"], "CABG")
+        self.assertEqual(tba["room_category_eligible"], "Prince Suite")
+        self.assertTrue(tba.get("cross_checked_with_preauth"))
+
+    def test_financials_rebuilt_after_guards_when_bill_present(self):
+        case = """
+=== Source document: bill.pdf ===
+Hospital final bill
+Grand Total Rs. 1,25,000
+Room rent Rs. 45,000
+OT charges Rs. 60,000
+"""
+        claim_facts = {"total_hospital_bill": "Rs. 1,25,000"}
+        result = {
+            "claim_details": {"diagnosis": "ACS"},
+            "patient_details": {"name": "Test"},
+            "clinical_findings": [{"parameter": "x", "value": "y"}],
+            "observations": [{"question": "q", "analysis": "a"}],
+            "inference": "Test inference for the case.",
+            "treatment_billing_audit": {},
+            "financial_review": {"total_hospital_bill": "Rs. 999,999"},
+            "claim_savings_line_items": [{"item": "Fake", "billed_amount": "Rs. 999,999"}],
+        }
+        self.assertTrue(has_extractable_financials(case, claim_facts))
+        result.pop("claim_savings_line_items", None)
+        finalize_financial_sections(result, case, claim_facts)
+        fin = result.get("financial_review") or {}
+        savings = result.get("claim_savings") or {}
+        self.assertNotEqual(fin.get("status"), "not_available")
+        self.assertIn("Rs.", str(savings.get("total_claim_amount") or fin.get("total_hospital_bill") or ""))
 
 
 if __name__ == "__main__":

@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
+from backend.utils.claim_details_extractor import filter_actionable_date_discrepancies
+
 
 def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "").lower()).strip()
@@ -75,8 +77,10 @@ def detect_fraud_abuse(
             "Review investigation report before approval; apply policy fraud clause if proven.",
         )
 
-    # 3. Date discrepancies already detected
-    discrepancies = result.get("date_discrepancies") or claim_facts.get("date_discrepancies") or []
+    # 3. Date discrepancies (exclude proposed vs actual admission — informational only)
+    discrepancies = filter_actionable_date_discrepancies(
+        result.get("date_discrepancies") or claim_facts.get("date_discrepancies") or []
+    )
     if discrepancies:
         msgs = "; ".join(
             str(d.get("message") or d) for d in discrepancies[:3] if d

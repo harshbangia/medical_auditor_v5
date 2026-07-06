@@ -95,6 +95,67 @@ def _deductions_from_excluded(excluded_text: str, total: float) -> List[dict]:
     return rows
 
 
+def _extract_claim_amount_from_text(case_text: str) -> Optional[float]:
+    """Largest plausible claim total from bills, invoices, or pre-auth estimates."""
+    if not case_text:
+        return None
+    best = 0.0
+    for pat in (
+        re.compile(
+            r"(?:total\s*(?:hospital\s+)?(?:bill|amount|charges?)|grand\s*total|"
+            r"net\s*(?:amount|payable|bill)|amount\s*(?:claimed|payable|due))\s*[:.]?\s*"
+            r"(?:rs\.?|inr|₹)?\s*([\d,]+(?:\.\d{1,2})?)",
+            re.I,
+        ),
+        re.compile(
+            r"(?:estimated\s+(?:cost|amount|expense)|total\s+(?:cost|amount)\s+(?:of\s+)?"
+            r"(?:hospitalization|treatment|package)|package\s+(?:cost|amount|charges?))"
+            r"\s*[:.]?\s*(?:rs\.?|inr|₹)?\s*([\d,]+(?:\.\d{1,2})?)",
+            re.I,
+        ),
+    ):
+        for m in pat.finditer(case_text):
+            amt = _parse_amount(m.group(1))
+            if amt and amt > best:
+                best = amt
+    line_total = sum(a for _, a in _extract_line_items_from_text(case_text))
+    if line_total > best:
+        best = line_total
+    return best if best >= 5000 else None
+
+
+def has_extractable_financials(
+    case_text: str = "",
+    claim_facts: Optional[dict] = None,
+) -> bool:
+    """True when document evidence supports populating financial / savings sections."""
+    claim_facts = claim_facts or {}
+    if str(claim_facts.get("total_hospital_bill") or "").strip():
+        return True
+    if _extract_claim_amount_from_text(case_text or ""):
+        return True
+    if _extract_line_items_from_text(case_text or ""):
+        return True
+    text = case_text or ""
+    bill_ctx = re.compile(
+        r"\bbill\b|invoice|receipt|amount\s+(?:paid|claimed|payable|billed)|"
+        r"total\s+(?:amount|charges?|bill)|grand\s*total|estimate|package\s+cost|"
+        r"room\s+rent|pharmacy|consumables?|ot\s*charges?|surgeon|nursing\s+charges?",
+        re.I,
+    )
+    for m in _MONEY_TOKEN.finditer(text):
+        window = text[max(0, m.start() - 120): m.end() + 120]
+        if bill_ctx.search(window):
+            return True
+    return False
+
+
+_MONEY_TOKEN = re.compile(
+    r"(?:rs\.?|inr|₹)\s*[\d,]+(?:\.\d{1,2})?|\b\d{1,3}(?:,\d{2,3})+(?:\.\d{1,2})?\b",
+    re.I,
+)
+
+
 def build_claim_savings(
     result: dict,
     case_text: str = "",
@@ -112,6 +173,7 @@ def build_claim_savings(
     total = (
         _parse_amount(fin.get("total_hospital_bill"))
         or _parse_amount(claim_facts.get("total_hospital_bill"))
+        or _extract_claim_amount_from_text(case_text or "")
     )
     non_payable = _parse_amount(fin.get("non_payable_amount"))
     net_claimable = _parse_amount(fin.get("net_claimable_amount"))

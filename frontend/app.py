@@ -1315,10 +1315,24 @@ if "report" in st.session_state:
 
     c = data["claim_details"]
     st.markdown('<p class="gwx-section-title">Claim details</p>', unsafe_allow_html=True)
+    proposed_row = (
+        f"<p class='gwx-row'><strong>Proposed hospitalization date:</strong> "
+        f"{c.get('proposed_hospitalization_date') or '—'}</p>"
+        if c.get("proposed_hospitalization_date")
+        else ""
+    )
+    admission_note_row = (
+        f"<p class='gwx-row' style='color:#475569;font-size:0.95rem;'>"
+        f"{c.get('admission_dates_note')}</p>"
+        if c.get("admission_dates_note")
+        else ""
+    )
     st.markdown(
         f"<div class='gwx-card'><p class='gwx-row'><strong>Hospital:</strong> {c.get('hospital') or '—'}</p>"
         f"<p class='gwx-row'><strong>Consult date:</strong> {c.get('consultation_date') or '—'}</p>"
         f"<p class='gwx-row'><strong>Date of admission:</strong> {c.get('date_of_admission') or '—'}</p>"
+        f"{proposed_row}"
+        f"{admission_note_row}"
         f"<p class='gwx-row'><strong>Date of discharge:</strong> {c.get('date_of_discharge') or '—'}</p>"
         f"<p class='gwx-row'><strong>Nature of admission:</strong> {c.get('nature_of_admission') or '—'}</p>"
         f"<p class='gwx-row'><strong>Procedure / surgery done:</strong> {c.get('procedure_or_surgery') or '—'}</p>"
@@ -1462,43 +1476,53 @@ if "report" in st.session_state:
 
     fin = data.get("financial_review") or {}
     savings = data.get("claim_savings") or {}
-    st.markdown('<p class="gwx-section-title">Financial review & claim savings</p>', unsafe_allow_html=True)
-    amount_saved = savings.get("amount_saved") or fin.get("amount_saved") or "—"
-    savings_pct = savings.get("savings_percentage") or fin.get("savings_percentage") or "—"
-    st.markdown(
-        f"""
-        <div class='gwx-card' style="border-left:4px solid #16a34a;">
-        <p class='gwx-row'><strong>Total hospital claim:</strong> {savings.get('total_claim_amount') or fin.get('total_hospital_bill') or '—'}</p>
-        <p class='gwx-row'><strong>Admissible amount:</strong> {savings.get('admissible_amount') or fin.get('net_claimable_amount') or '—'}</p>
-        <p class='gwx-row' style="background:#dcfce7;padding:8px 10px;border-radius:8px;">
-        <strong>Amount saved:</strong> {amount_saved}
-        &nbsp;&nbsp;|&nbsp;&nbsp;
-        <strong>Savings %:</strong> {savings_pct}
-        </p>
-        <p class='gwx-row'><strong>Non-payable amount:</strong> {fin.get('non_payable_amount') or '—'}</p>
-        <p class='gwx-row'><strong>Recommended approval amount:</strong> {fin.get('recommended_approval_amount') or '—'}</p>
-        <p class='gwx-row'><strong>Patient liability:</strong> {fin.get('patient_liability') or '—'}</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    fin_unavailable = (
+        fin.get("status") == "not_available" or savings.get("status") == "not_available"
     )
-    line_items = savings.get("line_items") or []
-    if line_items:
-        st.dataframe(
-            [
-                {
-                    "Item": r.get("item"),
-                    "Billed": r.get("billed_amount"),
-                    "Admissible": r.get("admissible_amount"),
-                    "Amount saved": r.get("amount_saved"),
-                    "Reason": r.get("reason"),
-                }
-                for r in line_items
-                if isinstance(r, dict)
-            ],
-            use_container_width=True,
-            hide_index=True,
+    st.markdown('<p class="gwx-section-title">Financial review & claim savings</p>', unsafe_allow_html=True)
+    if fin_unavailable:
+        st.info(
+            fin.get("note")
+            or savings.get("notes")
+            or "Financial review not available — no itemised hospital bill or estimate was found in the uploaded documents."
         )
+    else:
+        amount_saved = savings.get("amount_saved") or fin.get("amount_saved") or "—"
+        savings_pct = savings.get("savings_percentage") or fin.get("savings_percentage") or "—"
+        st.markdown(
+            f"""
+            <div class='gwx-card' style="border-left:4px solid #16a34a;">
+            <p class='gwx-row'><strong>Total hospital claim:</strong> {savings.get('total_claim_amount') or fin.get('total_hospital_bill') or '—'}</p>
+            <p class='gwx-row'><strong>Admissible amount:</strong> {savings.get('admissible_amount') or fin.get('net_claimable_amount') or '—'}</p>
+            <p class='gwx-row' style="background:#dcfce7;padding:8px 10px;border-radius:8px;">
+            <strong>Amount saved:</strong> {amount_saved}
+            &nbsp;&nbsp;|&nbsp;&nbsp;
+            <strong>Savings %:</strong> {savings_pct}
+            </p>
+            <p class='gwx-row'><strong>Non-payable amount:</strong> {fin.get('non_payable_amount') or '—'}</p>
+            <p class='gwx-row'><strong>Recommended approval amount:</strong> {fin.get('recommended_approval_amount') or '—'}</p>
+            <p class='gwx-row'><strong>Patient liability:</strong> {fin.get('patient_liability') or '—'}</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        line_items = savings.get("line_items") or []
+        if line_items:
+            st.dataframe(
+                [
+                    {
+                        "Item": r.get("item"),
+                        "Billed": r.get("billed_amount"),
+                        "Admissible": r.get("admissible_amount"),
+                        "Amount saved": r.get("amount_saved"),
+                        "Reason": r.get("reason"),
+                    }
+                    for r in line_items
+                    if isinstance(r, dict)
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
 
     st.markdown('<p class="gwx-section-title">Timeline</p>', unsafe_allow_html=True)
     for t in data.get("timeline", []):
