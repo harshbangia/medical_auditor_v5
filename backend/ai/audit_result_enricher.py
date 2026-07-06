@@ -16,11 +16,12 @@ from backend.utils.claim_details_extractor import merge_claim_details_into_resul
 from backend.utils.case_evidence_detector import (
     apply_case_evidence_corrections,
     clinical_case_text,
+    detect_case_evidence,
     _has_clinical_mri_report,
 )
 from backend.utils.insurance_extractor import merge_insurance_into_result, _extract_policy_period
 from backend.utils.fraud_abuse_detector import detect_fraud_abuse
-from backend.utils.claim_savings import build_claim_savings
+from backend.utils.claim_savings import build_claim_savings, has_extractable_financials
 
 _MRI_REPORT_RE = re.compile(
     r"\bmri\s+(?:brain|spine|report|of\s+)|neurovascular\s+conflict|grade\s+iii",
@@ -392,6 +393,95 @@ def _remove_ppi_exclusions(result: dict) -> None:
             )
 
 
+def seed_treatment_billing_audit(
+    result: dict,
+    case_text: str,
+    claim_facts: Optional[Dict[str, str]] = None,
+) -> None:
+    """Populate treatment & billing audit fields from documents when the LLM left them blank."""
+    claim_facts = claim_facts or {}
+    tba = result.setdefault("treatment_billing_audit", {})
+    claim = result.get("claim_details") or {}
+    evidence = result.get("_case_evidence") or detect_case_evidence(case_text)
+
+    room_eligible = claim_facts.get("room_category_eligible") or ""
+    if room_eligible and not str(tba.get("room_category_eligible") or "").strip():
+        tba["room_category_eligible"] = room_eligible
+
+    proc = str(claim.get("procedure_or_surgery") or "").strip()
+    if proc and not str(tba.get("procedures_performed") or "").strip():
+        tba["procedures_performed"] = proc
+
+    if evidence.get("has_icu_care") and not str(tba.get("room_category_admitted") or "").strip():
+        tba["room_category_admitted"] = "ICU"
+    elif claim.get("room_category_admitted") and not str(tba.get("room_category_admitted") or "").strip():
+        tba["room_category_admitted"] = claim.get("room_category_admitted")
+
+    if not str(tba.get("cross_checked_with_preauth") or "").strip():
+        if evidence.get("has_preauth_form"):
+            tba["cross_checked_with_preauth"] = "Yes"
+        else:
+            tba["cross_checked_with_preauth"] = (
+                "No — pre-authorization form not found in uploaded case file"
+            )
+
+    if not str(tba.get("charges_appropriate") or "").strip():
+        verdict = str(result.get("compliance_verdict") or "").strip()
+        if verdict:
+            tba["charges_appropriate"] = (
+                "Appears appropriate per guideline compliance review"
+                if "compliant" in verdict.lower() or "approve" in verdict.lower()
+                else "Review recommended — see deviations and observations"
+            )
+
+
+_FINANCIAL_NUMERIC_FIELDS = (
+    "total_hospital_bill", "non_payable_amount", "net_claimable_amount",
+    "recommended_approval_amount", "patient_liability", "amount_saved",
+    "savings_percentage",
+)
+_FINANCIAL_UNAVAILABLE_MSG = (
+    "Financial review not available — no itemised hospital bill, invoice, or "
+    "billed amount was found in the uploaded documents. Provide the final bill "
+    "to enable a financial audit."
+)
+
+
+def finalize_financial_sections(
+    result: dict,
+    case_text: str,
+    claim_facts: Optional[Dict[str, str]] = None,
+) -> None:
+    """Populate or clear financial / savings sections based on document evidence only."""
+    claim_facts = claim_facts or {}
+    if has_extractable_financials(case_text, claim_facts):
+        result.pop("claim_savings_line_items", None)
+        result["claim_savings"] = build_claim_savings(result, case_text, claim_facts)
+        fin = result.setdefault("financial_review", {})
+        fin.pop("status", None)
+        fin.pop("note", None)
+        cs = result.get("claim_savings") or {}
+        cs.pop("status", None)
+        return
+
+    fin = result.setdefault("financial_review", {})
+    for key in _FINANCIAL_NUMERIC_FIELDS:
+        fin[key] = ""
+    fin["status"] = "not_available"
+    fin["note"] = _FINANCIAL_UNAVAILABLE_MSG
+    result["claim_savings"] = {
+        "total_claim_amount": "",
+        "admissible_amount": "",
+        "amount_saved": "",
+        "savings_percentage": "",
+        "highlight": False,
+        "line_items": [],
+        "status": "not_available",
+        "notes": _FINANCIAL_UNAVAILABLE_MSG,
+    }
+    result.pop("claim_savings_line_items", None)
+
+
 def enrich_audit_result(
     result: dict,
     case_text: str,
@@ -411,11 +501,12 @@ def enrich_audit_result(
     apply_case_evidence_corrections(result, case_text)
     _remove_ppi_exclusions(result)
     _ensure_observations_echo_clinical_findings(result)
+    seed_treatment_billing_audit(result, case_text, claim_facts)
 
     # Fraud/abuse, claim savings, inference + report summary bullets
     result["fraud_abuse"] = detect_fraud_abuse(case_text, result, claim_facts)
     result["fraud_abuse_findings"] = (result.get("fraud_abuse") or {}).get("findings") or []
-    result["claim_savings"] = build_claim_savings(result, case_text, claim_facts)
+    finalize_financial_sections(result, case_text, claim_facts)
     _ensure_inference_and_summary(result)
     return result
 

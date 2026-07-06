@@ -5,6 +5,7 @@ import unittest
 from backend.utils.claim_details_extractor import (
     enrich_claim_facts,
     extract_claim_details_from_text,
+    filter_actionable_date_discrepancies,
     merge_claim_details_into_result,
 )
 from backend.utils.insurance_extractor import (
@@ -97,7 +98,7 @@ class ClaimDetailsExtractorTests(unittest.TestCase):
         self.assertEqual(facts["consultation_date"], "02/04/2025")
         self.assertEqual(facts["date_of_admission"], "30/06/2026")
 
-    def test_prefers_preauth_over_query_and_flags_discrepancy(self):
+    def test_prefers_preauth_over_query_without_proposed_admission_discrepancy(self):
         case = (
             f"=== Source document: insurer_query.pdf ===\n{QUERY_LETTER}\n\n"
             f"=== Source document: hospital_form_scan.pdf ===\n{PRE_AUTH}"
@@ -107,11 +108,10 @@ class ClaimDetailsExtractorTests(unittest.TestCase):
         self.assertEqual(facts["date_of_admission"], "30/06/2026")
         self.assertEqual(facts["proposed_hospitalization_date"], "29 Jun 2026")
         self.assertIn("hospital_form_scan.pdf", facts["date_of_admission_source"])
-        self.assertTrue(facts["date_discrepancies"])
-        self.assertTrue(any(d["field"] == "date_of_admission" for d in facts["date_discrepancies"]))
+        self.assertFalse(any(d["field"] == "date_of_admission" for d in facts["date_discrepancies"]))
         self.assertTrue(len(facts["all_document_dates"]) >= 3)
 
-    def test_merge_attaches_sources_and_discrepancies(self):
+    def test_merge_shows_both_admission_dates_without_fraud_flag(self):
         result = {
             "claim_details": {
                 "consultation_date": "21/01/2022",
@@ -119,6 +119,7 @@ class ClaimDetailsExtractorTests(unittest.TestCase):
                 "nature_of_admission": "Unknown",
             },
             "treatment_billing_audit": {},
+            "insurance_details": {},
         }
         case = (
             f"=== Source document: insurer_query.pdf ===\n{QUERY_LETTER}\n\n"
@@ -129,8 +130,8 @@ class ClaimDetailsExtractorTests(unittest.TestCase):
         self.assertEqual(result["claim_details"]["consultation_date"], "02/04/2025")
         self.assertEqual(result["claim_details"]["date_of_admission"], "30/06/2026")
         self.assertEqual(result["claim_details"]["proposed_hospitalization_date"], "29 Jun 2026")
-        self.assertIn("consultation_date_source", result["claim_details"])
-        self.assertTrue(result.get("date_discrepancies"))
+        self.assertIn("admission_dates_note", result["claim_details"])
+        self.assertFalse(filter_actionable_date_discrepancies(result.get("date_discrepancies")))
 
     def test_clinical_consult_date_and_nature(self):
         clinical = "DOCUMENT TYPE: Handwritten consultation note BODY: Date: 4/6/2026 Name: Mr. Divyansh Mishra"
