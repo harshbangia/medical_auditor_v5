@@ -20,8 +20,10 @@ from backend.utils.case_evidence_detector import (
     _has_clinical_mri_report,
 )
 from backend.utils.insurance_extractor import merge_insurance_into_result, _extract_policy_period
+from backend.utils.document_analysis import merge_document_analysis_into_result
 from backend.utils.fraud_abuse_detector import detect_fraud_abuse
 from backend.utils.claim_savings import build_claim_savings, has_extractable_financials
+from backend.utils.case_facts_ledger import merge_patient_from_ledger
 
 _MRI_REPORT_RE = re.compile(
     r"\bmri\s+(?:brain|spine|report|of\s+)|neurovascular\s+conflict|grade\s+iii",
@@ -190,8 +192,18 @@ def _fix_mri_documentation(result: dict, case_text: str) -> None:
 
 
 def _fix_medication_documentation(result: dict, case_text: str) -> None:
-    brands = [b for b in find_brands_in_text(case_text) if b.lower() in _ANTINEURALGIC_BRANDS]
+    scoped = clinical_case_text(case_text)
+    brands = [b for b in find_brands_in_text(scoped) if b.lower() in _ANTINEURALGIC_BRANDS]
     if not brands:
+        return
+
+    diag = _norm(str((result.get("claim_details") or {}).get("diagnosis", "")))
+    tn_case = bool(
+        "neuralgia" in diag
+        or "trigeminal" in diag
+        or re.search(r"\btrigeminal\s+neuralgia\b", scoped, re.I)
+    )
+    if not tn_case:
         return
 
     med_section = build_medication_evidence_section(case_text)
@@ -487,6 +499,8 @@ def enrich_audit_result(
     case_text: str,
     insurance_facts: Optional[Dict[str, str]] = None,
     claim_facts: Optional[Dict[str, str]] = None,
+    source_summaries: Optional[List[dict]] = None,
+    case_facts_ledger: Optional[dict] = None,
 ) -> dict:
     """Apply deterministic enrichments to LLM audit output."""
     if not result or result.get("error"):
@@ -507,6 +521,13 @@ def enrich_audit_result(
     result["fraud_abuse"] = detect_fraud_abuse(case_text, result, claim_facts)
     result["fraud_abuse_findings"] = (result.get("fraud_abuse") or {}).get("findings") or []
     finalize_financial_sections(result, case_text, claim_facts)
+    merge_document_analysis_into_result(result, case_text, source_summaries, claim_facts)
+    if case_facts_ledger:
+        merge_patient_from_ledger(result, case_facts_ledger)
+        claim = result.setdefault("claim_details", {})
+        merged = (case_facts_ledger.get("merged") or {})
+        if merged.get("diagnosis") and not str(claim.get("diagnosis") or "").strip():
+            claim["diagnosis"] = merged["diagnosis"]
     _ensure_inference_and_summary(result)
     return result
 
