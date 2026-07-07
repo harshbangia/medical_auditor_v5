@@ -110,6 +110,87 @@ class FraudAbuseTests(unittest.TestCase):
         self.assertTrue(out["findings"])
         self.assertTrue(any("Contradiction" in f["indicator"] for f in out["findings"]))
 
+    def test_policy_boilerplate_not_fraud(self):
+        text = (
+            "Policy terms: non-disclosure of material facts may lead to repudiation. "
+            "Please submit documents for claim processing."
+        )
+        out = detect_fraud_abuse(text, {})
+        indicators = [f.get("indicator") for f in out.get("findings") or []]
+        self.assertFalse(any("Fraud" in (i or "") for i in indicators))
+
+
+class DocumentAnalysisTests(unittest.TestCase):
+    def test_builds_per_file_rows(self):
+        from backend.utils.document_analysis import build_document_analysis
+
+        case = (
+            "=== Source document: Accord discharge.pdf ===\n"
+            "Discharge summary: Hepatitis, admission 01/07/2026\n"
+            "=== Source document: Final bill.pdf ===\n"
+            "Grand Total Rs. 52881"
+        )
+        summaries = [
+            {"filename": "Accord discharge.pdf", "contains_handwriting_or_scan": False},
+            {"filename": "Final bill.pdf", "contains_handwriting_or_scan": True},
+        ]
+        rows = build_document_analysis(case, summaries, {})
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["document"], "Accord discharge.pdf")
+        self.assertIn("Discharge", rows[0]["document_type"])
+        self.assertIn("vision", rows[1]["how_read"].lower())
+
+
+class CaseFactsLedgerTests(unittest.TestCase):
+    def test_merges_discharge_diagnosis_over_query_letter(self):
+        from backend.utils.case_facts_ledger import build_case_facts_ledger, apply_ledger_to_claim_facts
+
+        per_doc = [
+            {
+                "source_file": "query.pdf",
+                "document_type": "query_letter",
+                "patient_name": "Wrong Name",
+                "diagnosis": "Severe Asthma",
+                "summary": "Insurer query",
+            },
+            {
+                "source_file": "discharge.pdf",
+                "document_type": "discharge_summary",
+                "patient_name": "Pawan Kumar",
+                "age": "31",
+                "sex": "Male",
+                "diagnosis": "Hepatitis",
+                "bill_amount": "Rs. 52,881",
+                "summary": "Discharge summary for hepatitis",
+            },
+        ]
+        claim_facts = {"date_of_admission": "01/07/2026", "date_of_admission_source": "discharge.pdf"}
+        ledger = build_case_facts_ledger(per_doc, claim_facts)
+        merged = ledger["merged"]
+        self.assertEqual(merged["patient_name"], "Pawan Kumar")
+        self.assertEqual(merged["diagnosis"], "Hepatitis")
+        self.assertTrue(any(c["field"] == "patient_name" for c in ledger["conflicts"]))
+
+        claim_facts = apply_ledger_to_claim_facts(claim_facts, ledger)
+        self.assertEqual(claim_facts["diagnosis"], "Hepatitis")
+        self.assertEqual(claim_facts["patient_name"], "Pawan Kumar")
+
+    def test_format_ledger_includes_per_document_summaries(self):
+        from backend.utils.case_facts_ledger import build_case_facts_ledger, format_ledger_for_audit
+
+        ledger = build_case_facts_ledger([
+            {
+                "source_file": "bill.pdf",
+                "document_type": "bill",
+                "summary": "Final bill Rs. 52881",
+                "notable_findings": ["Grand total Rs. 52,881"],
+            },
+        ], {})
+        block = format_ledger_for_audit(ledger)
+        self.assertIn("CASE FACTS LEDGER", block)
+        self.assertIn("bill.pdf", block)
+        self.assertIn("52881", block)
+
 
 class ClaimSavingsTests(unittest.TestCase):
     def test_savings_table_and_percentage(self):

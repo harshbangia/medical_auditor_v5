@@ -65,8 +65,15 @@ def detect_fraud_abuse(
             "disclosure at policy inception / porting.",
         )
 
-    # 2. Explicit fraud / investigation language in file
-    if re.search(r"fraud|misrepresentation|non[\s-]?disclosure|material\s+fact", text, re.I):
+    # 2. Explicit fraud / investigation language (not policy boilerplate)
+    if re.search(
+        r"(?:suspected\s+fraud|fraudulent\s+claim|fraud\s+investigation|"
+        r"investigation\s+(?:revealed|found|into).{0,60}fraud|"
+        r"repudiat(?:ed|ion).{0,40}(?:fraud|misrepresentation)|"
+        r"material\s+fact.{0,40}(?:conceal|withheld|not\s+disclosed))",
+        text,
+        re.I,
+    ):
         _add(
             findings,
             "policy_compliance",

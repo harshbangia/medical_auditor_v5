@@ -10,6 +10,7 @@ import backend.config  # noqa: F401 — load .env before OpenAI client
 from backend.ai.llm_helpers import extract_response_text, image_input_part
 from backend.ai.case_profiler import normalize_str_list, profile_to_audit_context
 from backend.ai.drug_normalizer import build_medication_evidence_section
+from backend.utils.case_facts_ledger import format_ledger_for_audit
 from backend.llm_client import get_openai_client
 
 _VISION_BATCH_SIZE = 1  # one image per API call — avoids multimodal 400 errors
@@ -347,6 +348,10 @@ You MUST:
 - Use the CLINICAL VISIT SYNTHESIS section when reporting symptom duration vs treatment course — these are
   DIFFERENT facts from DIFFERENT pages; report BOTH separately in clinical_findings and observations
 - Produce at least 5 observations; minimum 3 must challenge or question the hospital (answer: Not Supported, Partially Supported, or Insufficient Evidence)
+- Every observation analysis MUST name the source document(s) reviewed, using the exact
+  filename from "=== Source document: <filename> ===" markers (e.g. "In Accord 5, Discharge
+  summary with final bill.pdf …"). Pinpoint what that document shows or fails to show.
+- guideline_deviations MUST follow: Guideline expectation → Case evidence → Source document(s).
 - Cite specific case facts AND specific guideline expectations in every observation
 
 Observation "answer" MUST be exactly one of: {_CHALLENGE_ANSWERS}
@@ -370,25 +375,18 @@ DO NOT critique typed radiology/lab reports as "low quality images" — they are
 documents; quality complaints must be about the underlying clinical capture, not the PDF scan.
 
 clinical_findings MUST include SEPARATE rows when documented:
-  1. Symptom duration at first/s subsequent consult (e.g. "Facial pain duration at presentation: 1 month")
-  2. Prescribed medication course duration (e.g. "Medical therapy course: 2 months — Zenoxa + Dolonex")
-  3. Follow-up interval (e.g. "Follow-up advised after: 2 months")
+  1. Symptom duration at first/s subsequent consult (e.g. "Symptom duration at presentation: 3 days")
+  2. Prescribed medication course duration (e.g. "Medical therapy course: 7 days — drug names from prescription")
+  3. Follow-up interval (e.g. "Follow-up advised after: 2 weeks")
+Do NOT copy drug names from these prompt examples — use ONLY drugs documented in THIS case.
 Do NOT report only the shorter duration when both 1-month symptom history AND 2-month
 treatment course appear on different pages.
 
 observations MUST echo EVERY row you place in clinical_findings — no observation may
 cite only one duration when clinical_findings lists several:
-  • If clinical_findings includes "Symptom duration at presentation: 1 month", at least one
-    observation MUST state that fact explicitly.
-  • If clinical_findings includes "Medication course duration: 2 months", at least one
-    observation MUST state the prescribed drug names AND the 2-month course.
-  • If clinical_findings includes "Follow-up interval: 2 months", at least one observation
-    MUST state the follow-up interval.
-  • Observations MUST NOT contradict clinical_findings (e.g. do NOT claim "no antineuralgic
-    therapy tried" if clinical_findings lists Zenoxa/oxcarbazepine).
-  • When judging medical history adequacy, distinguish: (a) symptom duration at first consult,
-    (b) duration of prescribed medical therapy, (c) whether insurer-required certified total
-    illness duration is still missing — these are separate audit points.
+  • Each observation analysis MUST cite which uploaded document supports or contradicts the point.
+  • Observations MUST NOT contradict clinical_findings.
+  • Do NOT mention drugs (e.g. anticonvulsants, PPIs) unless they appear in THIS case's prescriptions.
 
 Before finalising JSON, self-check: every clinical_findings row appears verbatim or paraphrased
 in at least one observations[].analysis block.
@@ -450,7 +448,7 @@ Return ONLY JSON:
   "insurance_details": {{"insurance_company": "", "policy_number": "", "policy_period": "", "claim_incident_number": ""}},
   "claim_details": {{"hospital": "", "consultation_date": "", "date_of_admission": "", "date_of_discharge": "", "nature_of_admission": "", "procedure_or_surgery": "", "diagnosis": ""}},
   "imaging_findings": [{{"type": "", "finding": "", "clinical_correlation": "", "consistency_with_diagnosis": ""}}],
-  "clinical_findings": [{{"parameter": "", "value": "", "normal_range": "", "comment": "", "source": "document page or file name"}}],
+  "clinical_findings": [{{"parameter": "", "value": "", "normal_range": "", "comment": "", "source": "exact source PDF filename"}}],
   "documentation_gaps": ["Specific gap and why it matters for claim validity"],
   "clinical_checklist": [{{"area": "", "available": "YES or NO", "remarks": ""}}],
   "timeline": [{{"date": "", "event": ""}}],
@@ -533,6 +531,7 @@ def run_audit(
     clinical_synthesis=None,
     claim_facts=None,
     case_evidence_block=None,
+    case_facts_ledger=None,
 ):
     """
     Run adversarial audit. Pass image_analysis_text if already computed (pipeline parallelism).
@@ -551,6 +550,18 @@ def run_audit(
         case_context = profile_to_audit_context(case_profile, case_text)
     else:
         case_context = case_text[:12000]
+
+    ledger_block = format_ledger_for_audit(case_facts_ledger or {})
+    if ledger_block:
+        case_context = ledger_block + "\n\n" + case_context
+
+    if case_facts_ledger:
+        case_context = (
+            "IMPORTANT: Use CASE FACTS LEDGER as authoritative for patient name, diagnosis, "
+            "dates, and per-document summaries. Do NOT contradict ledger facts unless a specific "
+            "source document excerpt clearly overrides them.\n\n"
+            + case_context
+        )
 
     if image_analysis_text.strip():
         case_context = (

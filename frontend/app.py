@@ -1340,6 +1340,25 @@ if "report" in st.session_state:
         unsafe_allow_html=True,
     )
 
+    doc_analysis = data.get("document_analysis") or []
+    if doc_analysis:
+        st.markdown('<p class="gwx-section-title">Document analysis (per uploaded file)</p>', unsafe_allow_html=True)
+        for row in doc_analysis:
+            if not isinstance(row, dict):
+                continue
+            st.markdown(
+                f"""
+                <div class="gwx-card gwx-card-compact">
+                <b class="gwx-field-title">{row.get('document') or '—'}</b>
+                <span class="gwx-text-soft">({row.get('document_type') or '—'})</span><br>
+                <span class="gwx-text-soft">How read:</span> {row.get('how_read') or '—'}<br>
+                <span class="gwx-text-soft">Key content:</span> {row.get('key_content') or '—'}<br>
+                <span class="gwx-text-soft">Audit use:</span> {row.get('audit_use') or '—'}
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
     # Fraud / abuse identification
     fa = data.get("fraud_abuse") or {}
     st.markdown('<p class="gwx-section-title">Fraud / abuse identification</p>', unsafe_allow_html=True)

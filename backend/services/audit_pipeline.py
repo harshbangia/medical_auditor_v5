@@ -6,7 +6,7 @@ from typing import Callable, List, Optional
 from uuid import uuid4
 
 from backend.ai.audit_engine import analyze_case_images, run_audit
-from backend.ai.case_profiler import extract_case_profile, normalize_str_list
+from backend.ai.case_profiler import extract_case_profile, normalize_str_list, normalize_case_profile
 from backend.ai.guideline_selector import select_guideline
 from backend.rag.guideline_retriever import retrieve_from_guidelines, retrieve_guideline_sections
 from backend.rag.rag_manager import get_or_create_index
@@ -17,6 +17,12 @@ from backend.ai.clinical_synthesizer import build_clinical_synthesis_section
 from backend.utils.insurance_extractor import enrich_insurance_facts, merge_insurance_into_result
 from backend.utils.claim_details_extractor import enrich_claim_facts, merge_claim_details_into_result
 from backend.utils.guideline_alignment import assert_guideline_alignment, GuidelineMismatchError
+from backend.ai.document_extractor import map_case_documents, ledger_to_case_profile
+from backend.utils.case_facts_ledger import (
+    apply_ledger_to_claim_facts,
+    build_case_facts_ledger,
+    format_ledger_for_audit,
+)
 from backend.utils.pdf_reader import extract_text_and_images
 
 ProgressFn = Callable[[str, int, str], None]
@@ -175,7 +181,7 @@ def _summarize_source(filename: str, text: str) -> dict:
 def _process_files_sequential(file_items: List[tuple], progress: ProgressFn) -> tuple:
     """Process PDFs one at a time to avoid OOM on small EC2 instances."""
     if not file_items:
-        return "", [], [], []
+        return "", [], [], [], []
 
     unique = {}
     for name, data in file_items:
@@ -190,6 +196,8 @@ def _process_files_sequential(file_items: List[tuple], progress: ProgressFn) -> 
     source_summaries = []
     temp_pdf_paths = []
 
+    doc_blocks: List[tuple] = []
+
     for idx, (name, data) in enumerate(file_items):
         pct = 10 + int(55 * idx / max(total, 1))
         progress("extracting", pct, f"Processing PDF {idx + 1}/{total}: {name}")
@@ -203,6 +211,7 @@ def _process_files_sequential(file_items: List[tuple], progress: ProgressFn) -> 
             text, imgs = extract_text_and_images(tmp_path, source_name=name)
             if text.strip():
                 case_texts.append(f"=== Source document: {name} ===\n{text}")
+                doc_blocks.append((name, text))
             images.extend(imgs or [])
             source_summaries.append(_summarize_source(name, text))
         except Exception as exc:
@@ -210,7 +219,7 @@ def _process_files_sequential(file_items: List[tuple], progress: ProgressFn) -> 
         pct_done = 10 + int(55 * (idx + 1) / total)
         progress("extracting", pct_done, f"Finished {idx + 1}/{total}: {name}")
 
-    return "\n\n".join(case_texts), images, source_summaries, temp_pdf_paths
+    return "\n\n".join(case_texts), images, source_summaries, temp_pdf_paths, doc_blocks
 
 
 def _normalize_guideline_list(
@@ -244,16 +253,34 @@ def run_full_audit(
 ) -> dict:
     started = time.time()
     temp_pdf_paths = []
-    case_text, images, source_summaries, temp_pdf_paths = _process_files_sequential(
+    case_text, images, source_summaries, temp_pdf_paths, doc_blocks = _process_files_sequential(
         file_items, progress
     )
 
     if len(case_text.strip()) < 50:
         raise RuntimeError("No meaningful text extracted from uploaded PDFs")
 
-    progress("insurance", 58, "Extracting insurance details from letters…")
-    insurance_facts = enrich_insurance_facts(case_text, temp_pdf_paths)
+    progress("claim", 57, "Extracting dates and claim fields…")
     claim_facts = enrich_claim_facts(case_text, temp_pdf_paths)
+
+    progress("map", 59, "Mapping structured facts from each document…")
+    per_doc_facts = map_case_documents(doc_blocks, progress=progress)
+    case_facts_ledger = build_case_facts_ledger(per_doc_facts, claim_facts)
+    claim_facts = apply_ledger_to_claim_facts(claim_facts, case_facts_ledger)
+    case_profile = ledger_to_case_profile(case_facts_ledger)
+    if not (case_profile.get("diagnosis") or case_profile.get("chief_complaint")):
+        progress("profile", 61, "Supplementing case profile from combined text…")
+        supplemental = extract_case_profile(case_text[:16000])
+        for key in ("diagnosis", "age", "gender", "chief_complaint", "admission_type"):
+            if not case_profile.get(key) and supplemental.get(key):
+                case_profile[key] = supplemental[key]
+        for key in ("procedures", "key_labs", "imaging_mentioned", "documentation_weaknesses"):
+            if not case_profile.get(key) and supplemental.get(key):
+                case_profile[key] = supplemental[key]
+    case_profile = normalize_case_profile(case_profile)
+
+    progress("insurance", 63, "Extracting insurance details from letters…")
+    insurance_facts = enrich_insurance_facts(case_text, temp_pdf_paths)
     clinical_synthesis = build_clinical_synthesis_section(case_text)
 
     progress("guideline", 65, "Loading clinical guideline(s)…")
@@ -268,15 +295,13 @@ def run_full_audit(
             guideline_paths.append(tmp.name)
 
     try:
-        progress("profile", 62, "Extracting case facts & loading guideline(s)…")
+        progress("profile", 62, "Loading clinical guideline(s)…")
 
         with ThreadPoolExecutor(max_workers=min(4, len(guideline_names) + 1)) as pool:
-            fut_profile = pool.submit(extract_case_profile, case_text[:16000])
             index_futures = {
                 pool.submit(get_or_create_index, path, cache_key=name): name
                 for path, name in zip(guideline_paths, guideline_names)
             }
-            case_profile = fut_profile.result()
             guideline_stores = []
             for fut in index_futures:
                 name = index_futures[fut]
@@ -328,6 +353,7 @@ def run_full_audit(
             insurance_facts=insurance_facts,
             clinical_synthesis=clinical_synthesis,
             claim_facts=claim_facts,
+            case_facts_ledger=case_facts_ledger,
         )
 
         if not result or not isinstance(result, dict):
@@ -340,8 +366,12 @@ def run_full_audit(
         result = _ensure_result_shape(result)
         result = merge_insurance_into_result(result, insurance_facts)
         result = merge_claim_details_into_result(result, claim_facts)
-        result = enrich_audit_result(result, case_text, insurance_facts, claim_facts)
+        result = enrich_audit_result(
+            result, case_text, insurance_facts, claim_facts, source_summaries,
+            case_facts_ledger=case_facts_ledger,
+        )
         result["document_sources"] = source_summaries
+        result["case_facts_ledger"] = case_facts_ledger
         result["guideline_alignment"] = alignment
 
         if all([

@@ -1191,6 +1191,10 @@ def merge_claim_details_into_result(result: dict, facts: Dict[str, Any]) -> dict
         fin = result.setdefault("financial_review", {})
         fin["total_hospital_bill"] = bill_total
 
+    diagnosis = facts.get("diagnosis", "")
+    if diagnosis and not str(claim.get("diagnosis") or "").strip():
+        claim["diagnosis"] = diagnosis
+
     if claim.get("date_of_admission") and not claim.get("date_of_discharge"):
         gaps = result.setdefault("documentation_gaps", [])
         gap_msg = (

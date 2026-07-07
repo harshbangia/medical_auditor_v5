@@ -123,6 +123,27 @@ def generate_pdf(data, filename="audit_report.pdf"):
         ))
         content.append(Spacer(1, 12))
 
+    doc_analysis = data.get("document_analysis") or []
+    if doc_analysis:
+        content.extend(section("Document Analysis (per uploaded file)", styles))
+        da_rows = []
+        for row in doc_analysis:
+            if not isinstance(row, dict):
+                continue
+            da_rows.append([
+                row.get("document") or "—",
+                row.get("document_type") or "—",
+                row.get("how_read") or "—",
+                row.get("key_content") or "—",
+                row.get("audit_use") or "—",
+            ])
+        content.append(data_table(
+            ["Document", "Type", "How read", "Key content extracted", "Audit relevance"],
+            da_rows or [["—", "—", "—", "—", "—"]],
+            col_widths=[95, 75, 85, 155, 95],
+        ))
+        content.append(Spacer(1, 12))
+
     date_discrepancies = data.get("date_discrepancies") or []
     if date_discrepancies:
         content.extend(section("Date Discrepancies Across Documents", styles))
