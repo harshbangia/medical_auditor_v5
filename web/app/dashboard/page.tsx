@@ -68,6 +68,22 @@ export default function DashboardPage() {
         ))}
       </div>
 
+      <div className="mt-6">
+        <Card className="border-cyan-500/20 bg-cyan-500/5">
+          <CardContent className="flex flex-wrap items-center justify-between gap-4 py-5">
+            <div>
+              <p className="font-semibold text-white">How to run an audit</p>
+              <p className="text-sm text-slate-400">
+                Step-by-step guide — guidelines, uploads, review, and PDF download.
+              </p>
+            </div>
+            <Link href="/instructions">
+              <Button variant="secondary">View instructions</Button>
+            </Link>
+          </CardContent>
+        </Card>
+      </div>
+
       <div className="mt-8">
         <h2 className="mb-4 text-lg font-semibold text-white">Recent audits</h2>
         {fetching ? (
@@ -77,9 +93,14 @@ export default function DashboardPage() {
             <CardContent className="flex flex-col items-center py-12 text-center">
               <FileText className="mb-3 h-10 w-10 text-slate-600" />
               <p className="text-slate-400">No completed audits yet</p>
-              <Link href="/audit/new" className="mt-4">
-                <Button variant="secondary">Start your first audit</Button>
-              </Link>
+              <div className="mt-4 flex flex-wrap justify-center gap-3">
+                <Link href="/instructions">
+                  <Button variant="secondary">Read instructions</Button>
+                </Link>
+                <Link href="/audit/new">
+                  <Button>Start your first audit</Button>
+                </Link>
+              </div>
             </CardContent>
           </Card>
         ) : (

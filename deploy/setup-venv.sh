@@ -27,4 +27,4 @@ echo "  source venv/bin/activate && python scripts/create_user.py admin@example.
 echo ""
 echo "Done. Activate with: source $ROOT/venv/bin/activate"
 echo "Backend:  $ROOT/venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 8000"
-echo "Streamlit: $ROOT/venv/bin/streamlit run frontend/app.py"
+echo "Frontend: cd $ROOT/web && npm run build && npm run start   # or glowix-web systemd"

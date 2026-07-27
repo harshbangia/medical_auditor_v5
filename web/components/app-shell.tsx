@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Activity,
+  BookOpen,
   FileSearch,
   LayoutDashboard,
   LogOut,
@@ -16,6 +17,7 @@ import { cn } from "@/lib/utils";
 const nav = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/audit/new", label: "New audit", icon: PlusCircle },
+  { href: "/instructions", label: "Instructions", icon: BookOpen },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
