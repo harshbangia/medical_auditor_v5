@@ -136,3 +136,27 @@ export async function setUserActive(userId: number, isActive: boolean) {
   });
   return handle(res);
 }
+
+export async function askFollowUp(
+  question: string,
+  sessionId: string,
+): Promise<{
+  mode?: string;
+  question?: string;
+  answer?: string;
+  justification?: string;
+  evidence_used?: string[];
+  qa_section?: Array<{ question?: string; answer?: string; justification?: string }>;
+}> {
+  const form = new FormData();
+  form.append("question", question);
+  form.append("session_id", sessionId);
+
+  const res = await fetch(`${API_BASE}/audit`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: form,
+  });
+  return handle(res);
+}
+

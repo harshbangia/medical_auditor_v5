@@ -16,6 +16,7 @@ export default function ReportPageClient() {
   const params = useSearchParams();
   const id = params.get("id");
   const [report, setReport] = useState<AuditReport | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [fetching, setFetching] = useState(true);
 
   useEffect(() => {
@@ -31,6 +32,10 @@ export default function ReportPageClient() {
         const item = history.find((h) => String(h.id) === id);
         if (item?.report) {
           setReport(item.report);
+          setSessionId(
+            String(item.report.session_id || "") ||
+              sessionStorage.getItem("last_audit_session_id"),
+          );
           setFetching(false);
           return;
         }
@@ -38,7 +43,12 @@ export default function ReportPageClient() {
       const cached = sessionStorage.getItem("last_audit_report");
       if (cached) {
         try {
-          setReport(JSON.parse(cached));
+          const parsed = JSON.parse(cached);
+          setReport(parsed);
+          setSessionId(
+            String(parsed.session_id || "") ||
+              sessionStorage.getItem("last_audit_session_id"),
+          );
         } catch {
           /* ignore */
         }
@@ -71,7 +81,14 @@ export default function ReportPageClient() {
       {fetching ? (
         <p className="text-slate-500">Loading report…</p>
       ) : report ? (
-        <ReportView data={report} />
+        <ReportView
+          data={report}
+          sessionId={sessionId}
+          onReportChange={(next) => {
+            setReport(next);
+            sessionStorage.setItem("last_audit_report", JSON.stringify(next));
+          }}
+        />
       ) : (
         <p className="text-slate-500">Report not found.</p>
       )}

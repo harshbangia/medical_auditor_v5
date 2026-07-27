@@ -73,6 +73,8 @@ export default function NewAuditPage() {
         if (status.status === "completed" && status.result) {
           setReport(status.result);
           sessionStorage.setItem("last_audit_report", JSON.stringify(status.result));
+          const sid = String(status.result.session_id || "");
+          if (sid) sessionStorage.setItem("last_audit_session_id", sid);
           setSubmitting(false);
           return;
         }
@@ -99,10 +101,19 @@ export default function NewAuditPage() {
   }
 
   if (report) {
+    const sessionId =
+      String(report.session_id || "") ||
+      (typeof window !== "undefined"
+        ? sessionStorage.getItem("last_audit_session_id")
+        : null);
     return (
       <AppShell>
         <PageHeader title="Audit report" description="Review findings and download PDF" />
-        <ReportView data={report} />
+        <ReportView
+          data={report}
+          sessionId={sessionId}
+          onReportChange={setReport}
+        />
       </AppShell>
     );
   }

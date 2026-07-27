@@ -1,12 +1,13 @@
 "use client";
 
-import { Download, FileText } from "lucide-react";
+import { Download, FileText, MessageCircleQuestion } from "lucide-react";
 import { useState } from "react";
-import { generatePdf } from "@/lib/api";
+import { askFollowUp, generatePdf } from "@/lib/api";
 import type { AuditReport } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 
 function str(v: unknown) {
   return v == null || v === "" ? "—" : String(v);
@@ -30,8 +31,24 @@ function KV({ label, value }: { label: string; value: unknown }) {
   );
 }
 
-export function ReportView({ data }: { data: AuditReport }) {
+type QaItem = { question?: string; answer?: string; justification?: string };
+
+export function ReportView({
+  data,
+  sessionId,
+  onReportChange,
+}: {
+  data: AuditReport;
+  sessionId?: string | null;
+  onReportChange?: (next: AuditReport) => void;
+}) {
   const [downloading, setDownloading] = useState(false);
+  const [question, setQuestion] = useState("");
+  const [asking, setAsking] = useState(false);
+  const [askError, setAskError] = useState("");
+  const [localQa, setLocalQa] = useState<QaItem[]>(
+    () => (data.qa_section as QaItem[]) || [],
+  );
   const patient = (data.patient_details as Record<string, unknown>) || {};
   const insurance = (data.insurance_details as Record<string, unknown>) || {};
   const claim = (data.claim_details as Record<string, unknown>) || {};
@@ -46,7 +63,7 @@ export function ReportView({ data }: { data: AuditReport }) {
   async function downloadPdf() {
     setDownloading(true);
     try {
-      const blob = await generatePdf(data);
+      const blob = await generatePdf({ ...data, qa_section: localQa });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -262,6 +279,105 @@ export function ReportView({ data }: { data: AuditReport }) {
           </CardContent>
         </Card>
       </Section>
+
+      {localQa.length > 0 && (
+        <Section title="Follow-up Q&A">
+          <div className="space-y-3">
+            {localQa.map((qa, i) => (
+              <Card key={i}>
+                <CardContent className="pt-5">
+                  <p className="font-medium text-white">Q: {str(qa.question)}</p>
+                  <p className="mt-2 text-sm text-slate-300">
+                    <span className="text-slate-500">A: </span>
+                    {str(qa.answer)}
+                  </p>
+                  {qa.justification && (
+                    <p className="mt-2 text-sm text-slate-400">{qa.justification}</p>
+                  )}
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      <Section title="Ask a follow-up question">
+        <Card className="border-cyan-500/20">
+          <CardContent className="pt-6">
+            <div className="mb-4 flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-cyan-500/15 text-cyan-300">
+                <MessageCircleQuestion className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="font-medium text-white">Ask about this case</p>
+                <p className="text-sm text-slate-400">
+                  Answers use the uploaded documents and selected guidelines (same session as this audit).
+                </p>
+              </div>
+            </div>
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                const q = question.trim();
+                if (!q) return;
+                if (!sessionId) {
+                  setAskError(
+                    "Follow-up questions work right after a fresh audit. Re-run the audit to enable Ask.",
+                  );
+                  return;
+                }
+                setAsking(true);
+                setAskError("");
+                try {
+                  const qa = await askFollowUp(q, sessionId);
+                  const nextItems: QaItem[] = qa.qa_section?.length
+                    ? qa.qa_section
+                    : [
+                        {
+                          question: qa.question || q,
+                          answer: qa.answer || "",
+                          justification: qa.justification || "",
+                        },
+                      ];
+                  const merged = [...localQa, ...nextItems];
+                  setLocalQa(merged);
+                  setQuestion("");
+                  const nextReport = { ...data, qa_section: merged };
+                  onReportChange?.(nextReport);
+                  sessionStorage.setItem("last_audit_report", JSON.stringify(nextReport));
+                } catch (err) {
+                  setAskError(err instanceof Error ? err.message : "Failed to ask question");
+                } finally {
+                  setAsking(false);
+                }
+              }}
+              className="flex flex-col gap-3 sm:flex-row"
+            >
+              <Input
+                value={question}
+                onChange={(e) => setQuestion(e.target.value)}
+                placeholder="e.g. Was endoscopy indicated for this diagnosis?"
+                className="flex-1"
+                disabled={asking}
+              />
+              <Button type="submit" disabled={asking || !question.trim()}>
+                {asking ? "Asking…" : "Ask"}
+              </Button>
+            </form>
+            {askError && (
+              <p className="mt-3 rounded-lg bg-rose-500/10 px-3 py-2 text-sm text-rose-300">
+                {askError}
+              </p>
+            )}
+            {!sessionId && !askError && (
+              <p className="mt-3 text-xs text-slate-500">
+                Tip: Ask works best on the report right after you finish a new audit.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      </Section>
+
     </div>
   );
 }

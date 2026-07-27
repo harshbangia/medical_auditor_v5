@@ -36,7 +36,7 @@ const STEPS = [
   {
     icon: CheckCircle2,
     title: "Review the report",
-    body: "Check Inference, documentation gaps, guideline deviations, observations, timeline, and document analysis. Flagged items may need closer review.",
+    body: "Review Inference, documentation gaps, observations, and timeline. Use Ask a follow-up question at the bottom of the report when you need clarification.",
   },
   {
     icon: Download,
