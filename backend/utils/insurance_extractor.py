@@ -53,6 +53,15 @@ _POLICY_NUMBER_PATTERNS = [
         r"forming part of\s+policy\s*(?:no\.?|number)\s*[:.]?\s*([A-Z]?\d{5,}[A-Z0-9\-]*)",
         re.I,
     ),
+    # OCR variants: Polley / Polcy / Policy No.H1685201 (no space)
+    re.compile(
+        r"pol(?:icy|ley|cy)\s*(?:no\.?|number|#)?\s*[:.]?\s*(H\d{5,8})",
+        re.I,
+    ),
+    re.compile(
+        r"(?:member\s*code|policy)\s*[:.]?\s*(H\d{5,8})(?:\s*[-–]\s*\d)?",
+        re.I,
+    ),
 ]
 
 _POLICY_FALSE_POSITIVES = {
@@ -106,6 +115,11 @@ _CLAIM_PATTERNS = [
     # OCR variants: Clalm / lncident / missing spaces
     re.compile(
         r"c[li1]a[il1]m\s*[il1]nc[il1]dent\s*[:.]?\s*([0-9]{8,}[A-Z0-9.\-]*)",
+        re.I,
+    ),
+    # Bare IFFCO-style 13-digit claim id near claim/incident wording
+    re.compile(
+        r"(?:claim|incident)[^\n]{0,24}?\b(20\d{2}\d{9}(?:\.[A-Z0-9]{1,4})?)\b",
         re.I,
     ),
 ]

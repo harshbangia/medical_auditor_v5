@@ -88,6 +88,8 @@ _HOSPITAL_PATTERNS = [
     re.compile(r"(Kokilaben\s+Dhirubh?ai\s+Ambani\s+Hospital[^\n]{0,80})", re.I),
     re.compile(r"(Gangapada\s+Super\s+Speciality\s+Hospital[^\n]{0,60})", re.I),
     re.compile(r"(Nibedita\s+Health\s+Care[^\n]{0,60})", re.I),
+    re.compile(r"(Gokuldas\s+Hospital(?:\s+Pvt\.?\s*Ltd\.?)?[^\n]{0,40})", re.I),
+    re.compile(r"(Charak\s+Hospital[^\n]{0,40})", re.I),
     # IFFCO-style query letter: Member Code : H1509554-1-1 <Hospital Name>
     re.compile(
         r"member\s*(?:code|id|no|number)?\s*[:.]?\s*[A-Z0-9][A-Z0-9\-/]{4,}\s+"
@@ -110,6 +112,14 @@ _HOSPITAL_PATTERNS = [
         r"(?:\s+(?:&|and)\s+[A-Za-z.&'() \-]{3,60})?)\b",
     ),
 ]
+
+_HOSPITAL_BOILERPLATE = re.compile(
+    r"arising\s+out\s+of|unless\s+arising|hospitalization\s+for|"
+    r"subject\s+to|excluding|policy\s+wording|insured\s+person|"
+    r"definition|period\s+of\s+insurance|cashless\s+facility|"
+    r"pre[\s-]?existing|waiting\s+period|sum\s+insured",
+    re.I,
+)
 
 # Address / location crumbs that OCR often mistakes for hospital names.
 _HOSPITAL_ADDRESS_PREFIXES = re.compile(
@@ -163,8 +173,9 @@ _PROPOSED_HOSPITALIZATION_PATTERNS = [
 _EXPLICIT_ADMISSION_PATTERNS = [
     re.compile(rf"date\s*of\s*admission\s*[:.]?\s*{_DATE_NUMERIC}", re.I),
     re.compile(rf"date\s*of\s*admission\s*[:.]?\s*{_DATE_TEXT_ORDINAL}", re.I),
-    re.compile(rf"date\s*of\s*hospitalization\s*[:.]?\s*{_DATE_TEXT}", re.I),
-    re.compile(rf"date\s*of\s*hospitalization\s*[:.]?\s*{_DATE_NUMERIC}", re.I),
+    # Exclude "Proposed Date of Hospitalization …" (query-letter planned date)
+    re.compile(rf"(?<!proposed\s)date\s*of\s*hospitalization\s*[:.]?\s*{_DATE_TEXT}", re.I),
+    re.compile(rf"(?<!proposed\s)date\s*of\s*hospitalization\s*[:.]?\s*{_DATE_NUMERIC}", re.I),
     re.compile(rf"(?:doa|d\.o\.a\.?)\s*[:.]?\s*{_DATE_NUMERIC}", re.I),
     re.compile(rf"admitted\s*(?:on|date)?\s*[:.]?\s*{_DATE_NUMERIC}", re.I),
 ]
@@ -239,15 +250,60 @@ def _infer_year_for_partial(val: str, reference_year: Optional[int]) -> str:
 
 def _parse_flexible_date(val: str, reference_year: Optional[int] = None) -> Optional[datetime]:
     val = _infer_year_for_partial(_strip_ordinal(_norm_date(val)), reference_year)
+    parsed = None
     for fmt in (
         "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%d/%m/%y",
         "%d %b %Y", "%d %B %Y", "%d %b %y", "%d %B %y",
     ):
         try:
-            return datetime.strptime(val, fmt)
+            parsed = datetime.strptime(val, fmt)
+            break
         except ValueError:
             continue
-    return None
+    if not parsed:
+        return None
+    return _clamp_implausible_year(parsed, reference_year)
+
+
+def _clamp_implausible_year(dt: datetime, reference_year: Optional[int] = None) -> datetime:
+    """Fix OCR year errors like 18/07/36 → 2036 or 2026 misread as 2036.
+
+    Two-digit years 00–68 map to 2000–2068 in strptime; OCR often turns 2026→2036.
+    """
+    now_year = datetime.utcnow().year
+    anchor = reference_year if reference_year else now_year
+    year = dt.year
+
+    def _ok(y: int) -> bool:
+        return 2018 <= y <= now_year + 1 and abs(y - anchor) <= 2
+
+    if year <= now_year + 1 and (reference_year is None or abs(year - anchor) <= 2):
+        if year >= 2018:
+            return dt
+
+    candidates: List[int] = []
+    if reference_year:
+        candidates.append(reference_year)
+        # Same 2-digit year in reference century (36 with ref 2026 → try 2036 already bad; use ref)
+        yy = year % 100
+        candidates.append((reference_year // 100) * 100 + yy)
+    # Common OCR digit flip: 2036 → 2026
+    if year >= 2030:
+        candidates.append(year - 10)
+    candidates.append(now_year)
+    candidates.append(anchor)
+
+    for cand in candidates:
+        if _ok(cand):
+            try:
+                return dt.replace(year=cand)
+            except ValueError:
+                continue
+    # Last resort: clamp to anchor year
+    try:
+        return dt.replace(year=min(max(anchor, 2018), now_year + 1))
+    except ValueError:
+        return dt
 
 
 def _canonical_date_key(val: str, reference_year: Optional[int] = None) -> str:
@@ -263,10 +319,35 @@ def _parse_date_year(val: str, reference_year: Optional[int] = None) -> Optional
     return int(m.group(1)) if m else None
 
 
+def _is_plausible_for_claim(date_val: str, reference_year: Optional[int]) -> bool:
+    year = _parse_date_year(date_val, reference_year)
+    if year is None:
+        return True
+    now_year = datetime.utcnow().year
+    # Never accept years far in the future (OCR 2036, etc.)
+    if year > now_year + 1:
+        return False
+    if reference_year is None:
+        return year >= 2018
+    return abs(year - reference_year) <= 2
+
+
+def _format_date_display(val: str, reference_year: Optional[int] = None) -> str:
+    """Normalize extracted dates to DD/MM/YYYY with clamped year."""
+    parsed = _parse_flexible_date(val, reference_year)
+    if parsed:
+        return parsed.strftime("%d/%m/%Y")
+    return (val or "").strip()
+
+
 def _claim_reference_year(text: str) -> Optional[int]:
     years: List[int] = []
+    now_year = datetime.utcnow().year
     m = re.search(r"claim\s*incident\s*[:.]?\s*(20\d{2})", text or "", re.I)
     if m:
+        years.append(int(m.group(1)))
+    # Bare claim incident numbers like 2026071800281
+    for m in re.finditer(r"\b(20\d{2})\d{6,}\b", text or ""):
         years.append(int(m.group(1)))
     for pat in (
         r"receiving\s*date\s*[:.]?\s*\d{1,2}[/.-]\d{1,2}[/.-](20\d{2})",
@@ -274,20 +355,18 @@ def _claim_reference_year(text: str) -> Optional[int]:
         r"proposed\s*date\s*of\s*hospitalization\s*\d{1,2}\s+\w+\s+(20\d{2})",
         r"query\s*letter\s*date\s*[:.]?\s*\d{1,2}\s+\w+\s+(20\d{2})",
         r"date\s*[:.]?\s*\d{1,2}\s+\w+\s+(20\d{2})",
+        r"\b(\d{1,2})[/.-](\d{1,2})[/.-](20\d{2})\b",
     ):
         for match in re.finditer(pat, text or "", re.I):
-            years.append(int(match.group(1)))
-    return max(years) if years else None
-
-
-def _is_plausible_for_claim(date_val: str, reference_year: Optional[int]) -> bool:
-    year = _parse_date_year(date_val, reference_year)
-    if year is None:
-        return True
-    if reference_year is None:
-        # Reject clearly stale handwritten dates when no claim year anchor exists
-        return year >= 2018
-    return abs(year - reference_year) <= 2
+            y = int(match.group(match.lastindex or 1))
+            if 2018 <= y <= now_year + 1:
+                years.append(y)
+    # Prefer years close to now; drop far-future OCR junk
+    years = [y for y in years if 2018 <= y <= now_year + 1]
+    if not years:
+        return now_year
+    # Mode-ish: most common, else max near now
+    return max(set(years), key=lambda y: (years.count(y), -abs(y - now_year)))
 
 
 def _classify_document(fname: str, text: str) -> str:
@@ -386,8 +465,11 @@ def _first_match(
         m = pat.search(text or "")
         if m:
             val = _infer_year_for_partial(_norm_date(m.group(1)), reference_year)
-            if not _is_bad_date(val):
-                return val
+            if _is_bad_date(val):
+                continue
+            formatted = _format_date_display(val, reference_year)
+            if formatted and _is_plausible_for_claim(formatted, reference_year):
+                return formatted
     return ""
 
 
@@ -396,13 +478,19 @@ def _clinical_consult_dates(text: str, reference_year: Optional[int] = None) -> 
     if not _CLINICAL_MARKERS.search(text or "") and "consultation note" not in (text or "").lower():
         return dates
     for m in _CLINICAL_CONSULT_BLOCK.finditer(text or ""):
-        val = _infer_year_for_partial(_norm_date(m.group(1)), reference_year)
-        if val and not _is_bad_date(val):
+        val = _format_date_display(
+            _infer_year_for_partial(_norm_date(m.group(1)), reference_year),
+            reference_year,
+        )
+        if val and not _is_bad_date(val) and _is_plausible_for_claim(val, reference_year):
             dates.append(val)
     for pat in _CONSULT_PATTERNS:
         for m in pat.finditer(text or ""):
-            val = _infer_year_for_partial(_norm_date(m.group(1)), reference_year)
-            if val and not _is_bad_date(val):
+            val = _format_date_display(
+                _infer_year_for_partial(_norm_date(m.group(1)), reference_year),
+                reference_year,
+            )
+            if val and not _is_bad_date(val) and _is_plausible_for_claim(val, reference_year):
                 dates.append(val)
     return list(dict.fromkeys(dates))
 
@@ -423,7 +511,9 @@ def _infer_nature_of_admission(text: str, doc_type: str) -> str:
     blob = text or ""
     if re.search(
         r"\b(?:emergency|casualty|trauma|walk[\s-]?in)\b|unstable\s+angina|\bacs\b|"
-        r"trop-?[ti]\s*\+?|troponin|chest\s+discomfort",
+        r"trop-?[ti]\s*\+?|troponin|chest\s+discomfort|"
+        r"compression\s+fracture|vertebral\s+fracture|fall\s+(?:from|at|down)|"
+        r"unable\s+to\s+walk|cannot\s+walk",
         blob,
         re.I,
     ):
@@ -505,6 +595,8 @@ def _is_plausible_hospital_name(val: str) -> bool:
     low = v.lower()
     if any(tok in low for tok in ("patient", "request for cashless", "policy", "member code")):
         return False
+    if _HOSPITAL_BOILERPLATE.search(v):
+        return False
     if not any(tok in low for tok in ("hospital", "clinic", "nursing", "medical", "health", "institute")):
         return False
     words = re.findall(r"[A-Za-z]{3,}", v)
@@ -516,7 +608,8 @@ def _is_plausible_hospital_name(val: str) -> bool:
 def _clean_hospital_candidate(raw: str) -> str:
     name = re.sub(r"\s+", " ", (raw or "").strip())
     name = re.split(
-        r"\s+(?:where|date|policy|member|claim|proposed|patient|age|sex|gender)\b",
+        r"\s+(?:where|date|policy|member|claim|proposed|patient|age|sex|gender|"
+        r"unless|arising|hospitalization)\b",
         name,
         maxsplit=1,
         flags=re.I,
@@ -599,9 +692,13 @@ def _extract_room_category(text: str) -> str:
 
 def _extract_admission_date(text: str, doc_type: str, reference_year: Optional[int]) -> str:
     """Actual admission only — never from lab receiving/reporting dates."""
-    if doc_type in ("query_letter", "lab_report"):
+    if doc_type == "lab_report":
         return ""
+    # Explicit DOA is allowed even on query letters (mixed/misclassified packets).
+    # Proposed hospitalization is extracted separately and must not populate this field.
     val = _first_match(_EXPLICIT_ADMISSION_PATTERNS, text, reference_year)
+    if not val and doc_type == "query_letter":
+        return ""
     if not val and doc_type == "indoor_case":
         val = _first_match(_TREATMENT_SHEET_DATE_PATTERNS, text, reference_year)
     if not val and doc_type == "radiology" and re.search(r"icu", text or "", re.I):
@@ -1131,6 +1228,24 @@ def merge_claim_details_into_result(result: dict, facts: Dict[str, Any]) -> dict
                 claim[key] = val
         elif _should_overwrite_claim_field(str(claim.get(key) or ""), val):
             claim[key] = val
+
+    # Clamp OCR year errors (e.g. 18/07/2036 → 18/07/2026) on any remaining dates
+    ref_blob = " ".join([
+        str(facts.get("date_of_admission") or ""),
+        str(claim.get("date_of_admission") or ""),
+        str((result.get("insurance_details") or {}).get("claim_incident_number") or ""),
+        str(facts.get("proposed_hospitalization_date") or ""),
+    ])
+    ref_year = _claim_reference_year(ref_blob)
+    for field in _PRIMARY_DATE_FIELDS + ("proposed_hospitalization_date",):
+        raw = str(claim.get(field) or "").strip()
+        if not raw or _is_bad_date(raw):
+            continue
+        clamped = _format_date_display(raw, ref_year)
+        if clamped and _is_plausible_for_claim(clamped, ref_year):
+            claim[field] = clamped
+        elif not _is_plausible_for_claim(raw, ref_year):
+            claim[field] = ""
 
     # Drop address-like / OCR-garbage hospital names left by the LLM
     current_hospital = str(claim.get("hospital") or "").strip()

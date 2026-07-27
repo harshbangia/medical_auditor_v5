@@ -89,7 +89,7 @@ class ClaimDetailsExtractorTests(unittest.TestCase):
     def test_query_letter_proposed_date_not_actual_admission(self):
         facts = extract_claim_details_from_text(QUERY_LETTER, source="insurer_query.pdf")
         self.assertEqual(facts["date_of_admission"], "")
-        self.assertEqual(facts["proposed_hospitalization_date"], "29 Jun 2026")
+        self.assertEqual(facts["proposed_hospitalization_date"], "29/06/2026")
         self.assertIn("Kokilaben", facts["hospital"])
 
     def test_extracts_handwritten_partial_admission_from_pre_auth(self):
@@ -106,7 +106,7 @@ class ClaimDetailsExtractorTests(unittest.TestCase):
         facts = enrich_claim_facts(case)
         self.assertEqual(facts["consultation_date"], "02/04/2025")
         self.assertEqual(facts["date_of_admission"], "30/06/2026")
-        self.assertEqual(facts["proposed_hospitalization_date"], "29 Jun 2026")
+        self.assertEqual(facts["proposed_hospitalization_date"], "29/06/2026")
         self.assertIn("hospital_form_scan.pdf", facts["date_of_admission_source"])
         self.assertFalse(any(d["field"] == "date_of_admission" for d in facts["date_discrepancies"]))
         self.assertTrue(len(facts["all_document_dates"]) >= 3)
@@ -129,16 +129,50 @@ class ClaimDetailsExtractorTests(unittest.TestCase):
         merge_claim_details_into_result(result, facts)
         self.assertEqual(result["claim_details"]["consultation_date"], "02/04/2025")
         self.assertEqual(result["claim_details"]["date_of_admission"], "30/06/2026")
-        self.assertEqual(result["claim_details"]["proposed_hospitalization_date"], "29 Jun 2026")
+        self.assertEqual(result["claim_details"]["proposed_hospitalization_date"], "29/06/2026")
         self.assertIn("admission_dates_note", result["claim_details"])
         self.assertFalse(filter_actionable_date_discrepancies(result.get("date_discrepancies")))
 
     def test_clinical_consult_date_and_nature(self):
         clinical = "DOCUMENT TYPE: Handwritten consultation note BODY: Date: 4/6/2026 Name: Mr. Divyansh Mishra"
         facts = extract_claim_details_from_text(clinical, source="opd_note.pdf")
-        self.assertEqual(facts["consultation_date"], "4/6/2026")
+        self.assertEqual(facts["consultation_date"], "04/06/2026")
         facts2 = extract_claim_details_from_text(QUERY_LETTER, source="insurer_query.pdf")
         self.assertEqual(facts2["nature_of_admission"], "Planned / Elective")
+
+    def test_clamps_ocr_year_2036_to_2026(self):
+        text = (
+            "Date of admission: 18/07/2036\n"
+            "Claim Incident : 2026071800281\n"
+            "Gokuldas Hospital Pvt. Ltd.\n"
+            "Acute mild compression fracture L3 after fall, unable to walk"
+        )
+        facts = extract_claim_details_from_text(text, source="indoor.pdf")
+        self.assertEqual(facts["date_of_admission"], "18/07/2026")
+        self.assertIn("Gokuldas", facts["hospital"])
+        self.assertEqual(facts["nature_of_admission"], "Emergency")
+
+    def test_rejects_policy_boilerplate_hospital(self):
+        text = (
+            "unless arising out of hospitalization for any other reason\n"
+            "Date of admission: 18/07/2026\n"
+            "Gokuldas Hospital Pvt. Ltd."
+        )
+        facts = extract_claim_details_from_text(text, source="policy_mix.pdf")
+        self.assertIn("Gokuldas", facts["hospital"])
+        self.assertNotIn("unless", facts["hospital"].lower())
+        self.assertNotIn("arising", facts["hospital"].lower())
+
+    def test_durga_policy_and_claim_numbers(self):
+        letter = """
+        QUERY LETTER Claim Incident : 2026071800281
+        Member Code : H1685201-1-1 Gokuldas Hospital Pvt. Ltd.
+        Policy No : H1685201
+        Patient Name MRS. DURGA DEVI
+        """
+        facts = extract_insurance_from_text(letter, source="query_letter.pdf")
+        self.assertEqual(facts["policy_number"], "H1685201")
+        self.assertEqual(facts["claim_incident_number"], "2026071800281")
 
     def test_prefers_preauth_over_clinical_when_both_present(self):
         case = (

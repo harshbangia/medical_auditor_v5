@@ -364,7 +364,11 @@ claim_details.nature_of_admission MUST be one of:
 RULES for nature_of_admission:
 - Use "Emergency" ONLY when the documents explicitly use the words "emergency", "ER",
   "casualty", "walk-in", "trauma", or describe an acute event (e.g. MI, stroke, RTA, sepsis,
-  status epilepticus, acute abdomen) where admission happened within 24 hours of onset.
+  status epilepticus, acute abdomen, acute vertebral/compression fracture after fall with
+  immobility) where admission happened within 24 hours of onset.
+- Acute traumatic fractures managed with inpatient medical management (IV analgesics/steroids,
+  observation) are Emergency admissions — do NOT challenge them as elective surgery or demand
+  a failed outpatient "conservative care" trial first.
 - A pre-authorization request filed days in advance for a chronic condition (trigeminal
   neuralgia, OA knee, cataract, BPH, planned CABG/PTCA, elective hernia, planned hysterectomy,
   etc.) is "Planned / Elective" — even if the patient is admitted to an ICU/HDU post-op.
@@ -374,6 +378,7 @@ DO NOT write generic boilerplate. DO NOT defend the hospital when evidence is we
 DO NOT hallucinate facts not in the case. When data is missing, use "Insufficient Evidence" and list in documentation_gaps.
 DO NOT critique typed radiology/lab reports as "low quality images" — they are typed
 documents; quality complaints must be about the underlying clinical capture, not the PDF scan.
+DO NOT treat uploaded policy wordings or clinical guideline PDFs as patient clinical records.
 
 clinical_findings MUST include SEPARATE rows when documented:
   1. Symptom duration at first/s subsequent consult (e.g. "Symptom duration at presentation: 3 days")
@@ -393,12 +398,15 @@ Before finalising JSON, self-check: every clinical_findings row appears verbatim
 in at least one observations[].analysis block.
 
 clinical_checklist rules (specialty-aware — only include clinically relevant rows):
-- Include "MRI Report" ONLY for neurology / brain / spine / neuralgia cases where MRI is indicated.
+- Include "MRI Report" ONLY for neurology / brain / spine / neuralgia / vertebral fracture cases where MRI is indicated.
   NEVER include MRI Report for cardiology, ACS, CABG, hypoglycemia, or general medical cases.
-- Mark "CT Scan Report" as YES when CT/HRCT report with impression is present.
+- Mark "CT Scan Report" as YES ONLY when a CT/HRCT report with impression is present in clinical files.
+  NEVER mark CT YES for lumbar X-ray/MRI-only trauma cases without a CT report.
 - Mark "Antibiotic Therapy" as YES when antibiotics are prescribed or culture/sensitivity is reported.
-- Mark "Cardiac Assessment" as YES when ECG, echocardiography, troponin, Holter, or CAG planning is documented.
+- Mark "Cardiac Assessment" as YES ONLY when ECG, echocardiography, troponin, Holter, or CAG planning is documented
+  AND the case is cardiac. NEVER mark Cardiac YES for pure musculoskeletal/spine trauma.
 - Mark "Medication Trials" as YES if prescription documents Zenoxa/Tegretol/Lyrica etc. (neuralgia cases only).
+  Do NOT include Medication Trials for acute trauma medical-management admissions.
 - Do NOT mark medication trials NO when oxcarbazepine/carbamazepine brands are in prescriptions.
 - Adult serum creatinine is typically 0.5–15 mg/dl; if OCR shows >15, re-read the lab report for a decimal point (e.g. 1.9 not 19).
 - Do NOT challenge missing spirometry unless COPD is explicitly diagnosed in the case documents.

@@ -26,6 +26,7 @@ from backend.utils.case_facts_ledger import (
 from backend.agents.orchestrator import apply_agent_postprocess
 from backend.agents.planner import build_audit_plan
 from backend.utils.pdf_reader import extract_text_and_images
+from backend.utils.case_evidence_detector import clinical_case_text, is_non_clinical_document
 
 ProgressFn = Callable[[str, int, str], None]
 
@@ -266,7 +267,11 @@ def run_full_audit(
     claim_facts = enrich_claim_facts(case_text, temp_pdf_paths)
 
     progress("map", 59, "Mapping structured facts from each document…")
-    per_doc_facts = map_case_documents(doc_blocks, progress=progress)
+    clinical_doc_blocks = [
+        (name, text) for name, text in doc_blocks
+        if not is_non_clinical_document(name, text)
+    ]
+    per_doc_facts = map_case_documents(clinical_doc_blocks or doc_blocks, progress=progress)
     case_facts_ledger = build_case_facts_ledger(per_doc_facts, claim_facts)
     claim_facts = apply_ledger_to_claim_facts(claim_facts, case_facts_ledger)
     case_profile = ledger_to_case_profile(case_facts_ledger)
@@ -296,12 +301,14 @@ def run_full_audit(
 
     progress("insurance", 63, "Extracting insurance details from letters…")
     insurance_facts = enrich_insurance_facts(case_text, temp_pdf_paths)
-    clinical_synthesis = build_clinical_synthesis_section(case_text)
+    # Drop policy wordings / uploaded guideline PDFs from clinical reasoning context
+    clinical_text = clinical_case_text(case_text)
+    clinical_synthesis = build_clinical_synthesis_section(clinical_text)
 
     progress("guideline", 65, "Loading clinical guideline(s)…")
     guideline_names = _normalize_guideline_list(guideline, guidelines)
     if not guideline_names:
-        guideline_names = [select_guideline(case_text).strip().replace('"', '').replace("'", "")]
+        guideline_names = [select_guideline(clinical_text).strip().replace('"', '').replace("'", "")]
 
     guideline_paths: List[str] = []
     for gname in guideline_names:
@@ -330,7 +337,7 @@ def run_full_audit(
             alignment = assert_guideline_alignment(
                 guideline_names,
                 case_profile,
-                case_text=case_text,
+                case_text=clinical_text,
                 claim_diagnosis=claim_dx,
             )
         except GuidelineMismatchError as exc:
@@ -345,7 +352,7 @@ def run_full_audit(
         progress("rag", 72, "Retrieving relevant guideline criteria…")
         with ThreadPoolExecutor(max_workers=2) as pool:
             fut_rag = pool.submit(
-                retrieve_from_guidelines, guideline_stores, case_profile, case_text
+                retrieve_from_guidelines, guideline_stores, case_profile, clinical_text
             )
             fut_vision = pool.submit(analyze_case_images, images, case_hint)
             relevant_guideline = fut_rag.result()
@@ -357,7 +364,7 @@ def run_full_audit(
         guidelines_label = "; ".join(guideline_names)
         progress("ai_audit", 82, "Running adversarial medical audit…")
         result = run_audit(
-            case_text,
+            clinical_text,
             relevant_guideline,
             user_question=user_question,
             images=images,

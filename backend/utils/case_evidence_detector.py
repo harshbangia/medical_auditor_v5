@@ -62,7 +62,33 @@ _PREAUTH_MARKERS = re.compile(
 )
 _EMERGENCY_MARKERS = re.compile(
     r"\b(?:emergency|casualty|trauma|walk[\s-]?in)\b|unstable\s+angina|\bacs\b|"
-    r"trop-?[ti]\s*\+?|troponin|chest\s+discomfort",
+    r"trop-?[ti]\s*\+?|troponin|chest\s+discomfort|"
+    r"compression\s+fracture|vertebral\s+fracture|fall\s+(?:from|at|down)|"
+    r"unable\s+to\s+walk|cannot\s+walk",
+    re.I,
+)
+_ACUTE_TRAUMA_MARKERS = re.compile(
+    r"compression\s+fracture|vertebral\s+fracture|acute\s+(?:mild\s+)?compression|"
+    r"fracture\s+(?:of\s+)?L[1-5]|L[1-5]\s+[^\n]{0,40}fracture|"
+    r"fall\s+(?:from|at|down|history)|history\s+of\s+fall|"
+    r"trauma(?:tic)?\s+(?:fracture|injury)|acute\s+trauma",
+    re.I,
+)
+_MEDICAL_MANAGEMENT_MARKERS = re.compile(
+    r"medical\s+management|conservative\s+management|non[\s-]?operative|"
+    r"no\s+surgery|iv\s+(?:fluids?|analgesic|steroid)|inj\.?\s*(?:mp|methylpred)",
+    re.I,
+)
+_CONSERVATIVE_TRIAL_GAP_RE = re.compile(
+    r"failed\s+conservative|conservative\s+(?:care|management|treatment|therapy)\s+"
+    r"(?:not|fail|prior|before)|"
+    r"medication\s+trials?|trial\s+of\s+(?:medical|conservative)|"
+    r"elective\s+surgery\s+without|adequate\s+trial\s+of\s+medical",
+    re.I,
+)
+_ADMISSION_CHALLENGE_RE = re.compile(
+    r"emergency\s+admission|admission\s+(?:not\s+)?justif|opd\s+(?:manage|suffic)|"
+    r"could\s+have\s+been\s+managed\s+(?:as\s+)?opd|inpatient\s+not\s+(?:required|needed)",
     re.I,
 )
 _SYMPTOM_CHEST_RE = re.compile(r"chest\s+discomfort\s*x\s*(\d+)\s*d", re.I)
@@ -181,7 +207,10 @@ def _dedupe_checklist(checklist: List[dict]) -> List[dict]:
 
 
 _NON_CLINICAL_DOC_RE = re.compile(
-    r"wording|guideline|policy\s+wording|terms\s+and\s+conditions|schedule\s+of\s+benefits",
+    r"wording|guideline|policy\s+wording|terms\s+and\s+conditions|"
+    r"schedule\s+of\s+benefits|family\s+health\s+protector|"
+    r"degenerative\s+disorders|clinical\s+practice\s+guideline|"
+    r"product\s+brochure|policy\s+document",
     re.I,
 )
 
@@ -191,12 +220,27 @@ def _is_non_clinical_document(fname: str, body: str) -> bool:
     if _NON_CLINICAL_DOC_RE.search(name):
         return True
     head = (body or "")[:2500].lower()
-    if re.search(r"policy\s+wording|schedule\s+of\s+benefits|general\s+terms|exclusions\s+apply", head):
+    if re.search(
+        r"policy\s+wording|schedule\s+of\s+benefits|general\s+terms|"
+        r"exclusions\s+apply|this\s+policy\s+wording|definitions?\s+and\s+exclusions",
+        head,
+    ):
+        return True
+    if re.search(
+        r"clinical\s+practice\s+guideline|evidence[\s-]?based\s+recommendation|"
+        r"grade\s+of\s+recommendation|guideline\s+committee",
+        head,
+    ) and not re.search(r"patient\s+name|date\s+of\s+admission|discharge\s+summary", head):
         return True
     doc_type = _classify_document(fname, body)
     if doc_type == "policy":
         return True
     return False
+
+
+def is_non_clinical_document(fname: str, body: str) -> bool:
+    """Public alias — policy wordings / uploaded guidelines are not clinical case files."""
+    return _is_non_clinical_document(fname, body)
 
 
 def clinical_case_text(case_text: str) -> str:
@@ -205,7 +249,8 @@ def clinical_case_text(case_text: str) -> str:
     if not blocks:
         return case_text or ""
     kept = [
-        body for fname, body in blocks
+        f"=== Source document: {fname} ===\n{body}"
+        for fname, body in blocks
         if not _is_non_clinical_document(fname, body)
     ]
     return "\n\n".join(kept) if kept else (case_text or "")
@@ -388,7 +433,7 @@ def _remove_challenge(challenges: List[str], needle: str) -> None:
 
 
 def _mri_clinically_relevant(result: dict, case_text: str, evidence: Dict[str, Any]) -> bool:
-    """MRI checklist only for neuro / explicit MRI indications — not cardiology."""
+    """MRI checklist only for neuro / spine / explicit MRI indications — not cardiology."""
     if evidence.get("has_mri_report"):
         return True
     claim = result.get("claim_details") or {}
@@ -401,7 +446,8 @@ def _mri_clinically_relevant(result: dict, case_text: str, evidence: Dict[str, A
     neuro = bool(re.search(
         r"trigeminal|neuralgia|stroke|cva|seizure|epilepsy|brain\s+tumor|"
         r"meningitis|neuropathy|parkinson|migraine|neurovascular|mvd\b|"
-        r"intracranial|spinal\s+cord",
+        r"intracranial|spinal\s+cord|compression\s+fracture|vertebral|"
+        r"lumbar|spine|l[1-5]\b|sciatica",
         blob,
         re.I,
     ))
@@ -426,6 +472,39 @@ def _mri_clinically_relevant(result: dict, case_text: str, evidence: Dict[str, A
     return False
 
 
+def _cardiac_clinically_relevant(result: dict, case_text: str, evidence: Dict[str, Any]) -> bool:
+    if evidence.get("has_cardiac_workup"):
+        return True
+    claim = result.get("claim_details") or {}
+    blob = " ".join([
+        str(claim.get("diagnosis") or ""),
+        str(claim.get("procedure_or_surgery") or ""),
+        (case_text or "")[:4000],
+    ]).lower()
+    return bool(re.search(
+        r"\b(?:cad|acs|cabg|pci|stent|angina|myocardial|troponin|chest\s+pain|"
+        r"unstable\s+angina|stemi|nstemi|coronary|cardiac|cardiology|heart\s+failure)\b",
+        blob,
+        re.I,
+    ))
+
+
+def _is_acute_trauma_medical_management(result: dict, case_text: str) -> bool:
+    claim = result.get("claim_details") or {}
+    blob = " ".join([
+        str(claim.get("diagnosis") or ""),
+        str(claim.get("procedure_or_surgery") or ""),
+        clinical_case_text(case_text)[:8000],
+    ])
+    if not _ACUTE_TRAUMA_MARKERS.search(blob):
+        return False
+    # Elective surgery pathways should not use this guard
+    if re.search(r"\b(?:surgery|operative|fixation|instrumentation|discectomy|fusion)\b", blob, re.I):
+        if not _MEDICAL_MANAGEMENT_MARKERS.search(blob):
+            return False
+    return True
+
+
 def apply_case_evidence_corrections(result: dict, case_text: str) -> dict:
     """Fix labs, checklist, deviations, and challenges using deterministic evidence."""
     if not result or result.get("error"):
@@ -433,6 +512,8 @@ def apply_case_evidence_corrections(result: dict, case_text: str) -> dict:
 
     evidence = detect_case_evidence(case_text)
     labs = evidence.get("labs") or {}
+    acute_trauma_mm = _is_acute_trauma_medical_management(result, case_text)
+    cardiac_relevant = _cardiac_clinically_relevant(result, case_text, evidence)
 
     # --- Clinical findings: correct creatinine OCR hallucination ---
     findings = result.setdefault("clinical_findings", [])
@@ -480,7 +561,7 @@ def apply_case_evidence_corrections(result: dict, case_text: str) -> dict:
             "Antibiotic therapy and/or culture sensitivity documented in case file",
         )
 
-    if evidence.get("has_cardiac_workup"):
+    if evidence.get("has_cardiac_workup") and cardiac_relevant:
         _set_checklist(
             ["Cardiac Assessment", "Cardiac Workup"],
             "YES",
@@ -555,6 +636,27 @@ def apply_case_evidence_corrections(result: dict, case_text: str) -> dict:
 
     result["clinical_checklist"] = _dedupe_checklist(checklist)
 
+    # Specialty gate: drop CT / Cardiac / Medication Trials when not clinically indicated
+    pruned: List[dict] = []
+    for item in result["clinical_checklist"]:
+        if not isinstance(item, dict):
+            continue
+        area = _norm(item.get("area", ""))
+        if "cardiac" in area and not cardiac_relevant:
+            continue
+        if ("ct scan" in area or area == "ct") and not evidence.get("has_ct_report"):
+            continue
+        if "medication trial" in area:
+            dx_blob = " ".join([
+                str((result.get("claim_details") or {}).get("diagnosis") or ""),
+                clinical_case_text(case_text)[:3000],
+            ]).lower()
+            if not re.search(r"neuralgia|trigeminal|mvd\b", dx_blob):
+                continue
+        pruned.append(item)
+    result["clinical_checklist"] = pruned
+    checklist = result["clinical_checklist"]
+
     if isinstance(findings, list):
         _seed_or_update_clinical_findings(findings, evidence, case_text)
 
@@ -601,6 +703,17 @@ def apply_case_evidence_corrections(result: dict, case_text: str) -> dict:
                     "cardiac and/or infective respiratory; COPD guideline may not apply.",
                 )
 
+            if acute_trauma_mm and (
+                _CONSERVATIVE_TRIAL_GAP_RE.search(issue_raw)
+                or _CONSERVATIVE_TRIAL_GAP_RE.search(str(dev.get("case_evidence") or ""))
+            ):
+                _downgrade_deviation(
+                    dev,
+                    "Acute traumatic fracture managed medically — failed outpatient conservative "
+                    "trial is not a prerequisite for emergency inpatient medical management.",
+                    severity="Low",
+                )
+
             if labs.get("creatinine"):
                 dev["case_evidence"] = _fix_creatinine_in_text_blob(
                     str(dev.get("case_evidence") or ""), labs["creatinine"]
@@ -617,6 +730,15 @@ def apply_case_evidence_corrections(result: dict, case_text: str) -> dict:
         if not evidence.get("has_copd_diagnosis"):
             _remove_challenge(challenges, "spirometry")
             _remove_challenge(challenges, "copd")
+        if acute_trauma_mm:
+            to_drop = [
+                c for c in challenges
+                if _ADMISSION_CHALLENGE_RE.search(str(c))
+                or _CONSERVATIVE_TRIAL_GAP_RE.search(str(c))
+            ]
+            for c in to_drop:
+                if c in challenges:
+                    challenges.remove(c)
         result["challenge_points"] = _dedupe_strings(challenges)
 
     # --- Observations referencing false gaps ---
@@ -656,6 +778,20 @@ def apply_case_evidence_corrections(result: dict, case_text: str) -> dict:
                         "in the uploaded case file."
                     )
 
+            if acute_trauma_mm and (
+                _ADMISSION_CHALLENGE_RE.search(str(obs.get("question") or ""))
+                or _ADMISSION_CHALLENGE_RE.search(analysis)
+                or _CONSERVATIVE_TRIAL_GAP_RE.search(analysis)
+                or _CONSERVATIVE_TRIAL_GAP_RE.search(str(obs.get("question") or ""))
+            ):
+                ans = _norm(obs.get("answer", ""))
+                if ans in ("not supported", "insufficient evidence", "partially supported"):
+                    obs["answer"] = "Supported"
+                analysis += (
+                    " Note: Acute traumatic fracture with pain/immobility supports inpatient "
+                    "medical management; do not require a failed OPD conservative trial first."
+                )
+
             obs["analysis"] = analysis.strip()
 
     # --- Documentation gaps ---
@@ -673,6 +809,11 @@ def apply_case_evidence_corrections(result: dict, case_text: str) -> dict:
             if evidence.get("has_cardiac_workup") and "no cardiac" in g:
                 continue
             if not evidence.get("has_copd_diagnosis") and _is_copd_spirometry_issue(g):
+                continue
+            if acute_trauma_mm and (
+                _CONSERVATIVE_TRIAL_GAP_RE.search(str(gap))
+                or _ADMISSION_CHALLENGE_RE.search(str(gap))
+            ):
                 continue
             if labs.get("creatinine"):
                 gap = _fix_creatinine_in_text_blob(str(gap), labs["creatinine"])
@@ -702,11 +843,16 @@ def apply_case_evidence_corrections(result: dict, case_text: str) -> dict:
     # --- Nature of admission hint ---
     claim = result.setdefault("claim_details", {})
     nature = _norm(claim.get("nature_of_admission", ""))
-    if _EMERGENCY_MARKERS.search(case_text):
+    if _EMERGENCY_MARKERS.search(clinical_case_text(case_text)) or acute_trauma_mm:
         claim["nature_of_admission"] = "Emergency"
     elif nature in ("", "unknown"):
         if re.search(r"unstable\s+angina|\bacs\b|chest\s+discomfort", case_text, re.I):
             claim["nature_of_admission"] = "Emergency"
+
+    if acute_trauma_mm:
+        proc = str(claim.get("procedure_or_surgery") or "").strip()
+        if not proc or proc.lower() in ("not specified", "unknown", "-", "—"):
+            claim["procedure_or_surgery"] = "Medical management"
 
     result["_case_evidence"] = evidence
     _reconcile_compliance_verdict(result, evidence)

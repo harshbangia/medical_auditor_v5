@@ -252,6 +252,81 @@ Unstable angina, ECG and troponin done. CABG planned.
         ]
         self.assertFalse(mri_rows)
 
+    def test_filters_policy_wording_from_clinical_text(self):
+        from backend.utils.case_evidence_detector import clinical_case_text
+
+        case = """
+=== Source document: Family Health Protector Policy Wording.pdf ===
+Policy wording: unless arising out of hospitalization for cardiac care.
+MRI and CT coverage definitions.
+=== Source document: indoor.pdf ===
+Acute L3 compression fracture after fall. Unable to walk. IV analgesics.
+Gokuldas Hospital Pvt. Ltd. Date of admission: 18/07/2026
+"""
+        scoped = clinical_case_text(case)
+        self.assertNotIn("Policy wording", scoped)
+        self.assertIn("compression fracture", scoped)
+
+    def test_acute_trauma_supports_admission_and_prunes_cardiac_ct(self):
+        case = """
+=== Source document: indoor.pdf ===
+History of fall. Acute mild compression fracture L3. Unable to walk.
+Medical management with IV fluids and analgesics. No surgery.
+Date of admission: 18/07/2026 Emergency
+Gokuldas Hospital Pvt. Ltd.
+"""
+        result = {
+            "clinical_checklist": [
+                {"area": "CT Scan Report", "available": "YES", "remarks": ""},
+                {"area": "Cardiac Assessment", "available": "YES", "remarks": ""},
+                {"area": "Medication Trials", "available": "NO", "remarks": "missing"},
+                {"area": "MRI Report", "available": "YES", "remarks": "spine MRI"},
+            ],
+            "guideline_deviations": [
+                {
+                    "issue": "Failed conservative care before admission",
+                    "case_evidence": "No medication trials documented",
+                    "severity": "High",
+                },
+            ],
+            "challenge_points": [
+                "Why was emergency admission preferred over OPD management?",
+            ],
+            "observations": [
+                {
+                    "question": "Is emergency admission justified?",
+                    "analysis": "Emergency admission not justified without failed conservative care.",
+                    "answer": "Not Supported",
+                },
+            ],
+            "claim_details": {
+                "diagnosis": "Acute mild compression fracture L3",
+                "nature_of_admission": "Unknown",
+                "procedure_or_surgery": "",
+            },
+            "treatment_billing_audit": {},
+            "compliance_verdict": "Partially Compliant",
+        }
+        fixed = apply_case_evidence_corrections(result, case)
+        areas = {
+            (i.get("area") or "").lower()
+            for i in fixed["clinical_checklist"]
+            if isinstance(i, dict)
+        }
+        self.assertNotIn("ct scan report", areas)
+        self.assertNotIn("cardiac assessment", areas)
+        self.assertNotIn("medication trials", areas)
+        self.assertEqual(fixed["claim_details"]["nature_of_admission"], "Emergency")
+        self.assertEqual(fixed["claim_details"]["procedure_or_surgery"], "Medical management")
+        self.assertFalse(
+            any("emergency admission" in str(c).lower() for c in fixed["challenge_points"])
+        )
+        self.assertEqual(fixed["observations"][0]["answer"], "Supported")
+        self.assertEqual(
+            fixed["guideline_deviations"][0]["severity"],
+            "Low",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
