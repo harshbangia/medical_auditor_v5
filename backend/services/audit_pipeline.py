@@ -23,6 +23,8 @@ from backend.utils.case_facts_ledger import (
     build_case_facts_ledger,
     format_ledger_for_audit,
 )
+from backend.agents.orchestrator import apply_agent_postprocess
+from backend.agents.planner import build_audit_plan
 from backend.utils.pdf_reader import extract_text_and_images
 
 ProgressFn = Callable[[str, int, str], None]
@@ -268,6 +270,19 @@ def run_full_audit(
     case_facts_ledger = build_case_facts_ledger(per_doc_facts, claim_facts)
     claim_facts = apply_ledger_to_claim_facts(claim_facts, case_facts_ledger)
     case_profile = ledger_to_case_profile(case_facts_ledger)
+    audit_plan = build_audit_plan(
+        document_count=len(source_summaries or []),
+        specialty_hint=str(case_profile.get("diagnosis") or ""),
+        has_handwriting=any(
+            isinstance(s, dict) and s.get("contains_handwriting_or_scan")
+            for s in (source_summaries or [])
+        ),
+    )
+    progress(
+        "plan",
+        61,
+        f"Audit plan ready ({len(audit_plan.steps)} stages)…",
+    )
     if not (case_profile.get("diagnosis") or case_profile.get("chief_complaint")):
         progress("profile", 61, "Supplementing case profile from combined text…")
         supplemental = extract_case_profile(case_text[:16000])
@@ -369,6 +384,15 @@ def run_full_audit(
         result = enrich_audit_result(
             result, case_text, insurance_facts, claim_facts, source_summaries,
             case_facts_ledger=case_facts_ledger,
+        )
+        progress("verify", 92, "Verifying evidence & assembling case record…")
+        result = apply_agent_postprocess(
+            result,
+            case_text=case_text,
+            source_summaries=source_summaries,
+            case_facts_ledger=case_facts_ledger,
+            claim_facts=claim_facts,
+            guidelines=guideline_names,
         )
         result["document_sources"] = source_summaries
         result["case_facts_ledger"] = case_facts_ledger

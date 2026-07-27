@@ -144,6 +144,13 @@ def generate_pdf(data, filename="audit_report.pdf"):
         ))
         content.append(Spacer(1, 12))
 
+    verification = data.get("verification") or {}
+    if verification.get("notes"):
+        content.extend(section("Evidence Verification Notes", styles))
+        v_rows = [[str(i + 1), note] for i, note in enumerate(verification["notes"][:12])]
+        content.append(data_table(["#", "Note"], v_rows, col_widths=[30, 470]))
+        content.append(Spacer(1, 12))
+
     date_discrepancies = data.get("date_discrepancies") or []
     if date_discrepancies:
         content.extend(section("Date Discrepancies Across Documents", styles))

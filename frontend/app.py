@@ -1359,6 +1359,14 @@ if "report" in st.session_state:
                 unsafe_allow_html=True,
             )
 
+    verification = data.get("verification") or {}
+    if verification.get("notes"):
+        st.markdown('<p class="gwx-section-title">Evidence verification</p>', unsafe_allow_html=True)
+        flagged = verification.get("observations_flagged") or 0
+        st.caption(f"Observations flagged for weak citation: {flagged}")
+        for note in verification["notes"][:10]:
+            st.markdown(f"- {note}")
+
     # Fraud / abuse identification
     fa = data.get("fraud_abuse") or {}
     st.markdown('<p class="gwx-section-title">Fraud / abuse identification</p>', unsafe_allow_html=True)
