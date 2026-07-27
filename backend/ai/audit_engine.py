@@ -11,6 +11,7 @@ from backend.ai.llm_helpers import extract_response_text, image_input_part
 from backend.ai.case_profiler import normalize_str_list, profile_to_audit_context
 from backend.ai.drug_normalizer import build_medication_evidence_section
 from backend.utils.case_facts_ledger import format_ledger_for_audit
+from backend.agents.orchestrator import mcr_context_for_audit
 from backend.llm_client import get_openai_client
 
 _VISION_BATCH_SIZE = 1  # one image per API call — avoids multimodal 400 errors
@@ -555,11 +556,16 @@ def run_audit(
     if ledger_block:
         case_context = ledger_block + "\n\n" + case_context
 
+    mcr_block = mcr_context_for_audit(case_facts_ledger, claim_facts)
+    if mcr_block:
+        case_context = mcr_block + "\n\n" + case_context
+
     if case_facts_ledger:
         case_context = (
-            "IMPORTANT: Use CASE FACTS LEDGER as authoritative for patient name, diagnosis, "
-            "dates, and per-document summaries. Do NOT contradict ledger facts unless a specific "
-            "source document excerpt clearly overrides them.\n\n"
+            "IMPORTANT: Use MEDICAL CASE RECORD and CASE FACTS LEDGER as authoritative for "
+            "patient name, diagnosis, dates, and per-document summaries. Do NOT contradict "
+            "these facts unless a specific source document excerpt clearly overrides them. "
+            "Every observation MUST cite source document filename(s).\n\n"
             + case_context
         )
 
