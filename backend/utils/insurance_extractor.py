@@ -62,6 +62,11 @@ _POLICY_NUMBER_PATTERNS = [
         r"(?:member\s*code|policy)\s*[:.]?\s*(H\d{5,8})(?:\s*[-–]\s*\d)?",
         re.I,
     ),
+    # Cashless form: Insured ID Number H7583101-2-0 → capture base policy
+    re.compile(
+        r"insured\s*id\s*(?:no\.?|number|#)?\s*[:.]?\s*(H\d{5,8})(?:-\d+)*",
+        re.I,
+    ),
 ]
 
 _POLICY_FALSE_POSITIVES = {
@@ -130,17 +135,59 @@ _MEMBER_RE = re.compile(
 _MEMBER_POLICY_BASE_RE = re.compile(r"^([A-Z]?\d{5,})")
 
 _BAD_INSURANCE_VALUES = {
-    "policy_number": _POLICY_FALSE_POSITIVES | {"", "-", "—", "na", "n/a", "not available", "unknown"},
-    "policy_period": {"", "-", "—", "na", "n/a", "not available", "unknown"},
-    "insurance_company": {"", "-", "—"},
-    "claim_incident_number": {"", "-", "—"},
+    "policy_number": _POLICY_FALSE_POSITIVES | {
+        "", "-", "—", "na", "n/a", "not available", "unknown", "not provided", "none",
+    },
+    "policy_period": {
+        "", "-", "—", "na", "n/a", "not available", "unknown", "not provided", "none",
+    },
+    "insurance_company": {
+        "", "-", "—", "na", "n/a", "unknown", "not provided", "none", "xyz",
+    },
+    "claim_incident_number": {
+        "", "-", "—", "na", "n/a", "unknown", "not provided", "none",
+    },
 }
+
+# OCR / shorthand → canonical printed names
+_CANONICAL_INSURER_MAP = [
+    (re.compile(r"\byokio\b|\btokio\b|\biffco\b", re.I), "IFFCO-Tokio General Insurance Company Limited"),
+    (re.compile(r"\bstar\b.*\bhealth\b|\bhealth\b.*\bstar\b", re.I), "Star Health and Allied Insurance Company Limited"),
+    (re.compile(r"\bhdfc\b.*\bergo\b|\bergo\b", re.I), "HDFC ERGO General Insurance Company Limited"),
+    (re.compile(r"\bicici\b.*\blombard\b", re.I), "ICICI Lombard General Insurance Company Limited"),
+    (re.compile(r"\bbajaj\b.*\ballianz\b", re.I), "Bajaj Allianz General Insurance Company Limited"),
+    (re.compile(r"\bniva\b.*\bbupa\b", re.I), "Niva Bupa Health Insurance Company Limited"),
+    (re.compile(r"\bcare\b.*\bhealth\b", re.I), "Care Health Insurance Limited"),
+    (re.compile(r"\breliance\b.*\bgeneral\b", re.I), "Reliance General Insurance Company Limited"),
+    (re.compile(r"\bsbi\b.*\bgeneral\b", re.I), "SBI General Insurance Company Limited"),
+    (re.compile(r"\btata\b.*\baig\b", re.I), "Tata AIG General Insurance Company Limited"),
+]
+
+
+def canonicalize_insurer_name(raw: str) -> str:
+    """Map OCR/shorthand insurer strings to a stable company name."""
+    name = _clean_insurer_name(raw)
+    if not name:
+        return ""
+    low = name.lower()
+    # Reject garbage that is clearly not an insurer
+    if low in {"xyz", "unknown", "na", "n/a", "not provided"}:
+        return ""
+    for pat, canonical in _CANONICAL_INSURER_MAP:
+        if pat.search(name):
+            return canonical
+    # Keep reasonably long insurance-looking strings
+    if re.search(r"insurance|assurance|tpa|health", name, re.I) and len(name) >= 8:
+        return name
+    return name
+
 
 _LETTERHEAD_PROMPT = """You are reading the FIRST PAGE of an Indian health-insurance claim letter
 (query letter, denial letter, pre-auth letter, or cashless authorization letter).
 
 Extract ONLY the insurance / TPA company name from the letterhead logo or footer.
 Common examples: IFFCO-Tokio General Insurance, Star Health, HDFC ERGO, ICICI Lombard.
+Beware OCR lookalikes: TOKIO must never become YOKIO.
 
 Reply in plain text, one line only:
 INSURER: <full company name>
@@ -168,7 +215,7 @@ def find_insurer_in_text(text: str) -> str:
     for pat in _INSURER_NAME_PATTERNS:
         m = pat.search(text)
         if m:
-            return _clean_insurer_name(m.group(0))
+            return canonicalize_insurer_name(m.group(0))
     return ""
 
 
@@ -427,7 +474,7 @@ def extract_insurer_from_letterhead(pdf_path: str, page_num: int = 1) -> str:
         name = _clean_insurer_name(m.group(1))
         if not name or name.upper() == "UNKNOWN":
             return ""
-        return name
+        return canonicalize_insurer_name(name)
     except Exception as exc:
         print(f"⚠️ Letterhead vision failed for {pdf_path} p{page_num}: {exc}")
         return ""
@@ -464,7 +511,13 @@ def enrich_insurance_facts(
 
             if not page_facts.get("insurance_company"):
                 page1 = _page_native_text(pdf_path, 1)
-                if _looks_like_insurance_letter(page1):
+                # Pure scans have empty native text — still run letterhead vision for
+                # preauth / cashless / insurance filenames.
+                fname_l = (fname or "").lower()
+                force_vision = bool(
+                    re.search(r"pre[\s_-]?auth|cashless|query|insurance|iffco|tokio", fname_l)
+                )
+                if force_vision or _looks_like_insurance_letter(page1):
                     name = extract_insurer_from_letterhead(pdf_path, 1)
                     if name:
                         page_facts["insurance_company"] = name
@@ -486,6 +539,9 @@ def enrich_insurance_facts(
             candidates.append((facts.get(field, ""), field_priority))
         result[field] = _pick_best_field(candidates, field)
 
+    if result.get("insurance_company"):
+        result["insurance_company"] = canonicalize_insurer_name(result["insurance_company"])
+
     # Policy numbers: vote across per-source extractions with source weighting
     policy_candidates: List[Tuple[str, int]] = []
     for src, facts, priority in per_source:
@@ -497,6 +553,13 @@ def enrich_insurance_facts(
         result["policy_number"] = best_policy
 
     return result
+
+
+def _is_placeholder_insurance_value(val: str) -> bool:
+    v = str(val or "").strip().lower()
+    return v in {
+        "", "-", "—", "na", "n/a", "not available", "unknown", "not provided", "none", "xyz",
+    }
 
 
 def _should_overwrite_insurance_field(field: str, current: str, extracted: str) -> bool:
@@ -514,9 +577,22 @@ def _should_overwrite_insurance_field(field: str, current: str, extracted: str) 
             return False
         if _is_valid_claim_incident(cur):
             return False
-    if not cur or cur.lower() in bad:
+    if field == "insurance_company":
+        extracted = canonicalize_insurer_name(extracted)
+        if not extracted:
+            return False
+        if _is_placeholder_insurance_value(cur):
+            return True
+        # Fix known OCR corruptions (YOKIO → IFFCO-Tokio)
+        if canonicalize_insurer_name(cur) != cur or "yokio" in cur.lower():
+            return True
+        if canonicalize_insurer_name(cur) == extracted:
+            return True
+    if not cur or cur.lower() in bad or _is_placeholder_insurance_value(cur):
         return True
-    if field == "policy_number" and cur.lower() in _POLICY_FALSE_POSITIVES:
+    if field == "policy_number" and (
+        cur.lower() in _POLICY_FALSE_POSITIVES or _is_placeholder_insurance_value(cur)
+    ):
         return True
     if field == "policy_period" and not cur:
         return True
@@ -542,7 +618,7 @@ def merge_insurance_into_result(result: dict, facts: Dict[str, str]) -> dict:
     """Fill or correct insurance_details from extracted facts."""
     ins = result.setdefault("insurance_details", {})
     mapping = {
-        "insurance_company": facts.get("insurance_company", ""),
+        "insurance_company": canonicalize_insurer_name(facts.get("insurance_company", "")),
         "policy_number": facts.get("policy_number", ""),
         "policy_period": facts.get("policy_period", ""),
         "claim_incident_number": facts.get("claim_incident_number", ""),
@@ -550,7 +626,14 @@ def merge_insurance_into_result(result: dict, facts: Dict[str, str]) -> dict:
     for key, val in mapping.items():
         if val and _should_overwrite_insurance_field(key, str(ins.get(key) or ""), val):
             ins[key] = val
-    # Drop invalid claim incident left by LLM
+    # Drop invalid / placeholder values left by LLM
+    if _is_placeholder_insurance_value(str(ins.get("policy_number") or "")):
+        ins["policy_number"] = mapping["policy_number"] or ""
+    if _is_placeholder_insurance_value(str(ins.get("insurance_company") or "")):
+        ins["insurance_company"] = mapping["insurance_company"] or ""
+    cur_company = str(ins.get("insurance_company") or "")
+    if cur_company:
+        ins["insurance_company"] = canonicalize_insurer_name(cur_company) or cur_company
     cur_claim = str(ins.get("claim_incident_number") or "").strip()
     if cur_claim and not _is_valid_claim_incident(cur_claim):
         ins["claim_incident_number"] = ""

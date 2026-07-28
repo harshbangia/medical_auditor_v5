@@ -301,6 +301,37 @@ def run_full_audit(
 
     progress("insurance", 63, "Extracting insurance details from letters…")
     insurance_facts = enrich_insurance_facts(case_text, temp_pdf_paths)
+
+    progress("identity", 64, "Reading claim identity from preauth / cashless forms…")
+    from backend.agents.claim_identity_agent import (
+        apply_claim_identity_to_facts,
+        extract_claim_identity,
+    )
+    identity = extract_claim_identity(temp_pdf_paths, case_text=case_text)
+    insurance_facts, claim_facts = apply_claim_identity_to_facts(
+        identity, insurance_facts, claim_facts
+    )
+    # Push identity demographics into ledger merge path
+    if identity.get("age") or identity.get("patient_name") or identity.get("hospital"):
+        merged = (case_facts_ledger.get("merged") or {})
+        if identity.get("age"):
+            merged["age"] = identity["age"]
+        if identity.get("patient_name") and (
+            not merged.get("patient_name")
+            or len(identity["patient_name"]) >= len(str(merged.get("patient_name") or ""))
+        ):
+            merged["patient_name"] = identity["patient_name"]
+        if identity.get("sex") and not merged.get("sex"):
+            merged["sex"] = identity["sex"]
+        if identity.get("hospital"):
+            merged["hospital"] = identity["hospital"]
+        if identity.get("policy_number"):
+            merged["policy_number"] = identity["policy_number"]
+        if identity.get("bill_amount"):
+            merged["bill_amount"] = identity["bill_amount"]
+        case_facts_ledger["merged"] = merged
+        case_facts_ledger["claim_identity"] = identity
+
     # Drop policy wordings / uploaded guideline PDFs from clinical reasoning context
     clinical_text = clinical_case_text(case_text)
     clinical_synthesis = build_clinical_synthesis_section(clinical_text)

@@ -1,6 +1,6 @@
 "use client";
 
-import { Download, FileText, MessageCircleQuestion } from "lucide-react";
+import { Download, FileText, MessageCircleQuestion, Pencil } from "lucide-react";
 import { useState } from "react";
 import { askFollowUp, generatePdf } from "@/lib/api";
 import type { AuditReport } from "@/lib/types";
@@ -31,6 +31,33 @@ function KV({ label, value }: { label: string; value: unknown }) {
   );
 }
 
+function EditableKV({
+  label,
+  value,
+  onChange,
+  editable,
+}: {
+  label: string;
+  value: unknown;
+  onChange: (next: string) => void;
+  editable: boolean;
+}) {
+  if (!editable) {
+    return <KV label={label} value={value} />;
+  }
+  return (
+    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-4">
+      <label className="w-44 shrink-0 text-sm text-slate-500">{label}</label>
+      <Input
+        className="h-8 text-sm"
+        value={value == null ? "" : String(value)}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="—"
+      />
+    </div>
+  );
+}
+
 type QaItem = { question?: string; answer?: string; justification?: string };
 
 export function ReportView({
@@ -46,6 +73,7 @@ export function ReportView({
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
   const [askError, setAskError] = useState("");
+  const [editingIdentity, setEditingIdentity] = useState(false);
   const [localQa, setLocalQa] = useState<QaItem[]>(
     () => (data.qa_section as QaItem[]) || [],
   );
@@ -59,6 +87,20 @@ export function ReportView({
   const observations = (data.observations as Array<Record<string, unknown>>) || [];
   const deviations = (data.guideline_deviations as Array<Record<string, unknown>>) || [];
   const summary = (data.report_summary as string[]) || [];
+
+  function patchReport(
+    section: "patient_details" | "insurance_details" | "claim_details",
+    key: string,
+    value: string,
+  ) {
+    if (!onReportChange) return;
+    const prev = (data[section] as Record<string, unknown>) || {};
+    onReportChange({
+      ...data,
+      [section]: { ...prev, [key]: value },
+      qa_section: localQa,
+    });
+  }
 
   async function downloadPdf() {
     setDownloading(true);
@@ -102,11 +144,29 @@ export function ReportView({
             )}
           </div>
         </div>
-        <Button onClick={downloadPdf} disabled={downloading}>
-          <Download className="h-4 w-4" />
-          {downloading ? "Generating…" : "Download Expert Opinion PDF"}
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          {onReportChange && (
+            <Button
+              variant="secondary"
+              onClick={() => setEditingIdentity((v) => !v)}
+            >
+              <Pencil className="h-4 w-4" />
+              {editingIdentity ? "Done editing" : "Edit identity"}
+            </Button>
+          )}
+          <Button onClick={downloadPdf} disabled={downloading}>
+            <Download className="h-4 w-4" />
+            {downloading ? "Generating…" : "Download Expert Opinion PDF"}
+          </Button>
+        </div>
       </div>
+
+      {editingIdentity && (
+        <p className="text-sm text-slate-500">
+          Correct patient / hospital / insurance fields below. Changes apply to this
+          report view and the next Expert Opinion PDF download.
+        </p>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-1">
@@ -114,9 +174,24 @@ export function ReportView({
             <CardTitle>Patient</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <KV label="Name" value={patient.name} />
-            <KV label="Age" value={patient.age} />
-            <KV label="Sex" value={patient.sex} />
+            <EditableKV
+              label="Name"
+              value={patient.name}
+              editable={editingIdentity}
+              onChange={(v) => patchReport("patient_details", "name", v)}
+            />
+            <EditableKV
+              label="Age"
+              value={patient.age}
+              editable={editingIdentity}
+              onChange={(v) => patchReport("patient_details", "age", v)}
+            />
+            <EditableKV
+              label="Sex"
+              value={patient.sex}
+              editable={editingIdentity}
+              onChange={(v) => patchReport("patient_details", "sex", v)}
+            />
           </CardContent>
         </Card>
         <Card className="lg:col-span-1">
@@ -124,10 +199,30 @@ export function ReportView({
             <CardTitle>Claim</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <KV label="Hospital" value={claim.hospital} />
-            <KV label="Diagnosis" value={claim.diagnosis} />
-            <KV label="Admission" value={claim.date_of_admission} />
-            <KV label="Discharge" value={claim.date_of_discharge} />
+            <EditableKV
+              label="Hospital"
+              value={claim.hospital}
+              editable={editingIdentity}
+              onChange={(v) => patchReport("claim_details", "hospital", v)}
+            />
+            <EditableKV
+              label="Diagnosis"
+              value={claim.diagnosis}
+              editable={editingIdentity}
+              onChange={(v) => patchReport("claim_details", "diagnosis", v)}
+            />
+            <EditableKV
+              label="Admission"
+              value={claim.date_of_admission}
+              editable={editingIdentity}
+              onChange={(v) => patchReport("claim_details", "date_of_admission", v)}
+            />
+            <EditableKV
+              label="Discharge"
+              value={claim.date_of_discharge}
+              editable={editingIdentity}
+              onChange={(v) => patchReport("claim_details", "date_of_discharge", v)}
+            />
           </CardContent>
         </Card>
         <Card className="lg:col-span-1">
@@ -135,9 +230,26 @@ export function ReportView({
             <CardTitle>Insurance</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <KV label="Company" value={insurance.insurance_company} />
-            <KV label="Policy" value={insurance.policy_number} />
-            <KV label="Claim #" value={insurance.claim_incident_number} />
+            <EditableKV
+              label="Company"
+              value={insurance.insurance_company}
+              editable={editingIdentity}
+              onChange={(v) => patchReport("insurance_details", "insurance_company", v)}
+            />
+            <EditableKV
+              label="Policy"
+              value={insurance.policy_number}
+              editable={editingIdentity}
+              onChange={(v) => patchReport("insurance_details", "policy_number", v)}
+            />
+            <EditableKV
+              label="Claim #"
+              value={insurance.claim_incident_number}
+              editable={editingIdentity}
+              onChange={(v) =>
+                patchReport("insurance_details", "claim_incident_number", v)
+              }
+            />
           </CardContent>
         </Card>
       </div>

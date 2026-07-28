@@ -55,7 +55,10 @@ _BOTTOM = 28 * mm
 
 def _na(val: Any) -> str:
     s = str(val or "").strip()
-    if not s or s.lower() in {"none", "null", "unknown", "not specified", "—", "-"}:
+    if not s or s.lower() in {
+        "none", "null", "unknown", "not specified", "—", "-",
+        "na", "n/a", "not provided", "not available",
+    }:
         return "NA"
     return s
 

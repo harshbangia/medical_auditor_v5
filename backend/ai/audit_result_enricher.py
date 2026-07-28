@@ -26,6 +26,7 @@ from backend.utils.claim_savings import build_claim_savings, has_extractable_fin
 from backend.utils.case_facts_ledger import merge_patient_from_ledger
 from backend.utils.demographics_normalizer import (
     extract_typed_demographics,
+    extract_hospital_from_text,
     normalize_age,
     normalize_hospital_name,
     normalize_patient_name,
@@ -524,17 +525,49 @@ def _sanitize_demographics(result: dict, case_text: str) -> None:
 
     typed_age = typed.get("age") or ""
     age = normalize_age(patient.get("age"))
-    if typed_age and (not age or int(age) > 120):
+    # Prefer typed HIS age always; also reject child ages when HIS shows adult
+    if typed_age:
         patient["age"] = typed_age
     else:
         patient["age"] = age
+
+    # Identity agent stash (from preauth vision)
+    claim_identity_age = normalize_age(claim.pop("_identity_age", None) or "")
+    claim_identity_name = normalize_patient_name(claim.pop("_identity_name", None) or claim.pop("_identity_patient_name", None) or "")
+    claim_identity_sex = str(claim.pop("_identity_sex", None) or "").strip()
+    if claim_identity_age and (
+        not normalize_age(patient.get("age"))
+        or int(normalize_age(patient.get("age")) or 0) < 12
+    ):
+        patient["age"] = claim_identity_age
+    if claim_identity_name and (
+        not patient.get("name")
+        or score_name_quality(claim_identity_name) > score_name_quality(str(patient.get("name") or ""))
+    ):
+        patient["name"] = claim_identity_name
+    if claim_identity_sex and not str(patient.get("sex") or "").strip():
+        patient["sex"] = claim_identity_sex
 
     if typed.get("sex") and not str(patient.get("sex") or "").strip():
         patient["sex"] = typed["sex"]
 
     hospital = normalize_hospital_name(claim.get("hospital") or "")
-    if not hospital:
-        hospital = normalize_hospital_name(typed.get("hospital") or "") or typed.get("hospital") or ""
+    typed_h = typed.get("hospital") or extract_hospital_from_text(case_text or "")
+    if typed_h:
+        if not hospital:
+            hospital = typed_h
+        elif re.search(
+            r"medical\s+college|gokuldas|charak|kokilaben|gangapada",
+            typed_h,
+            re.I,
+        ) and not re.search(
+            r"medical\s+college|gokuldas|charak|kokilaben|gangapada",
+            hospital,
+            re.I,
+        ):
+            hospital = typed_h
+        elif len(typed_h) >= len(hospital) + 8:
+            hospital = typed_h
     claim["hospital"] = hospital
 
     raw_pol = str(ins.get("policy_number") or "").strip()

@@ -309,8 +309,8 @@ def sanitize_mapped_facts(facts: dict, source_text: str = "") -> dict:
     age = normalize_age(out.get("age"))
     if not age and typed.get("age"):
         age = typed["age"]
-    # Typed HIS age always wins over implausible LLM age
-    if typed.get("age") and (not age or int(age) > 120):
+    # Typed HIS age always wins when present (fixes Age:49 misread as 2 from Insured ID)
+    if typed.get("age"):
         age = typed["age"]
     out["age"] = age
 

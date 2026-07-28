@@ -41,10 +41,16 @@ def build_audit_plan(
             depends_on=["map"],
         ),
         PlanStep(
+            step_id="identity",
+            agent="claim_identity",
+            description="Vision+regex extract insurer, policy, claim, hospital, age from preauth",
+            depends_on=["merge"],
+        ),
+        PlanStep(
             step_id="timeline",
             agent="timeline",
             description="Reconstruct patient clinical journey",
-            depends_on=["merge"],
+            depends_on=["merge", "identity"],
         ),
         PlanStep(
             step_id="align",
