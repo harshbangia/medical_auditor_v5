@@ -178,6 +178,9 @@ def _is_valid_policy_number(val: str) -> bool:
         return False
     if val.lower() in _POLICY_FALSE_POSITIVES:
         return False
+    # Hospital UHID / IPD must never be treated as insurer policy numbers
+    if re.match(r"^(?:LMH|UHID|IPD|IP)[A-Z0-9\-/]*", val, re.I):
+        return False
     if not re.fullmatch(r"[A-Z0-9][A-Z0-9\-/]{4,}", val, re.I):
         return False
     if re.search(r"[\s|_\[\]{}\\]", val):

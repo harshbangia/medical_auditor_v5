@@ -19,7 +19,8 @@ _PREAUTH_MARKERS = re.compile(
     re.I,
 )
 _INDOOR_CASE_MARKERS = re.compile(
-    r"treatment\s+sheet|indoor\s+case|ward\s*/\s*bed\s+no|icu[\s-]?\d",
+    r"treatment\s+sheet|indoor\s+case(?:\s+papers?)?|\bicps\b|"
+    r"ward\s*/\s*bed\s+no|icu[\s-]?\d",
     re.I,
 )
 _LAB_REPORT_MARKERS = re.compile(
@@ -90,6 +91,10 @@ _HOSPITAL_PATTERNS = [
     re.compile(r"(Nibedita\s+Health\s+Care[^\n]{0,60})", re.I),
     re.compile(r"(Gokuldas\s+Hospital(?:\s+Pvt\.?\s*Ltd\.?)?[^\n]{0,40})", re.I),
     re.compile(r"(Charak\s+Hospital[^\n]{0,40})", re.I),
+    re.compile(
+        r"((?:L\.?\s*N\.?\s*)?Medical\s+College\s*(?:&|and)\s*J\.?\s*K\.?\s*Hospital[^\n]{0,40})",
+        re.I,
+    ),
     # IFFCO-style query letter: Member Code : H1509554-1-1 <Hospital Name>
     re.compile(
         r"member\s*(?:code|id|no|number)?\s*[:.]?\s*[A-Z0-9][A-Z0-9\-/]{4,}\s+"
@@ -117,7 +122,9 @@ _HOSPITAL_BOILERPLATE = re.compile(
     r"arising\s+out\s+of|unless\s+arising|hospitalization\s+for|"
     r"subject\s+to|excluding|policy\s+wording|insured\s+person|"
     r"definition|period\s+of\s+insurance|cashless\s+facility|"
-    r"pre[\s-]?existing|waiting\s+period|sum\s+insured",
+    r"pre[\s-]?existing|waiting\s+period|sum\s+insured|"
+    r"certified\s+hospital|accredited\s+hospital|iso\s*9001|"
+    r"\bnabh\b|\bnabl\b|mci\s+approved",
     re.I,
 )
 
@@ -136,7 +143,8 @@ _HOSPITAL_ADDRESS_TOKENS = {
 
 _TOTAL_BILL_PATTERNS = [
     re.compile(
-        r"(?:total\s*(?:hospital\s+)?(?:bill|amount|charges?)|grand\s*total|"
+        r"(?:sum\s*total\s*(?:expected\s*)?(?:cost|amount)|"
+        r"total\s*(?:hospital\s+)?(?:bill|amount|charges?)|grand\s*total|"
         r"net\s*(?:amount|payable|bill)|amount\s*(?:claimed|payable|due))\s*[:.]?\s*"
         r"(?:rs\.?|inr|₹)?\s*([\d,]+(?:\.\d{1,2})?)",
         re.I,
@@ -405,7 +413,7 @@ def _classify_document(fname: str, text: str) -> str:
         bump("query_letter", 2)
     if re.search(r"pre[\s-]?auth|preauth", name):
         bump("pre_auth", 2)
-    if re.search(r"indoor\s+case|treatment", name):
+    if re.search(r"indoor\s+case|treatment|\bicps\b", name):
         bump("indoor_case", 4)
     if re.search(r"investigation|lab", name):
         bump("lab_report", 4)

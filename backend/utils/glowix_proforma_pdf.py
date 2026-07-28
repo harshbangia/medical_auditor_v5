@@ -127,7 +127,7 @@ def _checklist_status(data: dict) -> List[Tuple[str, str]]:
         ("Pre-authorization Approval Letter", ("pre-auth", "preauth", "authorization")),
         ("Admission Request Form", ("admission request", "admission form", "indoor")),
         ("Policy Copy / ID Card", ("policy", "id card")),
-        ("Indoor Case Papers", ("indoor", "treatment sheet", "case paper")),
+        ("Indoor Case Papers", ("indoor", "treatment sheet", "case paper", "icps")),
         ("Discharge Summary", ("discharge",)),
         ("Lab / Radiology Reports/X-Ray", ("lab", "radiology", "x-ray", "xray", "mri", "ct")),
         ("Operation Notes (if any)", ("operation", "ot note", "surgery note")),

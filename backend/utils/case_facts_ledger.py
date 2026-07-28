@@ -6,6 +6,14 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from backend.ai.case_profiler import normalize_str_list, stringify_item
+from backend.utils.demographics_normalizer import (
+    normalize_age,
+    normalize_bill_amount,
+    normalize_hospital_name,
+    normalize_patient_name,
+    normalize_policy_number,
+    score_name_quality,
+)
 
 # Higher number = preferred source for identity / diagnosis fields
 _DOC_PRIORITY = {
@@ -44,13 +52,46 @@ def _is_empty(val: Any) -> bool:
 
 def _pick_best(
     candidates: List[Tuple[str, str, str]],
+    field: str = "",
 ) -> Tuple[str, str]:
-    """Pick value with highest doc priority; tie-break by longer non-empty string."""
+    """Pick value with highest doc priority; tie-break by quality / length."""
     best_val, best_src, best_score = "", "", -1
     for val, src, doc_type in candidates:
         if _is_empty(val):
             continue
-        score = _doc_priority(doc_type)
+        score = _doc_priority(doc_type) * 10
+        if field == "patient_name":
+            nq = score_name_quality(val)
+            if nq < 5:
+                continue
+            score += nq * 5  # prefer complete clean names over high-priority OCR junk
+            val = normalize_patient_name(val) or val
+        elif field == "age":
+            age = normalize_age(val)
+            if not age:
+                continue
+            val = age
+            score += 5
+        elif field == "hospital":
+            hosp = normalize_hospital_name(val)
+            if not hosp:
+                continue
+            val = hosp
+            score += min(len(hosp), 40)
+        elif field == "policy_number":
+            pol = normalize_policy_number(val)
+            if not pol:
+                continue
+            val = pol
+            score += 20
+        elif field == "bill_amount":
+            bill = normalize_bill_amount(val)
+            if not bill:
+                continue
+            val = bill
+            score += 20
+        else:
+            score += min(len(val), 40)
         if score > best_score or (score == best_score and len(val) > len(best_val)):
             best_val, best_src, best_score = val, src, score
     return best_val, best_src
@@ -114,7 +155,17 @@ def build_case_facts_ledger(
         "admission_date", "discharge_date", "consultation_date",
         "bill_amount", "policy_number", "claim_number",
     ):
-        val, src = _pick_best(_candidates(field))
+        val, src = _pick_best(_candidates(field), field=field)
+        if field == "patient_name":
+            val = normalize_patient_name(val)
+        elif field == "age":
+            val = normalize_age(val)
+        elif field == "hospital":
+            val = normalize_hospital_name(val)
+        elif field == "policy_number":
+            val = normalize_policy_number(val)
+        elif field == "bill_amount":
+            val = normalize_bill_amount(val)
         merged[field] = val
         merged[f"{field}_source"] = src
 
@@ -135,10 +186,12 @@ def build_case_facts_ledger(
             merged[field] = cf_val
             merged[f"{field}_source"] = claim_facts.get(src_field) or merged.get(f"{field}_source") or ""
 
-    if not _is_empty(claim_facts.get("hospital")):
-        merged["hospital"] = claim_facts["hospital"]
-    if not _is_empty(claim_facts.get("total_hospital_bill")):
-        merged["bill_amount"] = claim_facts["total_hospital_bill"]
+    cf_hospital = normalize_hospital_name(claim_facts.get("hospital") or "")
+    if cf_hospital:
+        merged["hospital"] = cf_hospital
+    cf_bill = normalize_bill_amount(claim_facts.get("total_hospital_bill") or "")
+    if cf_bill:
+        merged["bill_amount"] = cf_bill
     if not _is_empty(claim_facts.get("nature_of_admission")):
         merged["nature_of_admission"] = claim_facts["nature_of_admission"]
 
@@ -286,11 +339,54 @@ def merge_patient_from_ledger(result: dict, ledger: dict) -> dict:
     """Fill patient_details from ledger when LLM left blanks or wrong."""
     merged = (ledger or {}).get("merged") or {}
     patient = result.setdefault("patient_details", {})
+    claim = result.setdefault("claim_details", {})
 
-    for key, lkey in (("name", "patient_name"), ("age", "age"), ("sex", "sex")):
-        ledger_val = merged.get(lkey) or ""
-        current = str(patient.get(key) or "").strip()
-        if not _is_empty(ledger_val):
-            if _is_empty(current) or key == "name":
-                patient[key] = ledger_val
+    name = normalize_patient_name(merged.get("patient_name") or patient.get("name"))
+    if name and (
+        _is_empty(patient.get("name"))
+        or score_name_quality(name) >= score_name_quality(str(patient.get("name") or ""))
+    ):
+        patient["name"] = name
+
+    age = normalize_age(merged.get("age") or patient.get("age"))
+    if age:
+        patient["age"] = age
+    else:
+        # Drop implausible ages left by the LLM (e.g. 149)
+        bad = normalize_age(patient.get("age"))
+        if not bad:
+            patient["age"] = ""
+
+    sex = str(merged.get("sex") or "").strip()
+    if sex and _is_empty(patient.get("sex")):
+        patient["sex"] = sex
+
+    hospital = normalize_hospital_name(merged.get("hospital") or claim.get("hospital"))
+    if hospital:
+        claim["hospital"] = hospital
+    elif claim.get("hospital") and not normalize_hospital_name(claim.get("hospital")):
+        claim["hospital"] = ""
+
+    policy = normalize_policy_number(merged.get("policy_number") or "")
+    if policy:
+        ins = result.setdefault("insurance_details", {})
+        current_pol = normalize_policy_number(ins.get("policy_number") or "")
+        if not current_pol:
+            ins["policy_number"] = policy
+
+    bill = normalize_bill_amount(merged.get("bill_amount") or "")
+    if bill:
+        claim["total_hospital_bill"] = bill
+
+    procs = merged.get("procedures")
+    if isinstance(procs, list) and procs:
+        current_proc = str(claim.get("procedure_or_surgery") or "").strip()
+        # Prefer ledger procedures (already past-history filtered at map step)
+        joined = "; ".join(str(p) for p in procs if str(p).strip())
+        if joined and (
+            _is_empty(current_proc)
+            or re.search(r"\bturp\b", current_proc, re.I)
+            and not re.search(r"\bturp\b", joined, re.I)
+        ):
+            claim["procedure_or_surgery"] = joined
     return result

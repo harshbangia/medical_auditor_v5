@@ -40,6 +40,35 @@ _CLINICAL_KEYWORDS = re.compile(
     re.I,
 )
 
+# Hospital HIS often stamps a typed demographic banner on every scanned page.
+# Those ~100–150 chars look like "enough text" and used to SKIP vision OCR —
+# so handwriting on the page was never read.
+_HEADER_OVERLAY_RE = re.compile(
+    r"Patient\s*Name\s*:.*?(?:UHID|IPD|Gender|Age)",
+    re.I | re.S,
+)
+
+
+def _is_header_only_overlay(text: str) -> bool:
+    """True when page text is only a HIS demographic banner (body is a scan)."""
+    t = (text or "").strip()
+    if not t:
+        return True
+    if len(t) > 280:
+        return False
+    if not _HEADER_OVERLAY_RE.search(t):
+        return False
+    remainder = _HEADER_OVERLAY_RE.sub("", t)
+    remainder = re.sub(
+        r"\d{1,3}\s*Y(?:ears?)?\s*\d{0,2}\s*M(?:onths?)?\s*\d{0,2}\s*D(?:ays?)?",
+        "",
+        remainder,
+        flags=re.I,
+    )
+    remainder = re.sub(r"\b(?:Male|Female|Gender|Age|UHID|IPD)\b[:\s]*", "", remainder, flags=re.I)
+    remainder = re.sub(r"[^\w]+", " ", remainder).strip()
+    return len(remainder) < 30
+
 
 def _page_to_b64(pil_image, quality=70):
     buffered = BytesIO()
@@ -184,13 +213,28 @@ DISAMBIGUATION RULES (very important for handwriting):
   consistent with the doctor's specialty and the rest of the note.
 - Recognise standard medical abbreviations: MVD = microvascular decompression;
   CABG = coronary artery bypass; TURP = transurethral resection of prostate;
-  s/o = suggestive of; c/o = complaints of; k/c/o = known case of; Pt. = patient;
+  EVD = external ventricular drain; s/o = suggestive of; c/o = complaints of;
+  k/c/o = known case of; H/O = history of; Pt. = patient;
   Ⓡ / (R) = right, Ⓛ / (L) = left.
+- PAST HISTORY vs CURRENT PROCEDURE (critical):
+  - Text marked "H/O TURP", "Past History: TURP", "k/c/o …" is PRIOR history —
+    transcribe under PAST HISTORY, NOT as the operation done this admission.
+  - Current surgery appears under Operation / Procedure / Findings / Proposed Treatment.
+- DEMOGRAPHICS (critical — typed banners beat handwriting):
+  - Indian HIS overlays look like: "Patient Name : Mr GAGANDEEP SINGH GULATI UHID : LMH…
+    Age : 49 Y 0 M 0 D". Copy these EXACTLY. Age is 49 — never invent 149 or merge digits.
+  - Never split one given name into two words with weird capitals ("GaGa DEEP"). Prefer the
+    printed UHID banner name when handwriting is unclear.
+  - Hospital name is the FULL facility on the letterhead (e.g. "L. N. Medical College &
+    J. K. Hospital"). Never output bare phrases like "Certified Hospital", "ISO 9001",
+    or "NABH Accredited" as the hospital name.
+  - UHID / IPD / Patient ID (often LMH…) is NOT the insurance policy number.
+    Policy numbers are usually labeled Policy No / Insured ID (e.g. H7583101).
+- MONEY: Prefer labeled totals ("Sum Total Expected Cost", "Grand Total", "Net Payable").
+  Never treat a bare "20" (e.g. Mannitol 20%) as the hospital bill.
 - If a handwritten word has two plausible readings, pick the one that is medically
   consistent with the rest of the page, and list the alternative in UNCERTAIN with a
-  brief reason. Example: "diagnosis read as 'Trigeminal Neuralgia' (not 'Inguinal') —
-  consistent with Neurosurgeon letterhead, MRI showing neurovascular conflict, and
-  planned MVD which is the canonical TN procedure."
+  brief reason.
 - Never silently change a word — every interpretive choice goes in UNCERTAIN.
 - If you genuinely cannot read a word, write [?] in BODY and list it in UNCERTAIN.
 
@@ -353,18 +397,33 @@ def extract_text_and_images(pdf_path, source_name: str = ""):
         for meta in page_meta:
             page_num = meta["page"]
             text_after_ocr = (page_ocr_text.get(page_num) or "").strip()
-            if len(text_after_ocr) >= VISION_OCR_MIN_NATIVE_CHARS:
+            header_only = _is_header_only_overlay(text_after_ocr)
+            # Enough real body text → skip vision. Header-only HIS banners still need vision.
+            if len(text_after_ocr) >= VISION_OCR_MIN_NATIVE_CHARS and not header_only:
                 continue
-            if meta["image_count"] == 0 and len(text_after_ocr) > 0:
+            if meta["image_count"] == 0 and len(text_after_ocr) > 0 and not header_only:
                 # Truly text-light page with no image — nothing for vision to read.
+                # Header-only overlays usually sit on a full-page scan even when
+                # PyMuPDF reports image_count=0 (content-stream drawings) — still try.
                 continue
-            candidates.append(page_num)
+            # Prefer early clinical pages when capping
+            priority = 0
+            if header_only:
+                priority += 2
+            if page_num <= 8:
+                priority += 3
+            elif page_num <= 20:
+                priority += 1
+            if meta["image_count"] > 0:
+                priority += 1
+            candidates.append((priority, -page_num, page_num))
 
+        candidates = [p for _, __, p in sorted(candidates, reverse=True)]
         if candidates:
             if len(candidates) > MAX_VISION_OCR_PAGES:
                 print(
                     f"⚠️ Capping vision transcription to first {MAX_VISION_OCR_PAGES} "
-                    f"of {len(candidates)} text-light pages"
+                    f"of {len(candidates)} text-light / header-overlay pages"
                 )
                 candidates = candidates[:MAX_VISION_OCR_PAGES]
             print(
@@ -376,6 +435,16 @@ def extract_text_and_images(pdf_path, source_name: str = ""):
             try:
                 for page_num in candidates:
                     image_b64 = _page_image_for_transcription(doc_for_ocr, pdf_path, page_num)
+                    if not image_b64:
+                        # Header-only with image_count=0: force high-DPI render
+                        try:
+                            rendered = _render_pages_fitz(
+                                pdf_path, page_num, page_num, dpi=max(VISION_OCR_DPI, 220)
+                            )
+                            if rendered:
+                                image_b64 = _page_to_b64(rendered[0], quality=85)
+                        except Exception:
+                            image_b64 = ""
                     if not image_b64:
                         continue
                     transcript = _transcribe_page_with_vision(image_b64, page_num, source_name)

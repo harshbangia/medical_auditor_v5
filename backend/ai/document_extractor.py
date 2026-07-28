@@ -11,6 +11,10 @@ import backend.config  # noqa: F401
 from backend.ai.case_profiler import normalize_case_profile, normalize_str_list, stringify_item
 from backend.ai.llm_helpers import extract_response_text
 from backend.llm_client import get_openai_client
+from backend.utils.demographics_normalizer import (
+    extract_typed_demographics,
+    sanitize_mapped_facts,
+)
 
 ProgressFn = Callable[[str, int, str], None]
 _MAX_DOC_CHARS = 12000
@@ -59,9 +63,21 @@ def extract_document_facts(filename: str, text: str) -> dict:
             filename,
         )
 
+    typed = extract_typed_demographics(excerpt)
+    typed_hint = ""
+    if any(typed.values()):
+        typed_hint = (
+            "\nTYPED HIS / LETTERHEAD HINTS (prefer these over unclear handwriting):\n"
+            f"- patient_name: {typed.get('patient_name') or '—'}\n"
+            f"- age: {typed.get('age') or '—'}\n"
+            f"- sex: {typed.get('sex') or '—'}\n"
+            f"- hospital: {typed.get('hospital') or '—'}\n"
+            f"- uhid (NOT policy): {typed.get('uhid') or '—'}\n"
+        )
+
     prompt = f"""You are extracting facts from ONE medical insurance case document for audit.
 Document filename: {filename}
-
+{typed_hint}
 Return ONLY JSON:
 {{
   "source_file": "{filename}",
@@ -91,10 +107,15 @@ Return ONLY JSON:
 Rules:
 - Extract ONLY what THIS document explicitly states. Use "" or [] if not in this file.
 - Do NOT infer from other documents. Do NOT guess patient name or diagnosis.
+- age: years only as a number 1–120. From "49 Y 0 M 0 D" or "49Y/M" use "49". Never invent ages like 149.
+- patient_name: prefer typed Patient Name / UHID banner. Do not split names ("GaGa DEEP").
+- hospital: full facility name from letterhead. Never "Certified Hospital" / ISO / NABH alone.
+- policy_number: labeled Policy No / Insured ID only. UHID/IPD/LMH… is NOT a policy number.
+- procedures: CURRENT admission procedures only. H/O / Past History surgeries (e.g. H/O TURP) go in notable_findings, NOT procedures.
+- bill_amount: labeled grand total / sum total expected cost only (include Rs.). Ignore bare "20" from drug strengths.
 - summary: 2-3 factual sentences about what this specific document contains.
 - notable_findings: audit-relevant facts stated in this file (with values if labs/imaging).
 - medications: brand/generic names as written in this document only.
-- bill_amount: grand total / net amount if this is a bill (include currency prefix e.g. Rs.)
 
 DOCUMENT TEXT:
 {excerpt}
@@ -115,16 +136,19 @@ DOCUMENT TEXT:
                         if hasattr(c, "text"):
                             raw += c.text
     except Exception as exc:
-        return _normalize_doc_facts(
-            {
-                "source_file": filename,
-                "summary": f"Extraction failed: {exc}",
-                "documentation_gaps": ["Automated per-document extraction failed"],
-            },
-            filename,
-        )
+        base = {
+            "source_file": filename,
+            "summary": f"Extraction failed: {exc}",
+            "documentation_gaps": ["Automated per-document extraction failed"],
+            "patient_name": typed.get("patient_name") or "",
+            "age": typed.get("age") or "",
+            "sex": typed.get("sex") or "",
+            "hospital": typed.get("hospital") or "",
+        }
+        return sanitize_mapped_facts(_normalize_doc_facts(base, filename), excerpt)
 
-    return _normalize_doc_facts(_parse_json(raw), filename)
+    facts = _normalize_doc_facts(_parse_json(raw), filename)
+    return sanitize_mapped_facts(facts, excerpt)
 
 
 def map_case_documents(

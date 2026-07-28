@@ -24,6 +24,14 @@ from backend.utils.document_analysis import merge_document_analysis_into_result
 from backend.utils.fraud_abuse_detector import detect_fraud_abuse
 from backend.utils.claim_savings import build_claim_savings, has_extractable_financials
 from backend.utils.case_facts_ledger import merge_patient_from_ledger
+from backend.utils.demographics_normalizer import (
+    extract_typed_demographics,
+    normalize_age,
+    normalize_hospital_name,
+    normalize_patient_name,
+    normalize_policy_number,
+    score_name_quality,
+)
 
 _MRI_REPORT_RE = re.compile(
     r"\bmri\s+(?:brain|spine|report|of\s+)|neurovascular\s+conflict|grade\s+iii",
@@ -494,6 +502,49 @@ def finalize_financial_sections(
     result.pop("claim_savings_line_items", None)
 
 
+def _sanitize_demographics(result: dict, case_text: str) -> None:
+    """Last-pass guards against OCR/LLM demographic hallucinations."""
+    from backend.utils.demographics_normalizer import is_uhid_not_policy
+
+    typed = extract_typed_demographics(case_text or "")
+    patient = result.setdefault("patient_details", {})
+    claim = result.setdefault("claim_details", {})
+    ins = result.setdefault("insurance_details", {})
+
+    typed_name = normalize_patient_name(typed.get("patient_name") or "")
+    current_name = normalize_patient_name(patient.get("name") or "")
+    if typed_name and (
+        not current_name
+        or score_name_quality(typed_name) > score_name_quality(current_name)
+        or re.search(r"[a-z][A-Z]", str(patient.get("name") or ""))
+    ):
+        patient["name"] = typed_name
+    elif current_name:
+        patient["name"] = current_name
+
+    typed_age = typed.get("age") or ""
+    age = normalize_age(patient.get("age"))
+    if typed_age and (not age or int(age) > 120):
+        patient["age"] = typed_age
+    else:
+        patient["age"] = age
+
+    if typed.get("sex") and not str(patient.get("sex") or "").strip():
+        patient["sex"] = typed["sex"]
+
+    hospital = normalize_hospital_name(claim.get("hospital") or "")
+    if not hospital:
+        hospital = normalize_hospital_name(typed.get("hospital") or "") or typed.get("hospital") or ""
+    claim["hospital"] = hospital
+
+    raw_pol = str(ins.get("policy_number") or "").strip()
+    pol = normalize_policy_number(raw_pol)
+    if pol:
+        ins["policy_number"] = pol
+    elif is_uhid_not_policy(raw_pol):
+        ins["policy_number"] = ""
+
+
 def enrich_audit_result(
     result: dict,
     case_text: str,
@@ -528,6 +579,7 @@ def enrich_audit_result(
         merged = (case_facts_ledger.get("merged") or {})
         if merged.get("diagnosis") and not str(claim.get("diagnosis") or "").strip():
             claim["diagnosis"] = merged["diagnosis"]
+    _sanitize_demographics(result, case_text)
     _ensure_inference_and_summary(result)
     return result
 
