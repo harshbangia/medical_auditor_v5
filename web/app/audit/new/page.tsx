@@ -94,7 +94,7 @@ export default function NewAuditPage() {
 
   if (loading || !user) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#070b14]">
+      <div className="flex min-h-screen items-center justify-center bg-[#f7f9fc]">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-cyan-500 border-t-transparent" />
       </div>
     );
@@ -131,15 +131,15 @@ export default function NewAuditPage() {
         <div className="grid gap-6 lg:grid-cols-2">
           <Card>
             <CardContent className="pt-6">
-              <h3 className="mb-4 font-semibold text-white">Case documents</h3>
+              <h3 className="mb-4 font-semibold text-slate-900">Case documents</h3>
               <div
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={onDrop}
-                className="flex min-h-[200px] cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-700 bg-slate-900/40 p-8 transition hover:border-cyan-500/40"
+                className="flex min-h-[200px] cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 p-8 transition hover:border-cyan-400"
                 onClick={() => document.getElementById("file-input")?.click()}
               >
-                <Upload className="mb-3 h-10 w-10 text-cyan-400/70" />
-                <p className="text-sm font-medium text-slate-300">Drop PDFs here or click to browse</p>
+                <Upload className="mb-3 h-10 w-10 text-cyan-600" />
+                <p className="text-sm font-medium text-slate-700">Drop PDFs here or click to browse</p>
                 <p className="mt-1 text-xs text-slate-500">Discharge summary, bills, pre-auth, labs…</p>
                 <input
                   id="file-input"
@@ -158,13 +158,13 @@ export default function NewAuditPage() {
                   {files.map((f, i) => (
                     <li
                       key={`${f.name}-${i}`}
-                      className="flex items-center justify-between rounded-lg bg-slate-800/50 px-3 py-2 text-sm"
+                      className="flex items-center justify-between rounded-lg bg-slate-100 px-3 py-2 text-sm"
                     >
-                      <span className="truncate text-slate-300">{f.name}</span>
+                      <span className="truncate text-slate-700">{f.name}</span>
                       <button
                         type="button"
                         onClick={() => setFiles((prev) => prev.filter((_, j) => j !== i))}
-                        className="text-slate-500 hover:text-rose-400"
+                        className="text-slate-400 hover:text-rose-600"
                       >
                         <X className="h-4 w-4" />
                       </button>
@@ -177,7 +177,7 @@ export default function NewAuditPage() {
 
           <Card>
             <CardContent className="pt-6">
-              <h3 className="mb-4 font-semibold text-white">Guidelines</h3>
+              <h3 className="mb-4 font-semibold text-slate-900">Guidelines</h3>
               <div className="max-h-[280px] space-y-2 overflow-y-auto pr-1">
                 {available.length === 0 ? (
                   <p className="text-sm text-slate-500">Loading guidelines…</p>
@@ -189,8 +189,8 @@ export default function NewAuditPage() {
                         key={g}
                         className={`flex cursor-pointer items-start gap-3 rounded-xl border px-3 py-2.5 text-sm transition ${
                           on
-                            ? "border-cyan-500/40 bg-cyan-500/10 text-cyan-100"
-                            : "border-slate-800 text-slate-400 hover:border-slate-700"
+                            ? "border-cyan-300 bg-cyan-50 text-cyan-800"
+                            : "border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50"
                         }`}
                       >
                         <input
@@ -215,7 +215,7 @@ export default function NewAuditPage() {
       )}
 
       {error && (
-        <p className="mt-4 rounded-xl bg-rose-500/10 px-4 py-3 text-sm text-rose-300">{error}</p>
+        <p className="mt-4 rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</p>
       )}
 
       {!submitting && (

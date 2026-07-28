@@ -16,7 +16,7 @@ function str(v: unknown) {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="space-y-3">
-      <h2 className="text-sm font-semibold uppercase tracking-wider text-cyan-400/90">{title}</h2>
+      <h2 className="text-sm font-semibold uppercase tracking-wider text-cyan-700">{title}</h2>
       {children}
     </section>
   );
@@ -26,7 +26,7 @@ function KV({ label, value }: { label: string; value: unknown }) {
   return (
     <div className="flex flex-col gap-0.5 sm:flex-row sm:gap-4">
       <dt className="w-44 shrink-0 text-sm text-slate-500">{label}</dt>
-      <dd className="text-sm text-slate-200">{str(value)}</dd>
+      <dd className="text-sm text-slate-800">{str(value)}</dd>
     </div>
   );
 }
@@ -68,7 +68,7 @@ export function ReportView({
       const a = document.createElement("a");
       a.href = url;
       const name = str(patient.name).replace(/\s+/g, "_");
-      a.download = name !== "—" ? `${name}_audit.pdf` : "audit_report.pdf";
+      a.download = name !== "—" ? `${name}_Expert_Opinion.pdf` : "Glowix_Expert_Opinion.pdf";
       a.click();
       URL.revokeObjectURL(url);
     } finally {
@@ -92,7 +92,7 @@ export function ReportView({
             Ref: {str(data.audit_ref || data.report_ref)} ·{" "}
             {str(data.report_date || data.audit_date)}
           </p>
-          <h2 className="mt-1 text-2xl font-bold text-white">{str(patient.name)}</h2>
+          <h2 className="mt-1 text-2xl font-bold text-slate-900">{str(patient.name)}</h2>
           <div className="mt-2 flex flex-wrap gap-2">
             <Badge variant={verdictVariant as "success"}>{verdict}</Badge>
             {str(fraud.risk_level) !== "—" && (
@@ -104,7 +104,7 @@ export function ReportView({
         </div>
         <Button onClick={downloadPdf} disabled={downloading}>
           <Download className="h-4 w-4" />
-          {downloading ? "Generating…" : "Download PDF"}
+          {downloading ? "Generating…" : "Download Expert Opinion PDF"}
         </Button>
       </div>
 
@@ -146,10 +146,10 @@ export function ReportView({
         <Section title="Executive summary">
           <Card>
             <CardContent className="pt-6">
-              <ul className="space-y-2 text-sm text-slate-300">
+              <ul className="space-y-2 text-sm text-slate-700">
                 {summary.map((b, i) => (
                   <li key={i} className="flex gap-2">
-                    <span className="text-cyan-400">•</span>
+                    <span className="text-cyan-600">•</span>
                     {b}
                   </li>
                 ))}
@@ -166,13 +166,13 @@ export function ReportView({
               <Card key={i}>
                 <CardContent className="pt-5">
                   <div className="mb-2 flex items-start gap-2">
-                    <FileText className="mt-0.5 h-4 w-4 shrink-0 text-cyan-400" />
+                    <FileText className="mt-0.5 h-4 w-4 shrink-0 text-cyan-600" />
                     <div>
-                      <p className="font-medium text-white">{str(row.document)}</p>
+                      <p className="font-medium text-slate-900">{str(row.document)}</p>
                       <p className="text-xs text-slate-500">{str(row.document_type)}</p>
                     </div>
                   </div>
-                  <p className="text-sm text-slate-400">{str(row.key_content)}</p>
+                  <p className="text-sm text-slate-600">{str(row.key_content)}</p>
                 </CardContent>
               </Card>
             ))}
@@ -184,12 +184,12 @@ export function ReportView({
         <Section title="Clinical timeline">
           <Card>
             <CardContent className="pt-6">
-              <ol className="relative space-y-4 border-l border-slate-700 pl-6">
+              <ol className="relative space-y-4 border-l border-slate-200 pl-6">
                 {timeline.map((ev, i) => (
                   <li key={i} className="relative">
-                    <span className="absolute -left-[1.62rem] top-1.5 h-2.5 w-2.5 rounded-full bg-cyan-400 ring-4 ring-[#070b14]" />
-                    <p className="text-xs text-cyan-400/80">{str(ev.date)}</p>
-                    <p className="text-sm text-slate-200">{str(ev.event)}</p>
+                    <span className="absolute -left-[1.62rem] top-1.5 h-2.5 w-2.5 rounded-full bg-cyan-600 ring-4 ring-white" />
+                    <p className="text-xs text-cyan-700">{str(ev.date)}</p>
+                    <p className="text-sm text-slate-800">{str(ev.event)}</p>
                   </li>
                 ))}
               </ol>
@@ -205,14 +205,14 @@ export function ReportView({
               <Card key={i} className="border-l-4 border-l-rose-500/60">
                 <CardContent className="pt-5">
                   <div className="mb-2 flex flex-wrap items-center gap-2">
-                    <p className="font-medium text-white">{str(dev.issue)}</p>
+                    <p className="font-medium text-slate-900">{str(dev.issue)}</p>
                     <Badge variant="danger">{str(dev.severity)}</Badge>
                   </div>
-                  <p className="text-sm text-slate-400">
+                  <p className="text-sm text-slate-600">
                     <span className="text-slate-500">Guideline: </span>
                     {str(dev.guideline_expectation)}
                   </p>
-                  <p className="mt-2 text-sm text-slate-300">
+                  <p className="mt-2 text-sm text-slate-700">
                     <span className="text-slate-500">Evidence: </span>
                     {str(dev.case_evidence)}
                   </p>
@@ -233,7 +233,7 @@ export function ReportView({
                 <Card key={i}>
                   <CardContent className="pt-5">
                     <div className="mb-2 flex flex-wrap items-center gap-2">
-                      <p className="font-medium text-white">Q{i + 1}: {str(obs.question)}</p>
+                      <p className="font-medium text-slate-900">Q{i + 1}: {str(obs.question)}</p>
                       <Badge
                         variant={
                           answer.toLowerCase().includes("not supported")
@@ -247,7 +247,7 @@ export function ReportView({
                       </Badge>
                       {!supported && <Badge variant="warning">Weak citation</Badge>}
                     </div>
-                    <p className="text-sm text-slate-300">{str(obs.analysis)}</p>
+                    <p className="text-sm text-slate-700">{str(obs.analysis)}</p>
                   </CardContent>
                 </Card>
               );
@@ -260,7 +260,7 @@ export function ReportView({
         <Section title="Verification notes">
           <Card>
             <CardContent className="pt-6">
-              <ul className="space-y-1 text-sm text-amber-200/90">
+              <ul className="space-y-1 text-sm text-amber-800">
                 {(verification.notes as string[]).map((n, i) => (
                   <li key={i}>• {n}</li>
                 ))}
@@ -273,7 +273,7 @@ export function ReportView({
       <Section title="Auditor conclusion">
         <Card>
           <CardContent className="pt-6">
-            <p className="whitespace-pre-line text-sm leading-relaxed text-slate-300">
+            <p className="whitespace-pre-line text-sm leading-relaxed text-slate-700">
               {str(data.inference || data.auditor_conclusion)}
             </p>
           </CardContent>
@@ -286,13 +286,13 @@ export function ReportView({
             {localQa.map((qa, i) => (
               <Card key={i}>
                 <CardContent className="pt-5">
-                  <p className="font-medium text-white">Q: {str(qa.question)}</p>
-                  <p className="mt-2 text-sm text-slate-300">
+                  <p className="font-medium text-slate-900">Q: {str(qa.question)}</p>
+                  <p className="mt-2 text-sm text-slate-700">
                     <span className="text-slate-500">A: </span>
                     {str(qa.answer)}
                   </p>
                   {qa.justification && (
-                    <p className="mt-2 text-sm text-slate-400">{qa.justification}</p>
+                    <p className="mt-2 text-sm text-slate-600">{qa.justification}</p>
                   )}
                 </CardContent>
               </Card>
@@ -302,15 +302,15 @@ export function ReportView({
       )}
 
       <Section title="Ask a follow-up question">
-        <Card className="border-cyan-500/20">
+        <Card className="border-cyan-200">
           <CardContent className="pt-6">
             <div className="mb-4 flex items-start gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-cyan-500/15 text-cyan-300">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-cyan-50 text-cyan-700">
                 <MessageCircleQuestion className="h-5 w-5" />
               </div>
               <div>
-                <p className="font-medium text-white">Ask about this case</p>
-                <p className="text-sm text-slate-400">
+                <p className="font-medium text-slate-900">Ask about this case</p>
+                <p className="text-sm text-slate-600">
                   Answers use the uploaded documents and selected guidelines (same session as this audit).
                 </p>
               </div>
@@ -365,7 +365,7 @@ export function ReportView({
               </Button>
             </form>
             {askError && (
-              <p className="mt-3 rounded-lg bg-rose-500/10 px-3 py-2 text-sm text-rose-300">
+              <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">
                 {askError}
               </p>
             )}

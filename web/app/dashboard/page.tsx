@@ -32,7 +32,7 @@ export default function DashboardPage() {
 
   if (loading || !user) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#070b14]">
+      <div className="flex min-h-screen items-center justify-center bg-[#f7f9fc]">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-cyan-500 border-t-transparent" />
       </div>
     );
@@ -62,18 +62,18 @@ export default function DashboardPage() {
           <Card key={stat.label}>
             <CardContent className="pt-6">
               <p className="text-sm text-slate-500">{stat.label}</p>
-              <p className="mt-1 text-2xl font-bold capitalize text-white">{stat.value}</p>
+              <p className="mt-1 text-2xl font-bold capitalize text-slate-900">{stat.value}</p>
             </CardContent>
           </Card>
         ))}
       </div>
 
       <div className="mt-6">
-        <Card className="border-cyan-500/20 bg-cyan-500/5">
+        <Card className="border-cyan-200 bg-cyan-50/50">
           <CardContent className="flex flex-wrap items-center justify-between gap-4 py-5">
             <div>
-              <p className="font-semibold text-white">How to run an audit</p>
-              <p className="text-sm text-slate-400">
+              <p className="font-semibold text-slate-900">How to run an audit</p>
+              <p className="text-sm text-slate-600">
                 Step-by-step guide — guidelines, uploads, review, and PDF download.
               </p>
             </div>
@@ -85,14 +85,14 @@ export default function DashboardPage() {
       </div>
 
       <div className="mt-8">
-        <h2 className="mb-4 text-lg font-semibold text-white">Recent audits</h2>
+        <h2 className="mb-4 text-lg font-semibold text-slate-900">Recent audits</h2>
         {fetching ? (
           <p className="text-slate-500">Loading history…</p>
         ) : history.length === 0 ? (
           <Card>
             <CardContent className="flex flex-col items-center py-12 text-center">
               <FileText className="mb-3 h-10 w-10 text-slate-600" />
-              <p className="text-slate-400">No completed audits yet</p>
+              <p className="text-slate-600">No completed audits yet</p>
               <div className="mt-4 flex flex-wrap justify-center gap-3">
                 <Link href="/instructions">
                   <Button variant="secondary">Read instructions</Button>
@@ -107,10 +107,10 @@ export default function DashboardPage() {
           <div className="space-y-3">
             {history.map((item) => (
               <Link key={item.id} href={`/audit/report?id=${item.id}`}>
-                <Card className="transition hover:border-cyan-500/30 hover:bg-slate-900/60">
+                <Card className="transition hover:border-cyan-300 hover:shadow-md">
                   <CardContent className="flex items-center justify-between py-4">
                     <div>
-                      <p className="font-medium text-white">
+                      <p className="font-medium text-slate-900">
                         {item.patient_name || "Unknown patient"}
                       </p>
                       <p className="text-sm text-slate-500">

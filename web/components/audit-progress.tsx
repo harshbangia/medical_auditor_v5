@@ -36,16 +36,16 @@ export function AuditProgress({
     <Card className="overflow-hidden">
       <CardContent className="p-8">
         <div className="flex items-start gap-4">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-cyan-500/15 ring-1 ring-cyan-500/30">
-            <Loader2 className="h-6 w-6 animate-spin text-cyan-400" />
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-cyan-50 ring-1 ring-cyan-200">
+            <Loader2 className="h-6 w-6 animate-spin text-cyan-700" />
           </div>
           <div className="flex-1">
             <div className="mb-2 flex flex-wrap items-center gap-2">
-              <h3 className="text-lg font-semibold text-white">Audit in progress</h3>
+              <h3 className="text-lg font-semibold text-slate-900">Audit in progress</h3>
               <Badge variant="info">{label}</Badge>
             </div>
-            <p className="text-sm text-slate-400">{message || "Please wait…"}</p>
-            <div className="mt-5 h-2 overflow-hidden rounded-full bg-slate-800">
+            <p className="text-sm text-slate-600">{message || "Please wait…"}</p>
+            <div className="mt-5 h-2 overflow-hidden rounded-full bg-slate-200">
               <motion.div
                 className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-blue-600"
                 initial={{ width: 0 }}

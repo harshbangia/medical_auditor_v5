@@ -47,7 +47,7 @@ export default function AdminPage() {
 
   if (loading || !user || user.role !== "admin") {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#070b14]">
+      <div className="flex min-h-screen items-center justify-center bg-[#f7f9fc]">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-cyan-500 border-t-transparent" />
       </div>
     );
@@ -67,7 +67,7 @@ export default function AdminPage() {
           <Card key={s.label}>
             <CardContent className="pt-6">
               <p className="text-sm text-slate-500">{s.label}</p>
-              <p className="text-2xl font-bold text-white">{s.value ?? "—"}</p>
+              <p className="text-2xl font-bold text-slate-900">{s.value ?? "—"}</p>
             </CardContent>
           </Card>
         ))}
@@ -76,7 +76,7 @@ export default function AdminPage() {
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
           <CardContent className="pt-6">
-            <h3 className="mb-4 font-semibold text-white">Create user</h3>
+            <h3 className="mb-4 font-semibold text-slate-900">Create user</h3>
             <form onSubmit={addUser} className="space-y-3">
               <Input
                 placeholder="Email"
@@ -93,22 +93,22 @@ export default function AdminPage() {
                 required
               />
               <Button type="submit">Create user</Button>
-              {msg && <p className="text-sm text-cyan-300">{msg}</p>}
+              {msg && <p className="text-sm text-cyan-700">{msg}</p>}
             </form>
           </CardContent>
         </Card>
 
         <Card>
           <CardContent className="pt-6">
-            <h3 className="mb-4 font-semibold text-white">Users</h3>
+            <h3 className="mb-4 font-semibold text-slate-900">Users</h3>
             <div className="max-h-80 space-y-2 overflow-y-auto">
               {(metrics?.per_user || []).map((u) => (
                 <div
                   key={u.id}
-                  className="flex items-center justify-between rounded-xl border border-slate-800 px-3 py-2"
+                  className="flex items-center justify-between rounded-xl border border-slate-200 px-3 py-2"
                 >
                   <div>
-                    <p className="text-sm text-white">{u.email}</p>
+                    <p className="text-sm text-slate-900">{u.email}</p>
                     <p className="text-xs text-slate-500">
                       {u.cases_completed} completed · {u.login_count} logins
                     </p>

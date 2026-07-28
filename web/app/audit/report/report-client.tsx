@@ -61,7 +61,7 @@ export default function ReportPageClient() {
 
   if (loading || !user) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#070b14]">
+      <div className="flex min-h-screen items-center justify-center bg-[#f7f9fc]">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-cyan-500 border-t-transparent" />
       </div>
     );

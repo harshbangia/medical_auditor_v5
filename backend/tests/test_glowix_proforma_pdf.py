@@ -1,0 +1,97 @@
+"""Tests for Glowix Expert Opinion proforma PDF generation."""
+
+import os
+import tempfile
+import unittest
+
+from backend.utils.glowix_proforma_pdf import generate_glowix_expert_opinion_pdf
+from backend.utils.pdf_generator import generate_pdf
+
+
+SAMPLE_REPORT = {
+    "report_date": "20-07-2026",
+    "patient_details": {
+        "name": "Mrs. Durga Devi",
+        "age": "49",
+        "sex": "Female",
+    },
+    "insurance_details": {
+        "insurance_company": "Iffco Tokio General Insurance",
+        "policy_number": "H1685201",
+        "claim_incident_number": "2026071800281",
+    },
+    "claim_details": {
+        "hospital": "Gokuldas Hospital Pvt. Ltd.",
+        "date_of_admission": "18/07/2026",
+        "nature_of_admission": "Emergency",
+        "diagnosis": "Mild L3 Compression Fracture",
+        "procedure_or_surgery": "Medical management",
+    },
+    "clinical_checklist": [
+        {"area": "Indoor Case Papers", "available": "YES", "remarks": ""},
+        {"area": "Lab / Radiology", "available": "YES", "remarks": "X-ray/MRI"},
+    ],
+    "document_sources": [
+        {"filename": "indoor.pdf"},
+        {"filename": "mri_report.pdf"},
+    ],
+    "observations": [
+        {
+            "question": "Whether the fracture is acute or secondary to spondylotic changes?",
+            "analysis": "The fracture is acute. Osteoporotic changes are degenerative.",
+            "answer": "Supported",
+        },
+        {
+            "question": "Is hospitalization required or can this be managed OPD?",
+            "analysis": "Admission justified due to immobility and need for IV therapy.",
+            "answer": "Supported",
+        },
+    ],
+    "inference": (
+        "Mrs. Durga Devi, 49 years female, admitted after fall with L3 compression fracture. "
+        "Admission is justified for medical management."
+    ),
+    "compliance_verdict": "Compliant",
+    "treatment_billing_audit": {},
+    "financial_review": {},
+}
+
+
+class GlowixProformaPdfTests(unittest.TestCase):
+    def test_generates_nonempty_pdf(self):
+        fd, path = tempfile.mkstemp(suffix=".pdf")
+        os.close(fd)
+        try:
+            out = generate_glowix_expert_opinion_pdf(SAMPLE_REPORT, path)
+            self.assertEqual(out, path)
+            self.assertTrue(os.path.isfile(path))
+            self.assertGreater(os.path.getsize(path), 1500)
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+    def test_generate_pdf_uses_proforma(self):
+        fd, path = tempfile.mkstemp(suffix=".pdf")
+        os.close(fd)
+        try:
+            generate_pdf(SAMPLE_REPORT, path)
+            self.assertGreater(os.path.getsize(path), 1500)
+            import fitz
+            doc = fitz.open(path)
+            text = "\n".join(page.get_text("text") for page in doc)
+            self.assertIn("MEDICAL AUDIT", text)
+            self.assertIn("GLOWIX", text)
+            self.assertIn("Mrs. Durga Devi", text)
+            self.assertIn("H1685201", text)
+            self.assertGreaterEqual(doc.page_count, 1)
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
+if __name__ == "__main__":
+    unittest.main()

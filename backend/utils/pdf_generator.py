@@ -2,6 +2,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
+from backend.utils.glowix_proforma_pdf import generate_glowix_expert_opinion_pdf
 from backend.utils.pdf_table_helpers import data_table, kv_table, section
 
 
@@ -14,6 +15,12 @@ def _rows_from_dict(d: dict, mapping: list) -> list:
 
 
 def generate_pdf(data, filename="audit_report.pdf"):
+    """Default download: Glowix Expert Opinion proforma (client letter format)."""
+    return generate_glowix_expert_opinion_pdf(data, filename)
+
+
+def generate_detailed_pdf(data, filename="audit_report.pdf"):
+    """Internal detailed tabular audit PDF (legacy software report layout)."""
     doc = SimpleDocTemplate(
         filename,
         pagesize=A4,
