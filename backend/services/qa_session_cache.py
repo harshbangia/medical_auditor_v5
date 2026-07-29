@@ -1,9 +1,12 @@
 """Durable follow-up QA session cache.
 
-Ask-a-question used an in-memory dict only, so any backend restart (deploy,
-OOM, systemd bounce) made clients see "Session expired" even with a valid
-session_id. This module keeps a process-local memory cache and a disk snapshot
-of the serializable fields, then rebuilds FAISS guideline stores on demand.
+Ask-a-question needs the extracted case text + guideline names after the audit
+finishes. Reviewers often Ask 30–90+ minutes later; in-memory (and even local
+disk) entries disappear when the API process restarts or the EC2 disk fills.
+
+Lookup order: memory → local disk → PostgreSQL.
+Persist order: memory + disk + PostgreSQL.
+Default TTL: 7 days (QA_SESSION_TTL_HOURS).
 """
 
 from __future__ import annotations
@@ -13,6 +16,7 @@ import logging
 import os
 import threading
 import time
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from backend.config import ROOT_DIR, env
@@ -24,8 +28,9 @@ GuidelineStore = Tuple[str, Any, List[str]]
 _LOCK = threading.RLock()
 _MEMORY: Dict[str, dict] = {}
 
-TTL_SECONDS = int(env("QA_SESSION_TTL_HOURS", "48") or "48") * 3600
-MAX_DISK_SESSIONS = int(env("QA_SESSION_MAX_DISK", "200") or "200")
+# 7 days — long enough for manual report review + multi-day reopen from history.
+TTL_SECONDS = int(env("QA_SESSION_TTL_HOURS", "168") or "168") * 3600
+MAX_DISK_SESSIONS = int(env("QA_SESSION_MAX_DISK", "500") or "500")
 DISK_DIR = os.path.join(
     str(ROOT_DIR),
     env("QA_SESSION_DIR", "data/qa_sessions") or "data/qa_sessions",
@@ -69,7 +74,7 @@ def _prune_disk(now: Optional[float] = None) -> None:
         logger.warning("QA session disk prune failed: %s", exc)
 
 
-def _serialize_for_disk(payload: dict) -> dict:
+def _serialize_payload(payload: dict) -> dict:
     """Persist only JSON-safe fields; FAISS indexes are rebuilt on load."""
     return {
         "case_text": payload.get("case_text") or "",
@@ -87,7 +92,7 @@ def _write_disk(session_id: str, payload: dict) -> None:
         path = _path(session_id)
         tmp = f"{path}.tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(_serialize_for_disk(payload), fh)
+            json.dump(_serialize_payload(payload), fh)
         os.replace(tmp, path)
         _prune_disk()
     except OSError as exc:
@@ -119,6 +124,75 @@ def _read_disk(session_id: str) -> Optional[dict]:
         return None
 
 
+def _write_db(session_id: str, payload: dict) -> None:
+    """Primary durable store — survives API restarts and local disk cleanup."""
+    try:
+        from backend.db.database import SessionLocal
+        from backend.db.models import QaSession
+
+        serial = _serialize_payload(payload)
+        db = SessionLocal()
+        try:
+            row = db.query(QaSession).filter(QaSession.session_id == session_id).first()
+            now = datetime.utcnow()
+            if row is None:
+                row = QaSession(session_id=session_id, created_at=now)
+                db.add(row)
+            row.case_text = serial["case_text"]
+            row.guidelines_json = json.dumps(serial["guidelines"])
+            row.guideline = serial["guideline"] or None
+            row.updated_at = now
+            # Opportunistic prune of expired rows
+            cutoff = now - timedelta(seconds=TTL_SECONDS)
+            db.query(QaSession).filter(QaSession.created_at < cutoff).delete(
+                synchronize_session=False
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+    except Exception as exc:
+        logger.warning("QA session DB save failed for %s: %s", session_id, exc)
+
+
+def _read_db(session_id: str) -> Optional[dict]:
+    try:
+        from backend.db.database import SessionLocal
+        from backend.db.models import QaSession
+
+        db = SessionLocal()
+        try:
+            row = db.query(QaSession).filter(QaSession.session_id == session_id).first()
+            if row is None or not row.case_text:
+                return None
+            created = row.created_at or row.updated_at
+            if created and datetime.utcnow() - created > timedelta(seconds=TTL_SECONDS):
+                db.delete(row)
+                db.commit()
+                return None
+            try:
+                guidelines = json.loads(row.guidelines_json or "[]")
+            except json.JSONDecodeError:
+                guidelines = []
+            if not isinstance(guidelines, list):
+                guidelines = []
+            return {
+                "case_text": row.case_text,
+                "guidelines": guidelines,
+                "guideline": row.guideline or "",
+                "images": [],
+                "guideline_stores": [],
+                "created_at": created.timestamp() if created else time.time(),
+            }
+        finally:
+            db.close()
+    except Exception as exc:
+        logger.warning("QA session DB load failed for %s: %s", session_id, exc)
+        return None
+
+
 def rebuild_guideline_stores(guidelines: List[str]) -> List[GuidelineStore]:
     """Rebuild FAISS stores from guideline filenames (uses .rag_cache when warm)."""
     from backend.rag.rag_manager import get_or_create_index
@@ -136,8 +210,24 @@ def rebuild_guideline_stores(guidelines: List[str]) -> List[GuidelineStore]:
     return stores
 
 
+def _ensure_stores(entry: dict) -> dict:
+    stores = entry.get("guideline_stores") or []
+    if not stores and entry.get("index") is not None:
+        stores = [(entry.get("guideline") or "", entry["index"], entry["chunks"])]
+        entry["guideline_stores"] = stores
+
+    if not stores:
+        names = list(entry.get("guidelines") or [])
+        if not names and entry.get("guideline"):
+            names = [str(entry["guideline"])]
+        # Rebuild outside the caller’s critical path when possible; still sync here.
+        stores = rebuild_guideline_stores(names)
+        entry["guideline_stores"] = stores
+    return entry
+
+
 def put(session_id: str, payload: dict) -> None:
-    """Store a QA session in memory and on disk."""
+    """Store a QA session in memory, disk, and PostgreSQL."""
     if not session_id:
         return
     entry = dict(payload)
@@ -145,6 +235,8 @@ def put(session_id: str, payload: dict) -> None:
     with _LOCK:
         _MEMORY[session_id] = entry
         _write_disk(session_id, entry)
+    # DB write outside memory lock (can be slower).
+    _write_db(session_id, entry)
 
 
 def get(session_id: str) -> Optional[dict]:
@@ -152,14 +244,10 @@ def get(session_id: str) -> Optional[dict]:
     if not session_id:
         return None
 
+    entry: Optional[dict] = None
     with _LOCK:
         entry = _MEMORY.get(session_id)
-        if entry is None:
-            entry = _read_disk(session_id)
-            if entry is None:
-                return None
-            _MEMORY[session_id] = entry
-        else:
+        if entry is not None:
             created = float(entry.get("created_at") or 0)
             if created and time.time() - created > TTL_SECONDS:
                 _MEMORY.pop(session_id, None)
@@ -167,23 +255,25 @@ def get(session_id: str) -> Optional[dict]:
                     os.remove(_path(session_id))
                 except OSError:
                     pass
-                return None
+                entry = None
+        if entry is None:
+            entry = _read_disk(session_id)
+            if entry is not None:
+                _MEMORY[session_id] = entry
 
-        stores = entry.get("guideline_stores") or []
-        if not stores and entry.get("index") is not None:
-            stores = [(entry.get("guideline") or "", entry["index"], entry["chunks"])]
-            entry["guideline_stores"] = stores
-
-        if not stores:
-            names = list(entry.get("guidelines") or [])
-            if not names and entry.get("guideline"):
-                names = [str(entry["guideline"])]
-            stores = rebuild_guideline_stores(names)
-            entry["guideline_stores"] = stores
-            # Keep rebuilt stores in memory only (not disk).
+    if entry is None:
+        entry = _read_db(session_id)
+        if entry is None:
+            return None
+        with _LOCK:
             _MEMORY[session_id] = entry
+            _write_disk(session_id, entry)
 
-        return entry
+    # FAISS rebuild can be slow — do not hold _LOCK.
+    entry = _ensure_stores(entry)
+    with _LOCK:
+        _MEMORY[session_id] = entry
+    return entry
 
 
 def clear_memory() -> None:

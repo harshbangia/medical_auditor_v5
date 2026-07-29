@@ -24,7 +24,7 @@ from backend.auth import (
 )
 
 from backend.db.database import SessionLocal, engine
-from backend.db.models import AuditReport, Base
+from backend.db.models import AuditReport, Base, QaSession  # noqa: F401 — QaSession for create_all
 from backend.db.schema_upgrade import upgrade_schema
 from backend.services.audit_store import (
     create_user_account,
@@ -358,9 +358,9 @@ async def audit(
             raise HTTPException(
                 status_code=404,
                 detail=(
-                    "Ask session is no longer available. "
-                    "This usually happens after a server restart or when opening an old report. "
-                    "Re-run the audit to enable follow-up questions."
+                    "Ask session is no longer available for this report. "
+                    "Sessions are kept for 7 days; if this is a newer audit, "
+                    "re-run once to refresh Ask, or contact support if it keeps happening."
                 ),
             )
 

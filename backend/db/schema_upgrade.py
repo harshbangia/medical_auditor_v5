@@ -20,6 +20,17 @@ _LEGACY_ALTER_STATEMENTS = (
     "ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS file_count INTEGER DEFAULT 0",
     "ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT 'completed'",
     "ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP",
+    """
+    CREATE TABLE IF NOT EXISTS qa_sessions (
+        session_id VARCHAR PRIMARY KEY,
+        case_text TEXT NOT NULL,
+        guidelines_json TEXT,
+        guideline VARCHAR,
+        created_at TIMESTAMP,
+        updated_at TIMESTAMP
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_qa_sessions_created_at ON qa_sessions (created_at)",
 )
 
 

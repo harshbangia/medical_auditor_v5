@@ -52,3 +52,16 @@ class AuditReport(Base):
     completed_at = Column(DateTime, nullable=True)
 
     user = relationship("User", back_populates="audit_reports")
+
+
+class QaSession(Base):
+    """Durable follow-up Ask context keyed by audit session_id."""
+
+    __tablename__ = "qa_sessions"
+
+    session_id = Column(String, primary_key=True)
+    case_text = Column(Text, nullable=False)
+    guidelines_json = Column(Text, nullable=True)
+    guideline = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
