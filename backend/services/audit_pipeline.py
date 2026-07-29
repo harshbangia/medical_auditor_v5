@@ -446,7 +446,7 @@ def run_full_audit(
 
         session_id = str(uuid4())
         first_name, first_index, first_chunks = guideline_stores[0]
-        global_cache[session_id] = {
+        session_payload = {
             "case_text": case_text,
             "images": images,
             "guidelines": guideline_names,
@@ -455,6 +455,13 @@ def run_full_audit(
             "index": first_index,
             "chunks": first_chunks,
         }
+        # Prefer durable cache (survives process restart); fall back to in-memory dict.
+        try:
+            from backend.services import qa_session_cache
+            qa_session_cache.put(session_id, session_payload)
+        except Exception:
+            if isinstance(global_cache, dict):
+                global_cache[session_id] = session_payload
         result["session_id"] = session_id
         progress("done", 100, f"Completed in {time.time() - started:.0f}s")
         return result

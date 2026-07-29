@@ -1,4 +1,5 @@
 .rag_cache/
+data/qa_sessions/
 .env
 __pycache__/
 *.pyc

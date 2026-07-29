@@ -40,6 +40,7 @@ async function handle<T>(res: Response): Promise<T> {
       (body as { detail?: string }).detail ||
       (body as { error?: string }).error ||
       res.statusText;
+    // Prefer server detail for ask-session misses (404 "Ask session…") over generic text.
     throw new ApiError(res.status, detail || "Request failed", detail);
   }
 

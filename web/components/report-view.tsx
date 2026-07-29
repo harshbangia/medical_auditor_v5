@@ -458,7 +458,13 @@ export function ReportView({
                   onReportChange?.(nextReport);
                   sessionStorage.setItem("last_audit_report", JSON.stringify(nextReport));
                 } catch (err) {
-                  setAskError(err instanceof Error ? err.message : "Failed to ask question");
+                  const msg =
+                    err instanceof Error ? err.message : "Failed to ask question";
+                  setAskError(
+                    /session|no longer available|re-run/i.test(msg)
+                      ? msg
+                      : msg || "Failed to ask question",
+                  );
                 } finally {
                   setAsking(false);
                 }

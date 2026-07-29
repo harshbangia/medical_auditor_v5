@@ -41,8 +41,10 @@ from backend.rag.guideline_retriever import search_across_guidelines
 from backend.services.s3_utils import guidelines_cache
 from backend.services.audit_jobs import create_job, get_job, run_job_in_background
 from backend.services.audit_pipeline import run_job_audit
+from backend.services import qa_session_cache
 
-GLOBAL_CACHE = {}
+# Back-compat alias: pipeline still receives a dict-like put target via helpers.
+GLOBAL_CACHE = qa_session_cache._MEMORY
 
 import logging
 import time
@@ -330,20 +332,41 @@ async def audit(
     _audit_log(request_id, f"guidelines received: {guidelines}")
     _audit_log(request_id, f"has authorization header: {bool(authorization)}")
     # =========================
-    # ⚡ FAST QA MODE (NO OCR)
+    # AUTH (required for audit + follow-up QA)
+    # =========================
+    if not authorization:
+        _audit_log(request_id, "missing Authorization header")
+        raise HTTPException(status_code=401, detail="Missing token")
+
+    token = _extract_bearer_token(authorization)
+    if not token:
+        _audit_log(request_id, "malformed Authorization header")
+        raise HTTPException(status_code=401, detail="Malformed Authorization header")
+    payload = verify_token(token)
+    _audit_log(request_id, "token parsed; verifying")
+    if not payload:
+        _audit_log(request_id, "invalid or expired token")
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    # =========================
+    # ⚡ FAST QA MODE (NO OCR) — durable session cache
     # =========================
     if question and session_id:
-
-        cached = GLOBAL_CACHE.get(session_id)
-
+        cached = qa_session_cache.get(session_id)
         if not cached:
             _audit_log(request_id, f"qa mode cache miss for session_id={session_id}")
-            raise HTTPException(status_code=404, detail="Session expired")
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "Ask session is no longer available. "
+                    "This usually happens after a server restart or when opening an old report. "
+                    "Re-run the audit to enable follow-up questions."
+                ),
+            )
 
         _audit_log(request_id, "fast QA mode (no OCR)")
-
         case_text = cached["case_text"]
-        images = cached["images"]
+        images = cached.get("images") or []
         stores = cached.get("guideline_stores") or []
         if not stores and cached.get("index") is not None:
             stores = [(cached.get("guideline", ""), cached["index"], cached["chunks"])]
@@ -365,22 +388,6 @@ async def audit(
             f"fast QA completed; response keys={list(result.keys()) if isinstance(result, dict) else type(result)}"
         )
         return result
-    # =========================
-    # AUTH (KEEP SAME)
-    # =========================
-    if not authorization:
-        _audit_log(request_id, "missing Authorization header")
-        raise HTTPException(status_code=401, detail="Missing token")
-
-    token = _extract_bearer_token(authorization)
-    if not token:
-        _audit_log(request_id, "malformed Authorization header")
-        raise HTTPException(status_code=401, detail="Malformed Authorization header")
-    payload = verify_token(token)
-    _audit_log(request_id, "token parsed; verifying")
-    if not payload:
-        _audit_log(request_id, "invalid or expired token")
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
 
     try:
         if not files:
