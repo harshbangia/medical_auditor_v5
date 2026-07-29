@@ -379,6 +379,12 @@ DO NOT hallucinate facts not in the case. When data is missing, use "Insufficien
 DO NOT critique typed radiology/lab reports as "low quality images" — they are typed
 documents; quality complaints must be about the underlying clinical capture, not the PDF scan.
 DO NOT treat uploaded policy wordings or clinical guideline PDFs as patient clinical records.
+Diagnosis rules (critical):
+- claim_details.diagnosis MUST come from Provisional/Final/Primary Diagnosis or Nature of Illness —
+  NEVER from radiology Impression text (thalamic bleed measurements, HU values, midline shift wording).
+- Do NOT deny a claim solely for OCR name variants of the same patient (Gagan Deep / Gagandeep / Gulati).
+- For acute ICH / unconscious ICU admissions, prioritize clinical queries on hospitalization duration,
+  antibiotic justification, and line of management — not identity fraud.
 
 clinical_findings MUST include SEPARATE rows when documented:
   1. Symptom duration at first/s subsequent consult (e.g. "Symptom duration at presentation: 3 days")

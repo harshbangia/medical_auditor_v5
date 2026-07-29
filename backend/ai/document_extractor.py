@@ -107,12 +107,19 @@ Return ONLY JSON:
 Rules:
 - Extract ONLY what THIS document explicitly states. Use "" or [] if not in this file.
 - Do NOT infer from other documents. Do NOT guess patient name or diagnosis.
+- diagnosis: ONLY from labeled Provisional / Final / Primary Diagnosis fields (or Nature of Illness on preauth).
+  NEVER copy radiology Impression / Findings text (e.g. "Right Thalamogeniculate bleed…") into diagnosis.
+  For radiology/lab reports leave diagnosis "".
 - age: years only as a number 1–120. From "49 Y 0 M 0 D" or "49Y/M" use "49". Never invent ages like 149.
 - patient_name: prefer typed Patient Name / UHID banner. Do not split names ("GaGa DEEP").
 - hospital: full facility name from letterhead. Never "Certified Hospital" / ISO / NABH alone.
+  Never OCR garbage like "te provide canteations… hospital".
 - policy_number: labeled Policy No / Insured ID only. UHID/IPD/LMH… is NOT a policy number.
 - procedures: CURRENT admission procedures only. H/O / Past History surgeries (e.g. H/O TURP) go in notable_findings, NOT procedures.
+  Do NOT list imaging studies (NCCT HEAD, CT scan) as surgical procedures unless an operation was performed.
 - bill_amount: labeled grand total / sum total expected cost only (include Rs.). Ignore bare "20" from drug strengths.
+- summary / notable_findings: ONLY facts literally present in THIS file — never invent diagnoses (e.g. meningioma)
+  that are not written in the document text.
 - summary: 2-3 factual sentences about what this specific document contains.
 - notable_findings: audit-relevant facts stated in this file (with values if labs/imaging).
 - medications: brand/generic names as written in this document only.

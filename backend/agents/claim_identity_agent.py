@@ -370,11 +370,28 @@ def apply_claim_identity_to_facts(
     if identity.get("hospital"):
         claim["hospital"] = identity["hospital"]
     if identity.get("bill_amount"):
-        claim["total_hospital_bill"] = identity["bill_amount"]
+        # Prefer larger labeled totals (preauth Sum Total) over smaller crumbs
+        from backend.utils.demographics_normalizer import normalize_bill_amount
+        cur = normalize_bill_amount(claim.get("total_hospital_bill") or "")
+        new = identity["bill_amount"]
+        def _n(v: str) -> float:
+            try:
+                return float(re.sub(r"[^\d.]", "", str(v).replace(",", "")) or 0)
+            except ValueError:
+                return 0.0
+        if not cur or _n(new) >= _n(cur):
+            claim["total_hospital_bill"] = new
     if identity.get("admission_date") and not claim.get("date_of_admission"):
         claim["date_of_admission"] = identity["admission_date"]
-    if identity.get("diagnosis") and not claim.get("diagnosis"):
-        claim["diagnosis"] = identity["diagnosis"]
+    if identity.get("diagnosis"):
+        # Preauth provisional diagnosis beats radiology impression leftovers
+        cur_dx = str(claim.get("diagnosis") or "")
+        if (
+            not cur_dx
+            or re.search(r"thalamogeniculate|midline\s+shift|impression", cur_dx, re.I)
+        ):
+            claim["diagnosis"] = identity["diagnosis"]
+            claim["provisional_diagnosis"] = identity["diagnosis"]
     if identity.get("procedure") and not claim.get("procedure_or_surgery"):
         claim["procedure_or_surgery"] = identity["procedure"]
 

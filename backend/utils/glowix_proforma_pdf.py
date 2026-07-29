@@ -563,8 +563,19 @@ def generate_glowix_expert_opinion_pdf(data: dict, filename: str = "audit_report
         ("Compliance with Guidelines?", _na(data.get("compliance_verdict"))),
     ], styles))
 
-    # 7. Conclusion
+    # 7. Conclusion / Final audit decision
     story.append(Paragraph("7. CONCLUSION", styles["section"]))
+    recommended = str(
+        data.get("claim_recommended")
+        or data.get("claim_recommendation")
+        or ""
+    ).strip()
+    not_recommended = str(data.get("claim_not_recommended") or "").strip()
+    if recommended or not_recommended:
+        story.append(_kv_block([
+            ("Claim Recommended", _na(recommended or "NA")),
+            ("Claim Not Recommended", _na(not_recommended or ("NA" if recommended.lower() in {"yes", "y"} else ""))),
+        ], styles))
     conclusion = str(
         data.get("inference")
         or data.get("auditor_conclusion")

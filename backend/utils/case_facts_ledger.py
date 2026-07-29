@@ -30,6 +30,9 @@ _DOC_PRIORITY = {
     "other": 10,
 }
 
+# Document types that must NOT supply claim diagnosis (imaging impressions)
+_DX_EXCLUDED_TYPES = frozenset({"radiology", "lab", "lab_report", "bill"})
+
 
 def _doc_priority(doc_type: str) -> int:
     key = (doc_type or "other").strip().lower().replace(" ", "_")
@@ -142,7 +145,15 @@ def build_case_facts_ledger(
         for doc in docs:
             src = doc.get("source_file") or "unknown"
             dtype = doc.get("document_type") or "other"
+            if field == "diagnosis" and (dtype or "").lower().replace(" ", "_") in _DX_EXCLUDED_TYPES:
+                continue
             val = doc.get(field) or ""
+            if field == "diagnosis" and re.search(
+                r"thalamogeniculate|midline\s+shift|peri[\s-]?hemorrhagic|hu\s*:",
+                str(val),
+                re.I,
+            ):
+                continue
             if not _is_empty(val):
                 rows.append((str(val).strip(), src, dtype))
         return rows

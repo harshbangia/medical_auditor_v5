@@ -127,6 +127,8 @@ _CLAIM_PATTERNS = [
         r"(?:claim|incident)[^\n]{0,24}?\b(20\d{2}\d{9}(?:\.[A-Z0-9]{1,4})?)\b",
         re.I,
     ),
+    # Unlabeled but distinctive 13-digit insurer claim IDs (e.g. 2025111700184)
+    re.compile(r"\b(20\d{11})\b"),
 ]
 _MEMBER_RE = re.compile(
     r"member\s*(?:code|id|no|number)?\s*[:.]?\s*([A-Z0-9][A-Z0-9\-/]{4,})",

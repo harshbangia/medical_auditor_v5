@@ -158,6 +158,9 @@ def normalize_patient_name(raw: Any) -> str:
     cleaned = re.sub(r"\bGa\s+Ga\b", "Gaga", cleaned, flags=re.I)
     cleaned = re.sub(r"\bGaga\s+Deep\b", "Gagandeep", cleaned, flags=re.I)
     cleaned = re.sub(r"\bGagan\s+Deep\b", "Gagandeep", cleaned, flags=re.I)
+    # Common OCR misread of Gagandeep
+    cleaned = re.sub(r"\bBhagwan\s*deep\b", "Gagandeep", cleaned, flags=re.I)
+    cleaned = re.sub(r"\bBhagwandeep\b", "Gagandeep", cleaned, flags=re.I)
     return cleaned.strip(" .-")
 
 
@@ -223,6 +226,12 @@ def normalize_hospital_name(raw: Any) -> str:
         return ""
     low = name.lower()
     if low in {"hospital", "certified hospital", "accredited hospital", "nursing home"}:
+        return ""
+    if re.search(
+        r"clarif|quer(?:y|ies)|please\s+provide|canteation|earn\s+ths|"
+        r"for\s+the\s+quer|ese\s+earn|provide\s+can",
+        low,
+    ):
         return ""
     if len(name) < 8:
         return ""

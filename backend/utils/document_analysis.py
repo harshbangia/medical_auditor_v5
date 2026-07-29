@@ -117,14 +117,40 @@ def merge_document_analysis_into_result(
             if isinstance(d, dict)
         }
         for row in rows:
-            extra = summary_by_file.get(row.get("document") or "")
+            fname = row.get("document") or ""
+            extra = summary_by_file.get(fname)
             if not extra:
                 continue
-            if extra.get("summary"):
-                row["key_content"] = extra["summary"]
+            blob = _block_for_file(case_text, fname)
+            summary = str(extra.get("summary") or "").strip()
+            # Drop LLM-invented diagnoses not present in the source text (e.g. meningioma on OT notes)
+            if summary and _summary_grounded(summary, blob):
+                row["key_content"] = summary
             nf = extra.get("notable_findings") or []
-            if nf:
-                row["audit_use"] = "; ".join(str(x) for x in nf[:4])
+            grounded_nf = [
+                str(x) for x in nf[:4]
+                if str(x).strip() and _summary_grounded(str(x), blob)
+            ]
+            if grounded_nf:
+                row["audit_use"] = "; ".join(grounded_nf)
     if rows:
         result["document_analysis"] = rows
     return result
+
+
+_HALLUCINATION_DX_RE = re.compile(
+    r"\b(?:meningioma|glioma|metastasis|aneurysm\s+clip|craniotomy\s+for\s+tumor)\b",
+    re.I,
+)
+
+
+def _summary_grounded(summary: str, source_blob: str) -> bool:
+    """Reject summaries that invent diagnoses absent from the OCR'd source page."""
+    if not summary:
+        return False
+    blob = source_blob or ""
+    for m in _HALLUCINATION_DX_RE.finditer(summary):
+        term = m.group(0)
+        if term.lower() not in blob.lower():
+            return False
+    return True

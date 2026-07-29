@@ -545,7 +545,22 @@ def _looks_like_ocr_garbage(val: str) -> bool:
     if clean / max(len(v), 1) < 0.82:
         return True
     words = re.findall(r"[A-Za-z]{3,}", v)
-    return len(words) == 0
+    if len(words) == 0:
+        return True
+    # Query-letter / stamp OCR nonsense ending in "… this hospital"
+    low = v.lower()
+    if re.search(
+        r"clarif|quer(?:y|ies)|please\s+provide|canteation|earn\s+ths|"
+        r"for\s+the\s+quer|ese\s+earn|provide\s+can",
+        low,
+    ):
+        return True
+    # Too few real dictionary-ish tokens relative to length (gibberish OCR)
+    if len(words) >= 4:
+        weird = sum(1 for w in words if not re.search(r"[aeiou]", w, re.I) or len(w) > 14)
+        if weird / len(words) >= 0.45:
+            return True
+    return False
 
 
 def _looks_like_address_not_hospital(val: str) -> bool:
@@ -744,6 +759,55 @@ def _extract_consultation_date(
     return ""
 
 
+_CLINICAL_DX_PATTERNS = [
+    re.compile(
+        r"(?:provisional|final|primary|working)\s+diagnos(?:is|es)\s*[:.\-]?\s*([^\n]{8,120})",
+        re.I,
+    ),
+    re.compile(
+        r"\bdiagnos(?:is|es)\s*(?:\(icd[^\)]*\))?\s*[:.\-]?\s*([^\n]{8,120})",
+        re.I,
+    ),
+    re.compile(
+        r"nature\s+of\s+(?:illness|disease)\s*/?\s*disease\s*with\s+duration\s*[:.\-]?\s*([^\n]{8,120})",
+        re.I,
+    ),
+]
+
+
+def _clean_diagnosis_candidate(raw: str) -> str:
+    val = re.sub(r"\s+", " ", (raw or "").strip(" .-;,"))
+    val = re.split(
+        r"\s+(?:proposed|procedure|surgery|date|investigation|treatment|icd)\b",
+        val,
+        maxsplit=1,
+        flags=re.I,
+    )[0].strip(" .-;,")
+    # Drop radiology-impression phrasing
+    if re.search(
+        r"impression|hu\s*:|midline\s+shift|measuring\s+\d|noted\s+in\s+right|"
+        r"thalamogeniculate|peri[\s-]?hemorrhagic",
+        val,
+        re.I,
+    ):
+        return ""
+    if len(val) < 8 or len(val) > 140:
+        return ""
+    return val
+
+
+def _extract_clinical_diagnosis(text: str, doc_type: str) -> str:
+    """Prefer labeled provisional/final diagnosis — never radiology Impression alone."""
+    if doc_type in ("radiology", "lab_report", "bill", "policy"):
+        return ""
+    for pat in _CLINICAL_DX_PATTERNS:
+        for m in pat.finditer(text or ""):
+            cleaned = _clean_diagnosis_candidate(m.group(1))
+            if cleaned:
+                return cleaned
+    return ""
+
+
 def _extract_facts_for_document(
     fname: str,
     text: str,
@@ -770,6 +834,7 @@ def _extract_facts_for_document(
         "total_hospital_bill": _extract_bill_amount(text),
         "nature_of_admission": _infer_nature_of_admission(text, doc_type),
         "room_category_eligible": _extract_room_category(text),
+        "diagnosis": _extract_clinical_diagnosis(text, doc_type),
         "_doc_type": doc_type,
         "_fname": fname,
     }
@@ -820,9 +885,9 @@ def _field_priority(doc_type: str, field: str) -> int:
             "bill": 85,
         },
         "total_hospital_bill": {
-            "bill": 100,
-            "pre_auth": 40,
-            "discharge": 70,
+            "bill": 90,
+            "pre_auth": 95,  # Sum Total Expected Cost on cashless form is authoritative pre-auth
+            "discharge": 85,
             "other": 20,
         },
         "nature_of_admission": {
@@ -830,6 +895,17 @@ def _field_priority(doc_type: str, field: str) -> int:
             "pre_auth": 95,
             "clinical": 80,
             "query_letter": 90,
+        },
+        "diagnosis": {
+            "pre_auth": 100,
+            "discharge": 95,
+            "indoor_case": 90,
+            "clinical": 85,
+            "query_letter": 40,
+            "radiology": 5,
+            "lab_report": 0,
+            "bill": 0,
+            "other": 20,
         },
         "room_category_eligible": {
             "pre_auth": 90,
@@ -859,6 +935,31 @@ def _pick_best_candidate(
     )
     if not ranked:
         return "", ""
+    value, _prio, fname, doc_type = ranked[0]
+    return value, _source_label(fname, doc_type)
+
+
+def _bill_numeric(val: str) -> float:
+    digits = re.sub(r"[^\d.]", "", str(val or "").replace(",", ""))
+    try:
+        return float(digits) if digits else 0.0
+    except ValueError:
+        return 0.0
+
+
+def _pick_best_bill_amount(
+    candidates: List[Tuple[str, int, str, str]],
+) -> Tuple[str, str]:
+    """Prefer larger labeled totals (preauth Sum Total) over smaller partial bills."""
+    viable = [(v, p, fname, doc_type) for v, p, fname, doc_type in candidates if v]
+    if not viable:
+        return "", ""
+    # Score = doc priority + amount bonus (so 1,33,000 beats 53,000 even from bill doc)
+    ranked = sorted(
+        viable,
+        key=lambda x: (x[1] + min(_bill_numeric(x[0]) / 1000.0, 200), _bill_numeric(x[0])),
+        reverse=True,
+    )
     value, _prio, fname, doc_type = ranked[0]
     return value, _source_label(fname, doc_type)
 
@@ -1144,6 +1245,7 @@ def enrich_claim_facts(
         "nature_of_admission": "",
         "room_category_eligible": "",
         "total_hospital_bill": "",
+        "diagnosis": "",
         "date_provenance": provenance,
         "all_document_dates": all_document_dates,
         "date_discrepancies": discrepancies,
@@ -1158,12 +1260,15 @@ def enrich_claim_facts(
         result[field] = value
         result[f"{field}_source"] = source
 
-    for field in ("hospital", "nature_of_admission", "room_category_eligible", "total_hospital_bill"):
+    for field in ("hospital", "nature_of_admission", "room_category_eligible", "total_hospital_bill", "diagnosis"):
         candidates = [
             (facts.get(field, ""), _field_priority(doc_type, field), fname, doc_type)
             for fname, facts, doc_type in per_source
         ]
-        value, _source = _pick_best_candidate(candidates)
+        if field == "total_hospital_bill":
+            value, _source = _pick_best_bill_amount(candidates)
+        else:
+            value, _source = _pick_best_candidate(candidates)
         result[field] = value
 
     _sanitize_consultation_date(result, per_source, case_text, reference_year)
@@ -1315,8 +1420,24 @@ def merge_claim_details_into_result(result: dict, facts: Dict[str, Any]) -> dict
         fin["total_hospital_bill"] = bill_total
 
     diagnosis = facts.get("diagnosis", "")
-    if diagnosis and not str(claim.get("diagnosis") or "").strip():
-        claim["diagnosis"] = diagnosis
+    if diagnosis:
+        current_dx = str(claim.get("diagnosis") or "").strip()
+        if not current_dx:
+            claim["diagnosis"] = diagnosis
+        elif re.search(
+            r"thalamogeniculate|midline\s+shift|impression|peri[\s-]?hemorrhagic|hu\s*:",
+            current_dx,
+            re.I,
+        ) and not re.search(
+            r"thalamogeniculate|midline\s+shift|impression",
+            diagnosis,
+            re.I,
+        ):
+            claim["diagnosis"] = diagnosis
+        if not str(claim.get("provisional_diagnosis") or "").strip():
+            claim["provisional_diagnosis"] = claim.get("diagnosis") or diagnosis
+        if not str(claim.get("final_diagnosis") or "").strip():
+            claim["final_diagnosis"] = claim.get("diagnosis") or diagnosis
 
     if claim.get("date_of_admission") and not claim.get("date_of_discharge"):
         gaps = result.setdefault("documentation_gaps", [])
