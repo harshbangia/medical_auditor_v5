@@ -25,7 +25,7 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!user) return;
     getHistory()
-      .then(setHistory)
+      .then((rows) => setHistory(Array.isArray(rows) ? rows : []))
       .catch(() => setHistory([]))
       .finally(() => setFetching(false));
   }, [user]);
@@ -56,8 +56,11 @@ export default function DashboardPage() {
       <div className="grid gap-4 sm:grid-cols-3">
         {[
           { label: "Total audits", value: history.length },
-          { label: "This session", value: user.email.split("@")[0] },
-          { label: "Role", value: user.role },
+          {
+            label: "This session",
+            value: (user.email || "user").split("@")[0] || "user",
+          },
+          { label: "Role", value: user.role || "user" },
         ].map((stat) => (
           <Card key={stat.label}>
             <CardContent className="pt-6">
