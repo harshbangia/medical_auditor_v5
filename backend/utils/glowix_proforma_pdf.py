@@ -37,9 +37,9 @@ _ADDRESS = "543-D, Pace City - II, Sector 37, Gurugram-122001"
 _PHONE = "0124 - 4127700"
 _EMAIL = "Info@glowixhealth.in"
 _WEBSITE = "www.glowixhealth.in"
-_DEFAULT_AUDITOR_NAME = "DR. Virender Nagpal"
-_DEFAULT_AUDITOR_QUAL = "M.S Ortho"
-_DEFAULT_AUDITOR_ROLE = "Advisor"
+_DEFAULT_AUDITOR_NAME = os.getenv("AUDITOR_NAME", "DR. D.V. Saharan")
+_DEFAULT_AUDITOR_QUAL = os.getenv("AUDITOR_QUALIFICATION", "MD (AIIMS)")
+_DEFAULT_AUDITOR_ROLE = os.getenv("AUDITOR_ROLE", "Advisor")
 
 _RED = colors.HexColor("#C41E3A")
 _BLUE = colors.HexColor("#1E4D8C")

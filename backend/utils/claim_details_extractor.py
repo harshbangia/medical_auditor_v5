@@ -145,7 +145,8 @@ _TOTAL_BILL_PATTERNS = [
     re.compile(
         r"(?:sum\s*total\s*(?:expected\s*)?(?:cost|amount)|"
         r"total\s*(?:hospital\s+)?(?:bill|amount|charges?)|grand\s*total|"
-        r"net\s*(?:amount|payable|bill)|amount\s*(?:claimed|payable|due))\s*[:.]?\s*"
+        r"net\s*(?:amount|payable|bill)|amount\s*(?:claimed|payable|due)|"
+        r"claimed\s*amount|total\s*billed\s*amount|final\s*bill(?:\s*amount)?)\s*[:.]?\s*"
         r"(?:rs\.?|inr|₹)?\s*([\d,]+(?:\.\d{1,2})?)",
         re.I,
     ),
@@ -153,6 +154,11 @@ _TOTAL_BILL_PATTERNS = [
         r"(?:estimated\s+(?:cost|amount|expense)|total\s+(?:cost|amount)\s+(?:of\s+)?"
         r"(?:hospitalization|treatment|package)|package\s+(?:cost|amount|charges?))"
         r"\s*[:.]?\s*(?:rs\.?|inr|₹)?\s*([\d,]+(?:\.\d{1,2})?)",
+        re.I,
+    ),
+    # Assessor finance tables: "Final Bill ... 42130"
+    re.compile(
+        r"final\s*bill\s*[^\n]{0,40}?([\d]{4,7}(?:\.\d{1,2})?)",
         re.I,
     ),
 ]
@@ -950,18 +956,36 @@ def _bill_numeric(val: str) -> float:
 def _pick_best_bill_amount(
     candidates: List[Tuple[str, int, str, str]],
 ) -> Tuple[str, str]:
-    """Prefer larger labeled totals (preauth Sum Total) over smaller partial bills."""
+    """Prefer larger labeled totals (preauth Sum Total / final bill) over partial pharmacy bills."""
     viable = [(v, p, fname, doc_type) for v, p, fname, doc_type in candidates if v]
     if not viable:
         return "", ""
-    # Score = doc priority + amount bonus (so 1,33,000 beats 53,000 even from bill doc)
-    ranked = sorted(
-        viable,
-        key=lambda x: (x[1] + min(_bill_numeric(x[0]) / 1000.0, 200), _bill_numeric(x[0])),
-        reverse=True,
-    )
-    value, _prio, fname, doc_type = ranked[0]
-    return value, _source_label(fname, doc_type)
+
+    def _score(item: Tuple[str, int, str, str]) -> Tuple[float, float]:
+        value, prio, fname, doc_type = item
+        amt = _bill_numeric(value)
+        name = f"{fname} {doc_type}".lower()
+        # Down-rank lone pharmacy slips when a much larger final/hospital bill exists
+        pharmacy_like = bool(re.search(r"pharmacy|chemist|medical\s*store", name))
+        final_like = bool(re.search(r"final\s*bill|hospital\s*bill|pre.?auth|claim|assessor", name))
+        bonus = min(amt / 1000.0, 200)
+        if pharmacy_like and amt < 25000:
+            bonus -= 40
+        if final_like and amt >= 25000:
+            bonus += 30
+        if amt >= 50000:
+            bonus += 20
+        return (prio + bonus, amt)
+
+    ranked = sorted(viable, key=_score, reverse=True)
+    # If top is a small pharmacy total but a candidate ≥ 2× exists, prefer the larger
+    top_val, top_prio, top_fname, top_type = ranked[0]
+    top_amt = _bill_numeric(top_val)
+    for value, prio, fname, doc_type in ranked[1:]:
+        amt = _bill_numeric(value)
+        if amt >= max(top_amt * 2, 25000) and top_amt < 25000:
+            return value, _source_label(fname, doc_type)
+    return top_val, _source_label(top_fname, top_type)
 
 
 def _build_date_provenance(

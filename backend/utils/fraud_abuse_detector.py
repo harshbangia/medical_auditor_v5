@@ -6,6 +6,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from backend.utils.claim_details_extractor import filter_actionable_date_discrepancies
+from backend.utils.clinical_fwa_signals import build_case180_style_findings
 
 
 def _norm(s: str) -> str:
@@ -167,7 +168,16 @@ def detect_fraud_abuse(
             "Cross-check policy schedule sum insured before approval.",
         )
 
-    # 8. LLM-seeded fraud findings (if any)
+    # 8. Pancreatitis / alcohol / multi-hospital / pharmacy FWA (Case 180 style)
+    for item in build_case180_style_findings(text, result):
+        ind = str(item.get("indicator") or "").strip()
+        if not ind:
+            continue
+        if any(_norm(f.get("indicator")) == _norm(ind) for f in findings):
+            continue
+        findings.append(item)
+
+    # 9. LLM-seeded fraud findings (if any)
     for item in result.get("fraud_abuse_findings") or []:
         if not isinstance(item, dict):
             continue

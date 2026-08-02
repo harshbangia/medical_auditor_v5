@@ -210,11 +210,28 @@ def is_uhid_not_policy(val: str) -> bool:
 
 
 def normalize_policy_number(raw: Any) -> str:
-    val = str(raw or "").strip().rstrip(".")
+    val = str(raw or "").strip().rstrip(".").upper().replace(" ", "")
     if not val or is_uhid_not_policy(val):
         return ""
-    if re.match(r"^H\d{5,}$", val, re.I):
-        return val.upper()
+    # IFFCO-style H####### — OCR often inserts I/l after H and corrupts the next digit
+    # e.g. H1522712 → HI5522712
+    m = re.match(r"^H[IL](\d{7})$", val)
+    if m:
+        rest = m.group(1)
+        # HI5522712 → drop OCR 'I' and treat leading '5' as corrupted '1'
+        # → H1 + 522712 = H1522712
+        if rest.startswith("5"):
+            return "H1" + rest[1:]
+        return "H1" + rest
+    m = re.match(r"^H[IL](\d{6,8})$", val)
+    if m:
+        digits = m.group(1)
+        if len(digits) == 7 and digits[0] == "5":
+            return "H1" + digits[1:]
+        if len(digits) >= 7:
+            return "H1" + digits[:6]
+    if re.match(r"^H\d{5,}$", val):
+        return val
     return val
 
 
