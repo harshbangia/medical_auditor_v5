@@ -56,6 +56,18 @@ def parse_assessor_text(text: str, filename: str = "") -> Dict[str, Any]:
         ),
         blob,
     )
+    # OCR often breaks the id across spaces: 2026 0717 00347
+    if not out["claim_number"]:
+        m = re.search(
+            r"(?:claim\s*(?:number|no\.?|incident(?:\s*no\.?)?))\s*[:.]?\s*"
+            r"((?:\d[\d\s]{9,20}\d)(?:\.[A-Za-z0-9]{1,4})?)",
+            blob,
+            re.I,
+        )
+        if m:
+            compact = re.sub(r"\s+", "", m.group(1))
+            if re.fullmatch(r"\d{10,16}(?:\.[A-Za-z0-9]{1,4})?", compact, re.I):
+                out["claim_number"] = compact
     out["sub_claim_number"] = _first(
         re.compile(
             r"(?:sub\s*claim\s*(?:number|no\.?))\s*[:.]?\s*"
@@ -89,6 +101,16 @@ def parse_assessor_text(text: str, filename: str = "") -> Dict[str, Any]:
         ),
         blob,
     )
+    if not out["claimed_amount"]:
+        m = re.search(
+            r"(?:claimed\s*amount|total\s*billed\s*amount)\s*[:.]?\s*(?:rs\.?|inr|₹)?\s*"
+            r"\n\s*([\d,]+(?:\.\d+)?)",
+            blob,
+            re.I,
+        )
+        if m:
+            out["claimed_amount"] = m.group(1)
+
     out["claim_type"] = _first(
         re.compile(r"claim\s*type\s*[:.]?\s*(reimbursement|cashless)", re.I),
         blob,
@@ -220,24 +242,35 @@ def merge_assessor_from_chunks(
         "source_files": [],
     }
     by_file: Dict[str, List[str]] = {}
+    file_is_assessor: Dict[str, bool] = {}
     for ch in chunks or []:
         fname = getattr(ch, "filename", "") or ""
         text = getattr(ch, "text", "") or ""
-        if is_assessor_document(fname, text) or "fwa" in text.lower()[:2000]:
+        strong = is_assessor_document(fname, text)
+        if strong or "fwa" in text.lower()[:2000]:
             by_file.setdefault(fname, []).append(text)
+            file_is_assessor[fname] = file_is_assessor.get(fname, False) or strong
 
-    for fname, parts in by_file.items():
+    # Parse true Assessor PDFs first so claim/policy/amount win over incidental FWA hits
+    ordered = sorted(by_file.items(), key=lambda kv: (0 if file_is_assessor.get(kv[0]) else 1, kv[0]))
+    for fname, parts in ordered:
         parsed = parse_assessor_text("\n".join(parts), fname)
         if not parsed.get("is_assessor") and not parsed.get("fwa_alerts"):
             continue
-        merged["is_assessor"] = True
-        merged["source_files"].append(fname)
+        if parsed.get("is_assessor") or file_is_assessor.get(fname):
+            merged["is_assessor"] = True
+            if fname not in merged["source_files"]:
+                merged["source_files"].append(fname)
         for key in (
             "claim_number", "sub_claim_number", "policy_number", "patient_name",
             "claimed_amount", "claim_type", "hospital", "diagnosis",
         ):
-            if parsed.get(key) and not merged.get(key):
-                merged[key] = parsed[key]
+            val = parsed.get(key) or ""
+            if not val:
+                continue
+            # Assessor file always overwrites; weak FWA-only files only fill blanks
+            if file_is_assessor.get(fname) or not merged.get(key):
+                merged[key] = val
         merged["fwa_alerts"].extend(parsed.get("fwa_alerts") or [])
         merged["finance_bills"].extend(parsed.get("finance_bills") or [])
         merged["identity_mismatches"].extend(parsed.get("identity_mismatches") or [])

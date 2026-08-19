@@ -81,6 +81,8 @@ def build_case_notebook(
     finance_hints: Dict[str, Any] = {}
     if assessor.get("claimed_amount"):
         finance_hints["claimed_amount"] = assessor["claimed_amount"]
+    elif validated.get("claimed_amount"):
+        finance_hints["claimed_amount"] = validated["claimed_amount"]
     if assessor.get("finance_bills"):
         finance_hints["bills"] = assessor["finance_bills"][:30]
         try:
@@ -215,27 +217,51 @@ def apply_notebook_to_result(result: dict, notebook: CaseNotebook) -> dict:
     fin = result.setdefault("financial_review", {})
 
     vid = notebook.validated_ids or {}
-    # Always prefer Assessor claim/policy when present (OCR on other docs is noisier)
+    # Prefer Assessor claim/policy; fall back to repaired corpus IDs (beats bad-year OCR)
     assessor_claim = str(
         notebook.assessor.get("sub_claim_number")
         or notebook.assessor.get("claim_number")
         or ""
     ).strip()
+    chosen_claim = ""
     if assessor_claim:
         root = assessor_claim.split(".", 1)[0]
         if re.fullmatch(r"20\d{11}", root):
-            ins["claim_incident_number"] = root
-    elif vid.get("claim_incident_number"):
-        root = vid["claim_incident_number"].split(".", 1)[0]
-        ins["claim_incident_number"] = root
+            # Still repair if Assessor OCR itself has a bad year but corpus has twin
+            vid_claim = str(vid.get("claim_incident_number") or "").split(".", 1)[0]
+            if (
+                vid_claim
+                and re.fullmatch(r"20\d{11}", vid_claim)
+                and not (2024 <= int(root[:4]) <= 2027)
+                and 2024 <= int(vid_claim[:4]) <= 2027
+            ):
+                chosen_claim = vid_claim
+            else:
+                chosen_claim = root
+    if not chosen_claim and vid.get("claim_incident_number"):
+        chosen_claim = vid["claim_incident_number"].split(".", 1)[0]
+    if chosen_claim and re.fullmatch(r"20\d{11}", chosen_claim):
+        cur = str(ins.get("claim_incident_number") or "").split(".", 1)[0]
+        # Always overwrite empty / bad-year / near-OCR mismatch
+        if (
+            not cur
+            or not re.fullmatch(r"20\d{11}", cur)
+            or not (2024 <= int(cur[:4]) <= 2027)
+            or cur != chosen_claim
+        ):
+            ins["claim_incident_number"] = chosen_claim
 
-    if notebook.assessor.get("policy_number"):
+    assessor_pol = str(notebook.assessor.get("policy_number") or "").strip()
+    chosen_pol = ""
+    if assessor_pol or vid.get("policy_number"):
         from backend.utils.demographics_normalizer import normalize_policy_number
-        pol = normalize_policy_number(notebook.assessor["policy_number"])
-        if pol:
-            ins["policy_number"] = pol
-    elif vid.get("policy_number"):
-        ins["policy_number"] = vid["policy_number"]
+        from backend.notebook.validators import repair_policy_ocr_candidates
+        chosen_pol = repair_policy_ocr_candidates(
+            [assessor_pol, str(vid.get("policy_number") or ""), str(ins.get("policy_number") or "")],
+            preferred=assessor_pol,
+        ) or normalize_policy_number(assessor_pol or vid.get("policy_number") or "")
+    if chosen_pol:
+        ins["policy_number"] = chosen_pol
 
     # Fix insurer hallucinations (e.g. SBI) when IFFCO is in the pack
     corpus_hint = " ".join(

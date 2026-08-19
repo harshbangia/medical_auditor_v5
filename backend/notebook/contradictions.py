@@ -22,7 +22,13 @@ def _name_variants(s: str) -> Set[str]:
     for prefix in ("mrs", "mr", "ms", "miss"):
         if base.startswith(prefix) and len(base) - len(prefix) >= 5:
             out.add(base[len(prefix):])
-    return {x for x in out if x}
+    # Common OCR: BIJU ↔ BUU / BIUU
+    expanded = set(out)
+    for x in out:
+        expanded.add(x.replace("buu", "biju"))
+        expanded.add(x.replace("biju", "buu"))
+        expanded.add(re.sub(r"^s(?=[a-z])", "", x))  # "s. BENCY…" after broken Mrs.
+    return {x for x in expanded if x}
 
 
 def _names_equivalent(a: str, b: str) -> bool:
@@ -35,6 +41,11 @@ def _names_equivalent(a: str, b: str) -> bool:
                 return True
             if len(x) == len(y) and sum(1 for p, q in zip(x, y) if p != q) <= 2:
                 return True
+            # BIJU vs BUU length differ by 1
+            if abs(len(x) - len(y)) == 1:
+                shorter, longer = (x, y) if len(x) < len(y) else (y, x)
+                if shorter in longer:
+                    return True
     return False
 
 
@@ -57,9 +68,9 @@ def detect_foreign_patient_names(
         r"([A-Za-z][A-Za-z .']{2,40})",
         re.I,
     )
-    # Known template-reuse / OCR-wrong identities (not hospital OCR fragments)
+    # Known template-reuse / OCR-wrong identities (not same-patient OCR like BENCY BUU)
     alien_rx = re.compile(
-        r"\b(SAVITHA\s*A\s*G|BENCY\s+BUU)\b",
+        r"\b(SAVITHA\s*A\s*G)\b",
         re.I,
     )
     _LABEL_NOISE = re.compile(

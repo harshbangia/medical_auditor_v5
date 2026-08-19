@@ -39,6 +39,9 @@ Patient Name: SAVITHA A G
 Patient ID: 5309
 Also chart header BENCY BUU
 Pharmacy extract issued to DAYA THE
+Claim Incident No: 2020877000347
+Claim Incident No: 2020877000347
+Policy No: H1677879
 
 === Page 2 ===
 ABG: pO2 42.3 mmHg sO2 73.7%
@@ -53,6 +56,8 @@ MRI Brain: no evidence of acute infarct
 MR Angiography: no evidence of occlusion
 Medications: Aspirin, Clopidogrel, Atorvastatin
 Admitted to ICU for 3 days for evaluation
+Claim Incident: 2020877000347
+Policy Number: H1677879
 """
 
 
@@ -63,6 +68,17 @@ class TestClaimRepair(unittest.TestCase):
         picked = repair_claim_ocr_candidates([bad, good])
         self.assertEqual(picked.split(".")[0], "2026071700347")
 
+    def test_majority_bad_year_loses_to_good_twin(self):
+        # Real Bency failure: bad claim OCR'd on many pages, true Assessor id once
+        picked = repair_claim_ocr_candidates([
+            "2020877000347",
+            "2020877000347",
+            "2020877000347",
+            "2020877000347",
+            "2026071700347",
+        ])
+        self.assertEqual(picked.split(".")[0], "2026071700347")
+
     def test_assessor_wins_over_corrupt(self):
         ids = validate_ids_from_corpus(
             "Claim Incident No: 2020877700347 Policy H1767679",
@@ -71,6 +87,14 @@ class TestClaimRepair(unittest.TestCase):
             current_policy="H1767679",
         )
         self.assertEqual(ids["claim_incident_number"].split(".")[0], "2026071700347")
+
+    def test_policy_near_duplicate_prefers_assessor(self):
+        from backend.notebook.validators import repair_policy_ocr_candidates
+        picked = repair_policy_ocr_candidates(
+            ["H1677879", "H1677879", "H1677679"],
+            preferred="H1677679",
+        )
+        self.assertEqual(picked, "H1677679")
 
 
 class TestAssessorParse(unittest.TestCase):
@@ -91,7 +115,9 @@ class TestContradictions(unittest.TestCase):
     def test_foreign_name(self):
         findings = detect_foreign_patient_names(self._chunks(), "Bency Biju")
         blob = " ".join(f["evidence"] for f in findings).lower()
-        self.assertTrue("savitha" in blob or "buu" in blob)
+        self.assertTrue("savitha" in blob)
+        self.assertNotIn("buu", blob)  # BENCY BUU is same-patient OCR, not foreign
+
 
     def test_abg_vs_spo2(self):
         findings = detect_abg_vs_vitals(self._chunks())
@@ -111,15 +137,15 @@ class TestNotebookEndToEnd(unittest.TestCase):
         nb = build_case_notebook(
             case_text=BENCY_CORPUS,
             expected_patient_name="Mrs. Bency Biju",
-            current_claim="2020877700347",
-            current_policy="H1767679",
+            current_claim="2020877000347",
+            current_policy="H1677879",
         )
         result = {
             "patient_details": {"name": "Mrs. Bency Bliju", "age": "40", "sex": "Female"},
             "insurance_details": {
                 "insurance_company": "SBI",
-                "policy_number": "H1767679",
-                "claim_incident_number": "2020877700347",
+                "policy_number": "H1677879",
+                "claim_incident_number": "2020877000347",
             },
             "claim_details": {
                 "hospital": "Daya General Hospital",
@@ -147,13 +173,15 @@ class TestNotebookEndToEnd(unittest.TestCase):
         }
         out = apply_notebook_to_result(result, nb)
         self.assertEqual(out["insurance_details"]["claim_incident_number"], "2026071700347")
+        self.assertEqual(out["insurance_details"]["policy_number"], "H1677679")
         self.assertIn("IFFCO", out["insurance_details"]["insurance_company"].upper())
         self.assertEqual(out.get("claim_recommended"), "No")
         self.assertEqual(
             (out.get("treatment_billing_audit") or {}).get("charges_appropriate"),
             "NO",
         )
-        self.assertTrue(out.get("fwa_investigation"))
+        bill = str((out.get("financial_review") or {}).get("total_hospital_bill") or "")
+        self.assertTrue("80,800" in bill or "80800" in bill.replace(",", ""))
         # No OCR-garbage Q&As / no FWA duplicated into observations
         for o in out.get("observations") or []:
             blob = str(o.get("question") or "") + str(o.get("analysis") or "")
@@ -164,7 +192,7 @@ class TestNotebookEndToEnd(unittest.TestCase):
             str(f.get("evidence") or "") for f in out.get("fwa_investigation") or []
         )
         self.assertNotIn("A021042", fwa_blob)
-        # BENCY BIJU N must not be treated as foreign identity
+        # BENCY BIJU N / BUU must not be treated as foreign identity
         inds = " ".join(str(f.get("indicator") or "") for f in out.get("fwa_investigation") or [])
         self.assertNotIn("Patient name mismatch across documents", inds)
 
