@@ -9,8 +9,33 @@ from backend.notebook.models import NotebookChunk
 
 
 def _norm_name(s: str) -> str:
-    s = re.sub(r"[^a-z]", "", (s or "").lower())
-    return s
+    s = re.sub(r"\b(mrs?|ms|miss|dr)\b\.?", " ", (s or "").lower())
+    return re.sub(r"[^a-z]", "", s)
+
+
+def _name_variants(s: str) -> Set[str]:
+    base = _norm_name(s)
+    out = {base}
+    if len(base) > 6:
+        out.add(base[:-1])  # trailing OCR letter
+    # Drop leading title residue if any slipped through
+    for prefix in ("mrs", "mr", "ms", "miss"):
+        if base.startswith(prefix) and len(base) - len(prefix) >= 5:
+            out.add(base[len(prefix):])
+    return {x for x in out if x}
+
+
+def _names_equivalent(a: str, b: str) -> bool:
+    va, vb = _name_variants(a), _name_variants(b)
+    if not va or not vb:
+        return False
+    for x in va:
+        for y in vb:
+            if x == y or x in y or y in x:
+                return True
+            if len(x) == len(y) and sum(1 for p, q in zip(x, y) if p != q) <= 2:
+                return True
+    return False
 
 
 def detect_foreign_patient_names(
@@ -24,14 +49,22 @@ def detect_foreign_patient_names(
 
     findings: List[Dict[str, Any]] = []
     seen: Set[str] = set()
-    # Capture ALLCAPS or Title names near Patient / Name labels
+    # Labels only — never bare ^name (with re.I it captures "of The Insured")
     name_rx = re.compile(
-        r"(?:patient\s*name|name\s*of\s*patient|pt\.?\s*name|^name)\s*[:.]?\s*"
-        r"(?:mr\.?|mrs\.?|ms\.?)?\s*([A-Z][A-Za-z][A-Za-z .']{2,40})",
-        re.I | re.M,
+        r"(?:patient\s*name|name\s*of\s*(?:the\s+)?(?:patient|insured)|"
+        r"insured\s*name|pt\.?\s*name)\s*[:.\-–—]?\s*"
+        r"(?:mr\.?|mrs\.?|ms\.?)?\s*"
+        r"([A-Za-z][A-Za-z .']{2,40})",
+        re.I,
     )
+    # Known template-reuse / OCR-wrong identities (not hospital OCR fragments)
     alien_rx = re.compile(
-        r"\b(SAVITHA\s*A\s*G|DAYA\s*THE|BENCY\s+BUU)\b",
+        r"\b(SAVITHA\s*A\s*G|BENCY\s+BUU)\b",
+        re.I,
+    )
+    _LABEL_NOISE = re.compile(
+        r"^(?:of\s+the\s+insured|of\s+patient|the\s+insured|patient|insured|"
+        r"hospital|doctor|nursing)\b",
         re.I,
     )
 
@@ -40,7 +73,7 @@ def detect_foreign_patient_names(
         for m in alien_rx.finditer(text):
             alien = re.sub(r"\s+", " ", m.group(1)).strip()
             key = _norm_name(alien)
-            if key in seen or (expected and key in expected):
+            if key in seen or (expected and _names_equivalent(alien, expected_name)):
                 continue
             seen.add(key)
             findings.append({
@@ -62,17 +95,24 @@ def detect_foreign_patient_names(
             })
         for m in name_rx.finditer(text):
             alien = re.sub(r"\s+", " ", m.group(1)).strip()
+            # Truncate at common field separators leaked into OCR capture
+            alien = re.split(r"\s{2,}|\t|:", alien)[0].strip()
             key = _norm_name(alien)
             if len(key) < 5 or key in seen:
                 continue
-            if expected and key != expected and expected not in key and key not in expected:
+            if _LABEL_NOISE.search(alien):
+                continue
+            if expected and _names_equivalent(alien, expected_name):
+                continue
+            if expected and key != expected:
                 # Ignore hospital / doctor labels
-                if re.search(r"hospital|doctor|dr\b|clinic|nursing", alien, re.I):
+                if re.search(r"hospital|doctor|dr\b|clinic|nursing|daya\s+general", alien, re.I):
                     continue
-                # Require substantial difference
-                if abs(len(key) - len(expected)) > 2 or sum(
-                    1 for a, b in zip(key, expected) if a != b
-                ) >= 3:
+                # Require substantial difference (not OCR variants of same person)
+                if not _names_equivalent(alien, expected_name) and (
+                    abs(len(key) - len(expected)) > 2
+                    or sum(1 for a, b in zip(key, expected) if a != b) >= 3
+                ):
                     seen.add(key)
                     findings.append({
                         "category": "identity_fraud",

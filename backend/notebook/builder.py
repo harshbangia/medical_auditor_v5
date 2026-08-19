@@ -152,44 +152,28 @@ def _merge_fwa_into_result(result: dict, findings: List[dict]) -> None:
 
 
 def _seed_notebook_observations(result: dict, notebook: CaseNotebook) -> None:
+    """Clean Ask-noise only. Do NOT duplicate FWA panel into Q&A (looks garbled)."""
     observations = result.get("observations")
     if not isinstance(observations, list):
         observations = []
         result["observations"] = observations
-    existing_q = " ".join(
-        str(o.get("question") or "") for o in observations if isinstance(o, dict)
-    ).lower()
 
-    seeds: List[dict] = []
-    for f in notebook.fwa_findings[:8]:
-        ind = str(f.get("indicator") or "")
-        if not ind or ind.lower() in existing_q:
-            continue
-        cite = f.get("citation") or {}
-        cite_lbl = ""
-        if cite.get("filename"):
-            cite_lbl = f" Source: {cite.get('filename')}"
-            if cite.get("page"):
-                cite_lbl += f" p.{cite['page']}"
-        seeds.append({
-            "question": ind + "?",
-            "answer": "Supported" if str(f.get("severity")).lower() == "high" else "Partially Supported",
-            "analysis": (
-                str(f.get("evidence") or "")
-                + (" " + str(f.get("recommendation") or "") if f.get("recommendation") else "")
-                + cite_lbl
-            ).strip(),
-        })
-        existing_q += " " + ind.lower()
-
-    # Drop contradictory "missing patient/hospital" ask-noise when we have structured data
     cleaned = []
     has_patient = bool((result.get("patient_details") or {}).get("name"))
     has_hospital = bool((result.get("claim_details") or {}).get("hospital"))
+    fwa_inds = {
+        str(f.get("indicator") or "").lower().rstrip("?")
+        for f in (notebook.fwa_findings or [])
+        if isinstance(f, dict)
+    }
     for obs in observations:
         if not isinstance(obs, dict):
             continue
         blob = " ".join(str(obs.get(k) or "") for k in ("question", "answer", "analysis")).lower()
+        q = str(obs.get("question") or "").lower().rstrip("?")
+        # Drop duplicate FWA-as-Q&A seeds
+        if q in fwa_inds or any(ind and ind in q for ind in fwa_inds):
+            continue
         if has_patient and has_hospital and re.search(
             r"lack(?:s|ing)?\s+(?:details\s+on\s+)?patient|missing\s+crucial\s+patient|"
             r"no\s+information\s+on\s+the\s+bill\s+amount|"
@@ -197,8 +181,11 @@ def _seed_notebook_observations(result: dict, notebook: CaseNotebook) -> None:
             blob,
         ):
             continue
+        # Drop mid-OCR garbage answers
+        if re.search(r"hes across document|clinicaLchart|/manipulated diagnostic|SpO02", blob):
+            continue
         cleaned.append(obs)
-    result["observations"] = seeds + cleaned
+    result["observations"] = cleaned
 
 
 def apply_notebook_to_result(result: dict, notebook: CaseNotebook) -> dict:
@@ -228,23 +215,41 @@ def apply_notebook_to_result(result: dict, notebook: CaseNotebook) -> dict:
     fin = result.setdefault("financial_review", {})
 
     vid = notebook.validated_ids or {}
-    if vid.get("claim_incident_number"):
-        cur = str(ins.get("claim_incident_number") or "")
-        new = vid["claim_incident_number"]
-        # Overwrite when empty, invalid year, or near-OCR mismatch
-        if not cur or new.split(".")[0][:4] in {"2025", "2026", "2027"}:
-            if (
-                not cur
-                or cur.split(".")[0][:4] not in {"2025", "2026", "2027"}
-                or cur.split(".")[0] != new.split(".")[0]
-            ):
-                ins["claim_incident_number"] = new.split(".")[0] if "." not in new or len(new) > 16 else new
-                # Prefer root without suffix for proforma Claim Incident No. field
-                root = new.split(".", 1)[0]
-                ins["claim_incident_number"] = root
+    # Always prefer Assessor claim/policy when present (OCR on other docs is noisier)
+    assessor_claim = str(
+        notebook.assessor.get("sub_claim_number")
+        or notebook.assessor.get("claim_number")
+        or ""
+    ).strip()
+    if assessor_claim:
+        root = assessor_claim.split(".", 1)[0]
+        if re.fullmatch(r"20\d{11}", root):
+            ins["claim_incident_number"] = root
+    elif vid.get("claim_incident_number"):
+        root = vid["claim_incident_number"].split(".", 1)[0]
+        ins["claim_incident_number"] = root
 
-    if vid.get("policy_number"):
+    if notebook.assessor.get("policy_number"):
+        from backend.utils.demographics_normalizer import normalize_policy_number
+        pol = normalize_policy_number(notebook.assessor["policy_number"])
+        if pol:
+            ins["policy_number"] = pol
+    elif vid.get("policy_number"):
         ins["policy_number"] = vid["policy_number"]
+
+    # Fix insurer hallucinations (e.g. SBI) when IFFCO is in the pack
+    corpus_hint = " ".join(
+        [
+            str(notebook.assessor.get("source_files") or ""),
+            str((result.get("insurance_details") or {}).get("insurance_company") or ""),
+        ]
+    )
+    cur_ins = str(ins.get("insurance_company") or "")
+    if re.search(r"\bsbi\b", cur_ins, re.I) or len(cur_ins) < 6:
+        # Prefer IFFCO when policy looks like H1####### (IFFCO family health style)
+        pol = str(ins.get("policy_number") or "")
+        if re.match(r"^H\d{7}$", pol) or "iffco" in corpus_hint.lower():
+            ins["insurance_company"] = "IFFCO-Tokio General Insurance Company Limited"
 
     if notebook.assessor.get("hospital") and not claim.get("hospital"):
         claim["hospital"] = notebook.assessor["hospital"]
@@ -286,18 +291,24 @@ def apply_notebook_to_result(result: dict, notebook: CaseNotebook) -> dict:
             "non-disclosure",
             "foreign patient",
             "name mismatch",
+            "identity / record",
             "diagnostic admission",
             "physiologically incompatible",
+            "physiological contradiction",
             "anion gap",
             "alcohol-withdrawal",
+            "duplicate billing",
+            "pharmacy bill",
         )
     ):
         result["claim_recommended"] = "No"
         result["claim_not_recommended"] = "Yes"
+        tba = result.setdefault("treatment_billing_audit", {})
+        tba["charges_appropriate"] = "NO"
         if "non-compliant" not in str(result.get("compliance_verdict") or "").lower():
             result["compliance_verdict"] = "Non-Compliant"
         existing = str(result.get("auditor_conclusion") or result.get("inference") or "")
-        if not re.search(r"repudiat|reject(?:ion|ed)|do not recommend", existing, re.I):
+        if not re.search(r"repudiat|reject(?:ion|ed)|do not recommend|not recommended", existing, re.I):
             result["inference"] = (
                 "Case Notebook review identified high-severity FWA / integrity findings "
                 "(identity mismatch, physiological contradictions, material non-disclosure, "

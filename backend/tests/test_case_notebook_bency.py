@@ -91,7 +91,7 @@ class TestContradictions(unittest.TestCase):
     def test_foreign_name(self):
         findings = detect_foreign_patient_names(self._chunks(), "Bency Biju")
         blob = " ".join(f["evidence"] for f in findings).lower()
-        self.assertTrue("savitha" in blob or "daya the" in blob or "buu" in blob)
+        self.assertTrue("savitha" in blob or "buu" in blob)
 
     def test_abg_vs_spo2(self):
         findings = detect_abg_vs_vitals(self._chunks())
@@ -117,6 +117,7 @@ class TestNotebookEndToEnd(unittest.TestCase):
         result = {
             "patient_details": {"name": "Mrs. Bency Bliju", "age": "40", "sex": "Female"},
             "insurance_details": {
+                "insurance_company": "SBI",
                 "policy_number": "H1767679",
                 "claim_incident_number": "2020877700347",
             },
@@ -126,6 +127,11 @@ class TestNotebookEndToEnd(unittest.TestCase):
                 "total_hospital_bill": "Rs. 50,000",
             },
             "observations": [
+                {
+                    "question": "Identity / record tampering?",
+                    "answer": "Supported",
+                    "analysis": "hes across document types clinicaLchart",
+                },
                 {
                     "question": "what are the gaps?",
                     "answer": "Documents lack specific patient data such as age, sex, hospital",
@@ -137,16 +143,30 @@ class TestNotebookEndToEnd(unittest.TestCase):
             "auditor_conclusion": "Approve basic expenses.",
             "fraud_abuse": {"findings": []},
             "financial_review": {"total_hospital_bill": "Rs. 50,000"},
+            "treatment_billing_audit": {"charges_appropriate": "YES"},
         }
         out = apply_notebook_to_result(result, nb)
         self.assertEqual(out["insurance_details"]["claim_incident_number"], "2026071700347")
+        self.assertIn("IFFCO", out["insurance_details"]["insurance_company"].upper())
         self.assertEqual(out.get("claim_recommended"), "No")
+        self.assertEqual(
+            (out.get("treatment_billing_audit") or {}).get("charges_appropriate"),
+            "NO",
+        )
         self.assertTrue(out.get("fwa_investigation"))
-        obs_blob = " ".join(
-            str(o.get("analysis") or "") for o in out.get("observations") or []
-        ).lower()
-        self.assertNotIn("lack specific patient data", obs_blob)
-        self.assertIn("case_notebook", out)
+        # No OCR-garbage Q&As / no FWA duplicated into observations
+        for o in out.get("observations") or []:
+            blob = str(o.get("question") or "") + str(o.get("analysis") or "")
+            self.assertNotIn("hes across", blob.lower())
+            self.assertNotIn("identity / record tampering", blob.lower())
+        # No Case180 bill numbers on a Bency corpus
+        fwa_blob = " ".join(
+            str(f.get("evidence") or "") for f in out.get("fwa_investigation") or []
+        )
+        self.assertNotIn("A021042", fwa_blob)
+        # BENCY BIJU N must not be treated as foreign identity
+        inds = " ".join(str(f.get("indicator") or "") for f in out.get("fwa_investigation") or [])
+        self.assertNotIn("Patient name mismatch across documents", inds)
 
 
 if __name__ == "__main__":

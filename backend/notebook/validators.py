@@ -125,19 +125,15 @@ def validate_ids_from_corpus(
         policy_cands.append(normalize_policy_number(current_policy))
 
     best_claim = repair_claim_ocr_candidates(claim_cands)
-    # Prefer assessor claim when years match recent window
+    # Prefer assessor claim whenever it looks like a valid IFFCO 13-digit id
     if assessor.get("claim_number"):
         a = normalize_claim_incident(str(assessor["claim_number"]))
-        if a and (not best_claim or a.split(".")[0][:4] in {"2024", "2025", "2026", "2027"}):
-            # If current/best looks like OCR corruption of assessor (hamming≤4), take assessor
-            if not best_claim:
-                best_claim = a
-            else:
-                br, ar = best_claim.split(".", 1)[0], a.split(".", 1)[0]
-                if len(br) == len(ar) and _hamming(br, ar) <= 4:
-                    best_claim = a
-                elif ar[:4] in {"2025", "2026", "2027"} and br[:4] not in {"2025", "2026", "2027"}:
-                    best_claim = a
+        if a and a.split(".")[0][:4] in {"2024", "2025", "2026", "2027"}:
+            best_claim = a
+    if assessor.get("sub_claim_number"):
+        sub = normalize_claim_incident(str(assessor["sub_claim_number"]))
+        if sub and sub.split(".")[0][:4] in {"2024", "2025", "2026", "2027"}:
+            best_claim = sub
 
     best_policy = ""
     if policy_cands:

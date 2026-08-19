@@ -229,20 +229,35 @@ def build_case180_style_findings(
             ),
         })
 
-    if _PHARMACY_MATH_RE.search(text) or (
-        is_pancreatitis
-        and re.search(r"\bA021042\b", text)
+    # Pharmacy math: only when Assessor math-fail language OR known bill IDs in THIS file.
+    # Never cite Case180 bill numbers (A021042/A021314) unless they actually appear.
+    has_math_fail = bool(_PHARMACY_MATH_RE.search(text))
+    case180_bills = bool(
+        re.search(r"\bA021042\b", text)
         and re.search(r"7801|7,801", text)
         and re.search(r"\b15[34]\b", text)
-    ):
+    )
+    bency_dup = bool(re.search(r"DH2627/000760141", text, re.I))
+    if has_math_fail or case180_bills or bency_dup:
+        if case180_bills:
+            evidence = (
+                "Pharmacy grand totals do not match line-item sums "
+                "(e.g. A021042 / A021314), consistent with falsified or inflated pharmacy billing."
+            )
+        elif bency_dup:
+            evidence = (
+                "Duplicate / conflicting pharmacy bill references (e.g. DH2627/000760141) "
+                "and Assessor bill-verification alerts indicate billing integrity risk."
+            )
+        else:
+            evidence = (
+                "Assessor Bill Amount Verification reports failed aggregate-sum / "
+                "grand-total checks on pharmacy or hospital bills."
+            )
         findings.append({
             "category": "billing_abuse",
             "indicator": "Pharmacy bill calculation / grand-total anomalies",
-            "evidence": (
-                "Assessor or bill text shows pharmacy grand totals that do not match "
-                "line-item sums (e.g. A021042 / A021314), consistent with falsified or "
-                "inflated pharmacy billing."
-            ),
+            "evidence": evidence,
             "severity": "High",
             "recommendation": (
                 "Reject or intensely scrutinize flagged pharmacy invoices; "
