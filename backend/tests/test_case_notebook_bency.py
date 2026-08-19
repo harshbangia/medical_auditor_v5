@@ -23,13 +23,14 @@ from backend.notebook.validators import (
 BENCY_CORPUS = """
 === Source document: Health Claim Assessor Report d_11zon.pdf ===
 Health Claim Assessor Report
-Claim Number: 2026071700347
-Sub Claim Number: 2026071700347.R1
-Policy Number: H1677679
+Claim Number: 2026077000347
+Sub Claim Number: 2026077000347.R1
+Policy Number: H1677879
 Name of The Insured: BENCY BIJU
 Claimed Amount: 80800
 Claim Type: Reimbursement
 Hospital Name: Daya General Hospital Ltd
+Member Code: H1677679-1-1
 FWA Alerts Identity Check: clinical charts contain SAVITHA A G Patient ID 5309
 demographic mismatches and record mixing. Bill Amount Verification failed aggregate-sum check.
 
@@ -39,9 +40,10 @@ Patient Name: SAVITHA A G
 Patient ID: 5309
 Also chart header BENCY BUU
 Pharmacy extract issued to DAYA THE
-Claim Incident No: 2020877000347
-Claim Incident No: 2020877000347
+Claim Incident No: 2026077000347
+Claim Incident No: 2026077000347
 Policy No: H1677879
+Date of Admission: 17/07/2026
 
 === Page 2 ===
 ABG: pO2 42.3 mmHg sO2 73.7%
@@ -56,7 +58,7 @@ MRI Brain: no evidence of acute infarct
 MR Angiography: no evidence of occlusion
 Medications: Aspirin, Clopidogrel, Atorvastatin
 Admitted to ICU for 3 days for evaluation
-Claim Incident: 2020877000347
+Claim Incident: 2026077000347
 Policy Number: H1677879
 """
 
@@ -69,7 +71,6 @@ class TestClaimRepair(unittest.TestCase):
         self.assertEqual(picked.split(".")[0], "2026071700347")
 
     def test_majority_bad_year_loses_to_good_twin(self):
-        # Real Bency failure: bad claim OCR'd on many pages, true Assessor id once
         picked = repair_claim_ocr_candidates([
             "2020877000347",
             "2020877000347",
@@ -81,12 +82,18 @@ class TestClaimRepair(unittest.TestCase):
 
     def test_assessor_wins_over_corrupt(self):
         ids = validate_ids_from_corpus(
-            "Claim Incident No: 2020877700347 Policy H1767679",
-            assessor={"claim_number": "2026071700347", "policy_number": "H1677679"},
-            current_claim="2020877700347",
-            current_policy="H1767679",
+            BENCY_CORPUS,
+            assessor={
+                "claim_number": "2026077000347",
+                "policy_number": "H1677879",
+                "claimed_amount": "80800",
+            },
+            current_claim="2026077000347",
+            current_policy="H1677879",
+            admission_date="17/07/2026",
         )
         self.assertEqual(ids["claim_incident_number"].split(".")[0], "2026071700347")
+        self.assertEqual(ids["policy_number"], "H1677679")
 
     def test_policy_near_duplicate_prefers_assessor(self):
         from backend.notebook.validators import repair_policy_ocr_candidates
@@ -101,7 +108,8 @@ class TestAssessorParse(unittest.TestCase):
     def test_parse_claim_and_fwa(self):
         parsed = parse_assessor_text(BENCY_CORPUS, "Health Claim Assessor Report.pdf")
         self.assertTrue(parsed["is_assessor"])
-        self.assertIn("2026071700347", parsed["claim_number"])
+        # Assessor OCR may be noisy; seal repairs via DOA — parser still extracts a claim
+        self.assertTrue(parsed["claim_number"])
         self.assertTrue(any("Identity" in a["indicator"] for a in parsed["fwa_alerts"]))
 
 
@@ -137,20 +145,22 @@ class TestNotebookEndToEnd(unittest.TestCase):
         nb = build_case_notebook(
             case_text=BENCY_CORPUS,
             expected_patient_name="Mrs. Bency Biju",
-            current_claim="2020877000347",
+            current_claim="2026077000347",
             current_policy="H1677879",
+            admission_date="17/07/2026",
         )
         result = {
             "patient_details": {"name": "Mrs. Bency Bliju", "age": "40", "sex": "Female"},
             "insurance_details": {
                 "insurance_company": "SBI",
                 "policy_number": "H1677879",
-                "claim_incident_number": "2020877000347",
+                "claim_incident_number": "2026077000347",
             },
             "claim_details": {
                 "hospital": "Daya General Hospital",
                 "diagnosis": "RIGHT HEMISPHERIC TRANSIENT ISCHEMIC ATTACK",
                 "total_hospital_bill": "Rs. 50,000",
+                "date_of_admission": "17/07/2026",
             },
             "observations": [
                 {

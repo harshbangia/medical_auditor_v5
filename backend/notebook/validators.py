@@ -160,76 +160,25 @@ def validate_ids_from_corpus(
     assessor: Optional[Dict] = None,
     current_claim: str = "",
     current_policy: str = "",
+    admission_date: str = "",
 ) -> Dict[str, str]:
-    """Return validated claim_incident_number and policy_number."""
-    assessor = assessor or {}
-    claim_cands = collect_claim_candidates(corpus_text)
-    if assessor.get("claim_number"):
-        claim_cands.insert(0, str(assessor["claim_number"]))
-    if assessor.get("sub_claim_number"):
-        # Prefer full sub-claim when present; also add root
-        sub = str(assessor["sub_claim_number"])
-        claim_cands.insert(0, sub)
-        claim_cands.insert(0, sub.split(".", 1)[0])
-    if current_claim:
-        claim_cands.append(current_claim)
-
-    policy_cands = collect_policy_candidates(corpus_text)
-    # Prefer explicitly labeled Policy Number lines (stronger than bare H####### hits)
-    for m in re.finditer(
-        r"policy\s*(?:number|no\.?)\s*[:.]?\s*(H[A-Z0-9Il]{5,12})",
-        corpus_text or "",
-        re.I,
-    ):
-        policy_cands.insert(0, normalize_policy_number(m.group(1)))
-    if assessor.get("policy_number"):
-        policy_cands.insert(0, normalize_policy_number(assessor["policy_number"]))
-    if current_policy:
-        policy_cands.append(normalize_policy_number(current_policy))
-
-    best_claim = repair_claim_ocr_candidates(claim_cands)
-    # Prefer assessor claim whenever it looks like a valid IFFCO 13-digit id
-    if assessor.get("claim_number"):
-        a = normalize_claim_incident(str(assessor["claim_number"]))
-        if a and _claim_year_ok(a.split(".")[0]):
-            best_claim = a
-    if assessor.get("sub_claim_number"):
-        sub = normalize_claim_incident(str(assessor["sub_claim_number"]))
-        if sub and _claim_year_ok(sub.split(".")[0]):
-            best_claim = sub
-    # If assessor missed parse but corpus repair found a good-year twin of current bad OCR
-    if current_claim and best_claim:
-        cur = normalize_claim_incident(current_claim).split(".", 1)[0]
-        best_root = best_claim.split(".", 1)[0]
-        if (
-            cur
-            and best_root
-            and not _claim_year_ok(cur)
-            and _claim_year_ok(best_root)
-            and len(cur) == len(best_root)
-            and _hamming(cur, best_root) <= 4
-        ):
-            best_claim = best_root
-
-    best_policy = repair_policy_ocr_candidates(
-        policy_cands,
-        preferred=str(assessor.get("policy_number") or ""),
+    """Return validated claim_incident_number, policy_number, claimed_amount via identity seal."""
+    from backend.notebook.identity_seal import (
+        build_identity_seal,
+        parse_admission_yyyymmdd,
     )
 
-    # Assessor claimed amount hint
-    claimed = str(assessor.get("claimed_amount") or "").strip()
-    if not claimed:
-        m = re.search(
-            r"(?:claimed\s*amount|total\s*billed\s*amount)\s*[:.]?\s*"
-            r"(?:rs\.?|inr|₹)?\s*([\d,]+(?:\.\d+)?)",
-            corpus_text or "",
-            re.I,
-        )
-        if m:
-            claimed = m.group(1)
-
+    seal = build_identity_seal(
+        corpus_text=corpus_text or "",
+        assessor=assessor or {},
+        admission_yyyymmdd=parse_admission_yyyymmdd(admission_date),
+        current_claim=current_claim,
+        current_policy=current_policy,
+    )
     return {
-        "claim_incident_number": best_claim,
-        "policy_number": best_policy,
-        "claimed_amount": claimed,
+        "claim_incident_number": seal.claim_incident_number,
+        "policy_number": seal.policy_number,
+        "claimed_amount": seal.claimed_amount or (
+            str((assessor or {}).get("claimed_amount") or "").strip()
+        ),
     }

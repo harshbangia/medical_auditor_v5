@@ -47,8 +47,12 @@ class CaseNotebook:
     fwa_findings: List[Dict[str, Any]] = field(default_factory=list)
     validated_ids: Dict[str, str] = field(default_factory=dict)
     finance_hints: Dict[str, Any] = field(default_factory=dict)
+    # Full case text used for identity seal (chunks alone may miss headers)
+    full_corpus: str = ""
 
     def corpus_text(self, max_chars: int = 180_000) -> str:
+        if self.full_corpus:
+            return self.full_corpus[:max_chars]
         parts: List[str] = []
         for ch in self.chunks:
             header = f"=== {ch.filename} | page={ch.page or '?'} | type={ch.doc_type} ==="

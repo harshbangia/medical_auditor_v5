@@ -334,6 +334,11 @@ def run_full_audit(
 
     progress("notebook", 65, "Building Case Notebook (corpus + Assessor FWA)…")
     from backend.notebook import build_case_notebook, apply_notebook_to_result
+    admit_for_notebook = str(
+        (claim_facts or {}).get("date_of_admission")
+        or (case_facts_ledger.get("merged") or {}).get("admission_date")
+        or ""
+    )
     case_notebook = build_case_notebook(
         case_text=case_text,
         doc_blocks=doc_blocks,
@@ -344,6 +349,7 @@ def run_full_audit(
         ),
         current_claim=str((insurance_facts or {}).get("claim_incident_number") or ""),
         current_policy=str((insurance_facts or {}).get("policy_number") or ""),
+        admission_date=admit_for_notebook,
     )
     # Prefer notebook-validated IDs before guideline/audit LLM
     if case_notebook.validated_ids.get("claim_incident_number"):
@@ -459,6 +465,30 @@ def run_full_audit(
         result["guideline_alignment"] = alignment
         # Re-apply notebook IDs/FWA after agent postprocess so they survive overwrites
         result = apply_notebook_to_result(result, case_notebook)
+
+        # Absolute final seal — DOA-aware claim/policy/bill cannot be wrong-headed by LLM
+        from backend.notebook.identity_seal import (
+            apply_identity_seal,
+            build_identity_seal,
+            extract_admission_yyyymmdd_from_result,
+        )
+        final_seal = build_identity_seal(
+            corpus_text=case_notebook.full_corpus or case_text or "",
+            assessor=case_notebook.assessor,
+            admission_yyyymmdd=extract_admission_yyyymmdd_from_result(result, claim_facts),
+            current_claim=str(
+                (result.get("insurance_details") or {}).get("claim_incident_number") or ""
+            ),
+            current_policy=str(
+                (result.get("insurance_details") or {}).get("policy_number") or ""
+            ),
+            current_bill=str(
+                (result.get("financial_review") or {}).get("total_hospital_bill")
+                or (result.get("claim_details") or {}).get("total_hospital_bill")
+                or ""
+            ),
+        )
+        result = apply_identity_seal(result, final_seal, force_zero_recommended_if_rejected=True)
 
         if all([
             not result.get("patient_details"),

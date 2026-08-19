@@ -23,6 +23,7 @@ def build_case_notebook(
     expected_patient_name: str = "",
     current_claim: str = "",
     current_policy: str = "",
+    admission_date: str = "",
 ) -> CaseNotebook:
     if doc_blocks:
         chunks = chunks_from_doc_blocks(doc_blocks)
@@ -62,6 +63,7 @@ def build_case_notebook(
         assessor=assessor,
         current_claim=current_claim,
         current_policy=current_policy,
+        admission_date=admission_date,
     )
 
     patient = expected_patient_name or assessor.get("patient_name") or ""
@@ -103,6 +105,7 @@ def build_case_notebook(
         fwa_findings=fwa,
         validated_ids=validated,
         finance_hints=finance_hints,
+        full_corpus=corpus[:200_000],
     )
     logger.info(
         "Case notebook built: docs=%s chunks=%s fwa=%s assessor=%s",
@@ -217,51 +220,44 @@ def apply_notebook_to_result(result: dict, notebook: CaseNotebook) -> dict:
     fin = result.setdefault("financial_review", {})
 
     vid = notebook.validated_ids or {}
-    # Prefer Assessor claim/policy; fall back to repaired corpus IDs (beats bad-year OCR)
-    assessor_claim = str(
-        notebook.assessor.get("sub_claim_number")
-        or notebook.assessor.get("claim_number")
-        or ""
-    ).strip()
-    chosen_claim = ""
-    if assessor_claim:
-        root = assessor_claim.split(".", 1)[0]
-        if re.fullmatch(r"20\d{11}", root):
-            # Still repair if Assessor OCR itself has a bad year but corpus has twin
-            vid_claim = str(vid.get("claim_incident_number") or "").split(".", 1)[0]
-            if (
-                vid_claim
-                and re.fullmatch(r"20\d{11}", vid_claim)
-                and not (2024 <= int(root[:4]) <= 2027)
-                and 2024 <= int(vid_claim[:4]) <= 2027
-            ):
-                chosen_claim = vid_claim
-            else:
-                chosen_claim = root
-    if not chosen_claim and vid.get("claim_incident_number"):
-        chosen_claim = vid["claim_incident_number"].split(".", 1)[0]
-    if chosen_claim and re.fullmatch(r"20\d{11}", chosen_claim):
-        cur = str(ins.get("claim_incident_number") or "").split(".", 1)[0]
-        # Always overwrite empty / bad-year / near-OCR mismatch
-        if (
-            not cur
-            or not re.fullmatch(r"20\d{11}", cur)
-            or not (2024 <= int(cur[:4]) <= 2027)
-            or cur != chosen_claim
-        ):
-            ins["claim_incident_number"] = chosen_claim
+    # Identity/finance sealed via DOA-aware ledger (Assessor OCR is not absolute)
+    from backend.notebook.identity_seal import (
+        apply_identity_seal,
+        build_identity_seal,
+        extract_admission_yyyymmdd_from_result,
+    )
 
-    assessor_pol = str(notebook.assessor.get("policy_number") or "").strip()
-    chosen_pol = ""
-    if assessor_pol or vid.get("policy_number"):
-        from backend.utils.demographics_normalizer import normalize_policy_number
-        from backend.notebook.validators import repair_policy_ocr_candidates
-        chosen_pol = repair_policy_ocr_candidates(
-            [assessor_pol, str(vid.get("policy_number") or ""), str(ins.get("policy_number") or "")],
-            preferred=assessor_pol,
-        ) or normalize_policy_number(assessor_pol or vid.get("policy_number") or "")
-    if chosen_pol:
-        ins["policy_number"] = chosen_pol
+    seal = build_identity_seal(
+        corpus_text=notebook.corpus_text(max_chars=200_000) if hasattr(notebook, "corpus_text") else "",
+        assessor=notebook.assessor,
+        admission_yyyymmdd=extract_admission_yyyymmdd_from_result(result),
+        current_claim=str(ins.get("claim_incident_number") or vid.get("claim_incident_number") or ""),
+        current_policy=str(ins.get("policy_number") or vid.get("policy_number") or ""),
+        current_bill=str(
+            fin.get("total_hospital_bill")
+            or claim.get("total_hospital_bill")
+            or notebook.finance_hints.get("claimed_amount")
+            or ""
+        ),
+    )
+    # Fall back to precomputed validated_ids if seal somehow empty
+    if not seal.claim_incident_number and vid.get("claim_incident_number"):
+        seal.claim_incident_number = str(vid["claim_incident_number"]).split(".", 1)[0]
+    if not seal.policy_number and vid.get("policy_number"):
+        seal.policy_number = str(vid["policy_number"])
+    if not seal.total_hospital_bill and notebook.finance_hints.get("claimed_amount"):
+        from backend.notebook.identity_seal import resolve_bill_amount
+        bill, _ = resolve_bill_amount(
+            "",
+            assessor={"claimed_amount": notebook.finance_hints["claimed_amount"]},
+            current_bill="0",
+        )
+        seal.total_hospital_bill = bill
+
+    apply_identity_seal(result, seal, force_zero_recommended_if_rejected=False)
+    ins = result.setdefault("insurance_details", {})
+    claim = result.setdefault("claim_details", {})
+    fin = result.setdefault("financial_review", {})
 
     # Fix insurer hallucinations (e.g. SBI) when IFFCO is in the pack
     corpus_hint = " ".join(
@@ -272,7 +268,6 @@ def apply_notebook_to_result(result: dict, notebook: CaseNotebook) -> dict:
     )
     cur_ins = str(ins.get("insurance_company") or "")
     if re.search(r"\bsbi\b", cur_ins, re.I) or len(cur_ins) < 6:
-        # Prefer IFFCO when policy looks like H1####### (IFFCO family health style)
         pol = str(ins.get("policy_number") or "")
         if re.match(r"^H\d{7}$", pol) or "iffco" in corpus_hint.lower():
             ins["insurance_company"] = "IFFCO-Tokio General Insurance Company Limited"
@@ -281,27 +276,6 @@ def apply_notebook_to_result(result: dict, notebook: CaseNotebook) -> dict:
         claim["hospital"] = notebook.assessor["hospital"]
     if notebook.assessor.get("diagnosis") and not claim.get("diagnosis"):
         claim["diagnosis"] = notebook.assessor["diagnosis"]
-
-    # Finance: prefer assessor claimed amount over tiny / placeholder totals
-    claimed = notebook.finance_hints.get("claimed_amount") or vid.get("claimed_amount")
-    if claimed:
-        try:
-            amt = float(str(claimed).replace(",", ""))
-            cur_raw = str(
-                fin.get("total_hospital_bill")
-                or claim.get("total_hospital_bill")
-                or "0"
-            )
-            cur_digits = re.sub(r"[^\d.]", "", cur_raw) or "0"
-            cur_amt = float(cur_digits)
-            if amt >= 5000 and (cur_amt < 5000 or amt >= cur_amt * 1.2 or cur_amt in (50000.0, 0.0)):
-                # Don't blindly replace a carefully extracted larger final bill
-                if cur_amt < amt or cur_amt in (0.0, 50000.0):
-                    labeled = f"Rs. {amt:,.2f}".rstrip("0").rstrip(".")
-                    fin["total_hospital_bill"] = labeled
-                    claim["total_hospital_bill"] = labeled
-        except ValueError:
-            pass
 
     _merge_fwa_into_result(result, notebook.fwa_findings)
 
@@ -358,4 +332,6 @@ def apply_notebook_to_result(result: dict, notebook: CaseNotebook) -> dict:
         if isinstance(f, dict)
     ][:12]
 
+    # Final seal after verdict nudges (zeros recommended amount when rejected)
+    apply_identity_seal(result, seal, force_zero_recommended_if_rejected=True)
     return result
