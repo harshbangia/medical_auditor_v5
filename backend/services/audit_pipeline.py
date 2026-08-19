@@ -487,6 +487,12 @@ def run_full_audit(
                 or (result.get("claim_details") or {}).get("total_hospital_bill")
                 or ""
             ),
+            expected_patient_name=str(
+                case_notebook.expected_patient_name
+                or (result.get("patient_details") or {}).get("name")
+                or identity.get("patient_name")
+                or ""
+            ),
         )
         result = apply_identity_seal(result, final_seal, force_zero_recommended_if_rejected=True)
 

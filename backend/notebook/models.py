@@ -49,6 +49,7 @@ class CaseNotebook:
     finance_hints: Dict[str, Any] = field(default_factory=dict)
     # Full case text used for identity seal (chunks alone may miss headers)
     full_corpus: str = ""
+    expected_patient_name: str = ""
 
     def corpus_text(self, max_chars: int = 180_000) -> str:
         if self.full_corpus:

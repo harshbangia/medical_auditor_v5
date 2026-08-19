@@ -54,6 +54,60 @@ class TestBillPlaceholder(unittest.TestCase):
         self.assertIn("80,800", bill.replace(" ", ""))
 
 
+class TestPackMismatch(unittest.TestCase):
+    def test_chandra_must_not_get_bency_ids(self):
+        from backend.notebook.builder import apply_notebook_to_result, build_case_notebook
+
+        corpus = """
+=== Source document: Health Claim Assessor Report d_11zon.pdf ===
+Health Claim Assessor Report
+Claim Number: 2026077000347
+Sub Claim Number: 2026077000347.R1
+Policy Number: H1677879
+Name of The Insured: BENCY BIJU
+Claimed Amount: 80800
+Member Code: H1677679-1-1
+FWA Alerts Identity Check SAVITHA A G
+Date of Admission: 17/07/2026
+"""
+        nb = build_case_notebook(
+            case_text=corpus,
+            expected_patient_name="Chandra Kant Upadhyay",
+            current_claim="2026077000347",
+            current_policy="H1677879",
+            admission_date="17/07/2026",
+        )
+        self.assertTrue(
+            any("different patient" in str(f.get("indicator") or "").lower() for f in nb.fwa_findings)
+        )
+        result = {
+            "patient_details": {"name": "Chandra Kant Upadhyay", "age": "55", "sex": "Male"},
+            "insurance_details": {
+                "claim_incident_number": "2026071700347",
+                "policy_number": "H1677679",
+            },
+            "claim_details": {
+                "date_of_admission": "17/07/2026",
+                "total_hospital_bill": "Rs. 118,591",
+                "diagnosis": "SOME OTHER DX",
+            },
+            "financial_review": {
+                "total_hospital_bill": "Rs. 118,591",
+                "recommended_approval_amount": "100000",
+            },
+            "fraud_abuse": {"findings": []},
+            "claim_recommended": "Yes",
+            "observations": [],
+        }
+        out = apply_notebook_to_result(result, nb)
+        self.assertTrue((out.get("pack_integrity") or {}).get("ok") is False)
+        self.assertEqual(out["insurance_details"].get("claim_incident_number"), "")
+        self.assertEqual(out["insurance_details"].get("policy_number"), "")
+        self.assertNotEqual(out.get("claim_details", {}).get("diagnosis"), "RIGHT HEMISPHERIC TRANSIENT ISCHEMIC ATTACK")
+        self.assertEqual(out.get("claim_recommended"), "No")
+        self.assertIn("BENCY", out.get("auditor_conclusion") or "")
+
+
 class TestSealApply(unittest.TestCase):
     def test_full_bency_seal(self):
         corpus = """
@@ -61,6 +115,7 @@ Health Claim Assessor Report
 Claim Number: 2026077000347
 Sub Claim Number: 2026077000347.R1
 Policy Number: H1677879
+Name of The Insured: BENCY BIJU
 Claimed Amount: 80800
 Member Code : H1677679-1-1
 Date of Admission: 17/07/2026
@@ -72,12 +127,15 @@ Date of Admission: 17/07/2026
                 "sub_claim_number": "2026077000347.R1",
                 "policy_number": "H1677879",
                 "claimed_amount": "80800",
+                "patient_name": "BENCY BIJU",
             },
             admission_yyyymmdd="20260717",
             current_claim="2026077000347",
             current_policy="H1677879",
             current_bill="Rs. 50,000",
+            expected_patient_name="Mrs. Bency Biju",
         )
+        self.assertFalse(seal.pack_mismatch)
         self.assertEqual(seal.claim_incident_number, "2026071700347")
         self.assertEqual(seal.policy_number, "H1677679")
         self.assertIn("80,800", seal.total_hospital_bill.replace(" ", ""))

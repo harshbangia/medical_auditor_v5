@@ -161,6 +161,7 @@ def validate_ids_from_corpus(
     current_claim: str = "",
     current_policy: str = "",
     admission_date: str = "",
+    expected_patient_name: str = "",
 ) -> Dict[str, str]:
     """Return validated claim_incident_number, policy_number, claimed_amount via identity seal."""
     from backend.notebook.identity_seal import (
@@ -174,11 +175,14 @@ def validate_ids_from_corpus(
         admission_yyyymmdd=parse_admission_yyyymmdd(admission_date),
         current_claim=current_claim,
         current_policy=current_policy,
+        expected_patient_name=expected_patient_name,
     )
     return {
         "claim_incident_number": seal.claim_incident_number,
         "policy_number": seal.policy_number,
         "claimed_amount": seal.claimed_amount or (
             str((assessor or {}).get("claimed_amount") or "").strip()
+            if not seal.pack_mismatch
+            else ""
         ),
     }

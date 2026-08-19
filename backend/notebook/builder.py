@@ -58,12 +58,15 @@ def build_case_notebook(
 
     assessor = merge_assessor_from_chunks(chunks)
     corpus = case_text or "\n\n".join(c.text for c in chunks)
+    from backend.notebook.identity_seal import detect_assessor_patient_mismatch
+    pack_mismatch = detect_assessor_patient_mismatch(assessor, expected_patient_name)
     validated = validate_ids_from_corpus(
         corpus,
-        assessor=assessor,
+        assessor={} if pack_mismatch else assessor,
         current_claim=current_claim,
         current_policy=current_policy,
         admission_date=admission_date,
+        expected_patient_name=expected_patient_name,
     )
 
     patient = expected_patient_name or assessor.get("patient_name") or ""
@@ -76,16 +79,34 @@ def build_case_notebook(
     )
 
     fwa: List[Dict[str, Any]] = []
-    fwa.extend(assessor.get("fwa_alerts") or [])
-    fwa.extend(contradictions)
-    fwa.extend(clinical)
+    if pack_mismatch:
+        fwa.append({
+            "category": "pack_integrity",
+            "indicator": "Assessor / document pack belongs to a different patient",
+            "evidence": (
+                f"Assessor insured name is '{pack_mismatch['assessor_patient']}' but this audit "
+                f"patient is '{pack_mismatch['expected_patient']}'. Claim number, policy number, "
+                f"and Assessor FWA from that pack are withheld to prevent cross-patient stamping."
+            ),
+            "severity": "High",
+            "recommendation": (
+                "Stop. Re-upload only documents for the named patient. Do not mix another "
+                "insured's Assessor Report or IP charts into this audit."
+            ),
+        })
+        # Keep identity contradictions (they prove the mix) but drop Assessor-templated FWA
+        fwa.extend(contradictions)
+    else:
+        fwa.extend(assessor.get("fwa_alerts") or [])
+        fwa.extend(contradictions)
+        fwa.extend(clinical)
 
     finance_hints: Dict[str, Any] = {}
-    if assessor.get("claimed_amount"):
+    if not pack_mismatch and assessor.get("claimed_amount"):
         finance_hints["claimed_amount"] = assessor["claimed_amount"]
-    elif validated.get("claimed_amount"):
+    elif not pack_mismatch and validated.get("claimed_amount"):
         finance_hints["claimed_amount"] = validated["claimed_amount"]
-    if assessor.get("finance_bills"):
+    if not pack_mismatch and assessor.get("finance_bills"):
         finance_hints["bills"] = assessor["finance_bills"][:30]
         try:
             total = sum(
@@ -103,9 +124,10 @@ def build_case_notebook(
         assessor=assessor,
         contradictions=contradictions,
         fwa_findings=fwa,
-        validated_ids=validated,
+        validated_ids={} if pack_mismatch else validated,
         finance_hints=finance_hints,
         full_corpus=corpus[:200_000],
+        expected_patient_name=expected_patient_name or "",
     )
     logger.info(
         "Case notebook built: docs=%s chunks=%s fwa=%s assessor=%s",
@@ -239,20 +261,26 @@ def apply_notebook_to_result(result: dict, notebook: CaseNotebook) -> dict:
             or notebook.finance_hints.get("claimed_amount")
             or ""
         ),
+        expected_patient_name=str(
+            notebook.expected_patient_name
+            or (result.get("patient_details") or {}).get("name")
+            or ""
+        ),
     )
-    # Fall back to precomputed validated_ids if seal somehow empty
-    if not seal.claim_incident_number and vid.get("claim_incident_number"):
-        seal.claim_incident_number = str(vid["claim_incident_number"]).split(".", 1)[0]
-    if not seal.policy_number and vid.get("policy_number"):
-        seal.policy_number = str(vid["policy_number"])
-    if not seal.total_hospital_bill and notebook.finance_hints.get("claimed_amount"):
-        from backend.notebook.identity_seal import resolve_bill_amount
-        bill, _ = resolve_bill_amount(
-            "",
-            assessor={"claimed_amount": notebook.finance_hints["claimed_amount"]},
-            current_bill="0",
-        )
-        seal.total_hospital_bill = bill
+    # Fall back to precomputed validated_ids if seal somehow empty (never on pack mismatch)
+    if not seal.pack_mismatch:
+        if not seal.claim_incident_number and vid.get("claim_incident_number"):
+            seal.claim_incident_number = str(vid["claim_incident_number"]).split(".", 1)[0]
+        if not seal.policy_number and vid.get("policy_number"):
+            seal.policy_number = str(vid["policy_number"])
+        if not seal.total_hospital_bill and notebook.finance_hints.get("claimed_amount"):
+            from backend.notebook.identity_seal import resolve_bill_amount
+            bill, _ = resolve_bill_amount(
+                "",
+                assessor={"claimed_amount": notebook.finance_hints["claimed_amount"]},
+                current_bill="0",
+            )
+            seal.total_hospital_bill = bill
 
     apply_identity_seal(result, seal, force_zero_recommended_if_rejected=False)
     ins = result.setdefault("insurance_details", {})
@@ -272,10 +300,12 @@ def apply_notebook_to_result(result: dict, notebook: CaseNotebook) -> dict:
         if re.match(r"^H\d{7}$", pol) or "iffco" in corpus_hint.lower():
             ins["insurance_company"] = "IFFCO-Tokio General Insurance Company Limited"
 
-    if notebook.assessor.get("hospital") and not claim.get("hospital"):
-        claim["hospital"] = notebook.assessor["hospital"]
-    if notebook.assessor.get("diagnosis") and not claim.get("diagnosis"):
-        claim["diagnosis"] = notebook.assessor["diagnosis"]
+    # Never copy Assessor hospital/diagnosis onto a mismatched patient
+    if not seal.pack_mismatch:
+        if notebook.assessor.get("hospital") and not claim.get("hospital"):
+            claim["hospital"] = notebook.assessor["hospital"]
+        if notebook.assessor.get("diagnosis") and not claim.get("diagnosis"):
+            claim["diagnosis"] = notebook.assessor["diagnosis"]
 
     _merge_fwa_into_result(result, notebook.fwa_findings)
 
@@ -299,6 +329,8 @@ def apply_notebook_to_result(result: dict, notebook: CaseNotebook) -> dict:
             "alcohol-withdrawal",
             "duplicate billing",
             "pharmacy bill",
+            "document pack",
+            "different patient",
         )
     ):
         result["claim_recommended"] = "No"

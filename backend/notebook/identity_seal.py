@@ -26,6 +26,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from backend.notebook.contradictions import _names_equivalent, _norm_name
 from backend.notebook.validators import (
     _claim_year_ok,
     _hamming,
@@ -43,7 +44,32 @@ class IdentitySeal:
     policy_number: str = ""
     total_hospital_bill: str = ""
     claimed_amount: str = ""
+    pack_mismatch: bool = False
+    assessor_patient: str = ""
+    expected_patient: str = ""
     provenance: Dict[str, Any] = field(default_factory=dict)
+
+
+def detect_assessor_patient_mismatch(
+    assessor: Optional[dict],
+    expected_patient_name: str,
+) -> Optional[Dict[str, str]]:
+    """If Assessor insured name is a different person than the audit patient, return details.
+
+    Chandra Kant Upadhyay + Bency Assessor pack is the canonical failure: seal must NOT
+    stamp Bency claim/policy onto Chandra's report.
+    """
+    assessor = assessor or {}
+    expected = (expected_patient_name or "").strip()
+    assessor_name = str(assessor.get("patient_name") or "").strip()
+    if len(_norm_name(expected)) < 5 or len(_norm_name(assessor_name)) < 5:
+        return None
+    if _names_equivalent(assessor_name, expected):
+        return None
+    return {
+        "assessor_patient": assessor_name,
+        "expected_patient": expected,
+    }
 
 
 def _parse_money(raw: Any) -> Optional[float]:
@@ -440,27 +466,74 @@ def build_identity_seal(
     current_claim: str = "",
     current_policy: str = "",
     current_bill: str = "",
+    expected_patient_name: str = "",
 ) -> IdentitySeal:
-    assessor = assessor or {}
+    assessor = dict(assessor or {})
+    mismatch = detect_assessor_patient_mismatch(assessor, expected_patient_name)
+
+    # Wrong-patient Assessor pack: never trust its claim/policy/amount (or DOA repair of it)
+    assessor_for_ids: Dict[str, Any] = assessor
+    if mismatch:
+        assessor_for_ids = {}
+
     claim, claim_meta = resolve_claim_number(
-        corpus_text, assessor, admission_yyyymmdd, current_claim
+        corpus_text, assessor_for_ids, admission_yyyymmdd, current_claim
     )
-    policy, policy_meta = resolve_policy_number(corpus_text, assessor, current_policy)
-    bill, bill_meta = resolve_bill_amount(corpus_text, assessor, current_bill)
-    claimed = str(assessor.get("claimed_amount") or "").strip()
-    if not claimed and bill_meta.get("winner"):
-        # Keep numeric claimed for finance_hints
-        claimed = str(int(bill_meta["winner"])) if float(bill_meta["winner"]) == int(bill_meta["winner"]) else str(bill_meta["winner"])
+    policy, policy_meta = resolve_policy_number(corpus_text, assessor_for_ids, current_policy)
+    bill, bill_meta = resolve_bill_amount(corpus_text, assessor_for_ids, current_bill)
+
+    if mismatch:
+        # Contaminated corpus still contains the other patient's IDs — withhold headers
+        # rather than stamp another insured's claim onto this report.
+        other_claim = normalize_claim_incident(
+            str(assessor.get("sub_claim_number") or assessor.get("claim_number") or "")
+        ).split(".", 1)[0]
+        other_pol = normalize_policy_number(assessor.get("policy_number") or "")
+        if claim and other_claim and (
+            claim == other_claim
+            or (len(claim) == len(other_claim) and _hamming(claim, other_claim) <= 4)
+        ):
+            claim = ""
+            claim_meta = {**claim_meta, "withheld": "assessor_pack_mismatch"}
+        if policy and other_pol and (
+            policy == other_pol
+            or (
+                re.fullmatch(r"H\d{7}", policy)
+                and re.fullmatch(r"H\d{7}", other_pol)
+                and _hamming(policy[1:], other_pol[1:]) <= 1
+            )
+        ):
+            policy = ""
+            policy_meta = {**policy_meta, "withheld": "assessor_pack_mismatch"}
+        # Withhold Assessor claimed amount; keep non-assessor bill if distinct
+        other_amt = _parse_money(assessor.get("claimed_amount"))
+        bill_amt = _parse_money(bill)
+        if other_amt and bill_amt and abs(other_amt - bill_amt) < 1.0:
+            bill = ""
+            bill_meta = {**bill_meta, "withheld": "assessor_pack_mismatch"}
+        claimed = ""
+    else:
+        claimed = str(assessor.get("claimed_amount") or "").strip()
+        if not claimed and bill_meta.get("winner"):
+            claimed = (
+                str(int(bill_meta["winner"]))
+                if float(bill_meta["winner"]) == int(bill_meta["winner"])
+                else str(bill_meta["winner"])
+            )
 
     return IdentitySeal(
         claim_incident_number=claim,
         policy_number=policy,
         total_hospital_bill=bill,
         claimed_amount=claimed,
+        pack_mismatch=bool(mismatch),
+        assessor_patient=(mismatch or {}).get("assessor_patient", ""),
+        expected_patient=(mismatch or {}).get("expected_patient", ""),
         provenance={
             "claim": claim_meta,
             "policy": policy_meta,
             "bill": bill_meta,
+            "pack_mismatch": mismatch,
         },
     )
 
@@ -479,15 +552,34 @@ def apply_identity_seal(
     claim = result.setdefault("claim_details", {})
     fin = result.setdefault("financial_review", {})
 
-    if seal.claim_incident_number:
-        ins["claim_incident_number"] = seal.claim_incident_number.split(".", 1)[0]
-    if seal.policy_number:
-        ins["policy_number"] = seal.policy_number
+    if seal.pack_mismatch:
+        # Never leave another patient's sealed IDs on this report
+        ins["claim_incident_number"] = ""
+        ins["policy_number"] = ""
+        result["pack_integrity"] = {
+            "ok": False,
+            "assessor_patient": seal.assessor_patient,
+            "expected_patient": seal.expected_patient,
+            "message": (
+                f"Uploaded Assessor / claim pack appears to belong to "
+                f"'{seal.assessor_patient}', not '{seal.expected_patient}'. "
+                f"Claim/policy withheld. Re-upload the correct document set."
+            ),
+        }
+        result["claim_recommended"] = "No"
+        result["claim_not_recommended"] = "Yes"
+        result["compliance_verdict"] = "Non-Compliant"
+        result["inference"] = result["pack_integrity"]["message"]
+        result["auditor_conclusion"] = result["pack_integrity"]["message"]
+    else:
+        if seal.claim_incident_number:
+            ins["claim_incident_number"] = seal.claim_incident_number.split(".", 1)[0]
+        if seal.policy_number:
+            ins["policy_number"] = seal.policy_number
 
     if seal.total_hospital_bill:
         fin["total_hospital_bill"] = seal.total_hospital_bill
         claim["total_hospital_bill"] = seal.total_hospital_bill
-        # Keep savings table in sync when present
         savings = result.get("claim_savings")
         if isinstance(savings, dict):
             savings["total_claim_amount"] = seal.total_hospital_bill
@@ -496,7 +588,7 @@ def apply_identity_seal(
     if force_zero_recommended_if_rejected:
         rec = str(result.get("claim_recommended") or "").strip().lower()
         not_rec = str(result.get("claim_not_recommended") or "").strip().lower()
-        if rec in {"no", "n"} or not_rec in {"yes", "y"}:
+        if rec in {"no", "n"} or not_rec in {"yes", "y"} or seal.pack_mismatch:
             fin["recommended_approval_amount"] = "Rs. 0"
             fin["net_claimable_amount"] = fin.get("net_claimable_amount") or "Rs. 0"
             if isinstance(result.get("claim_savings"), dict):
@@ -507,6 +599,7 @@ def apply_identity_seal(
         "claim_incident_number": seal.claim_incident_number,
         "policy_number": seal.policy_number,
         "total_hospital_bill": seal.total_hospital_bill,
+        "pack_mismatch": seal.pack_mismatch,
         "provenance": seal.provenance,
     }
     return result
