@@ -332,6 +332,27 @@ def run_full_audit(
         case_facts_ledger["merged"] = merged
         case_facts_ledger["claim_identity"] = identity
 
+    progress("notebook", 65, "Building Case Notebook (corpus + Assessor FWA)…")
+    from backend.notebook import build_case_notebook, apply_notebook_to_result
+    case_notebook = build_case_notebook(
+        case_text=case_text,
+        doc_blocks=doc_blocks,
+        expected_patient_name=str(
+            identity.get("patient_name")
+            or (case_facts_ledger.get("merged") or {}).get("patient_name")
+            or ""
+        ),
+        current_claim=str((insurance_facts or {}).get("claim_incident_number") or ""),
+        current_policy=str((insurance_facts or {}).get("policy_number") or ""),
+    )
+    # Prefer notebook-validated IDs before guideline/audit LLM
+    if case_notebook.validated_ids.get("claim_incident_number"):
+        insurance_facts["claim_incident_number"] = case_notebook.validated_ids[
+            "claim_incident_number"
+        ].split(".", 1)[0]
+    if case_notebook.validated_ids.get("policy_number"):
+        insurance_facts["policy_number"] = case_notebook.validated_ids["policy_number"]
+
     # Drop policy wordings / uploaded guideline PDFs from clinical reasoning context
     clinical_text = clinical_case_text(case_text)
     clinical_synthesis = build_clinical_synthesis_section(clinical_text)
@@ -423,6 +444,7 @@ def run_full_audit(
             result, case_text, insurance_facts, claim_facts, source_summaries,
             case_facts_ledger=case_facts_ledger,
         )
+        result = apply_notebook_to_result(result, case_notebook)
         progress("verify", 92, "Verifying evidence & assembling case record…")
         result = apply_agent_postprocess(
             result,
@@ -435,6 +457,8 @@ def run_full_audit(
         result["document_sources"] = source_summaries
         result["case_facts_ledger"] = case_facts_ledger
         result["guideline_alignment"] = alignment
+        # Re-apply notebook IDs/FWA after agent postprocess so they survive overwrites
+        result = apply_notebook_to_result(result, case_notebook)
 
         if all([
             not result.get("patient_details"),
@@ -454,6 +478,8 @@ def run_full_audit(
             "guideline_stores": guideline_stores,
             "index": first_index,
             "chunks": first_chunks,
+            "notebook_corpus": case_notebook.corpus_text(max_chars=120_000),
+            "notebook_meta": result.get("case_notebook") or {},
         }
         # Prefer durable cache (survives process restart); fall back to in-memory dict.
         try:

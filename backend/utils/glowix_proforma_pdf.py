@@ -520,8 +520,45 @@ def generate_glowix_expert_opinion_pdf(data: dict, filename: str = "audit_report
         ("Patient Liability (if any)", _na(fin.get("patient_liability"))),
     ], styles))
 
-    # 6. Auditor observations
-    story.append(Paragraph("6. AUDITOR'S OBSERVATIONS", styles["section"]))
+    # 6. FWA Investigation (Case Notebook)
+    fwa_rows = data.get("fwa_investigation") or (data.get("fraud_abuse") or {}).get("findings") or []
+    if isinstance(fwa_rows, list) and fwa_rows:
+        story.append(Paragraph("6. FWA INVESTIGATION (CASE NOTEBOOK)", styles["section"]))
+        risk = _na((data.get("fraud_abuse") or {}).get("risk_level"))
+        summary = str((data.get("fraud_abuse") or {}).get("summary") or "").strip()
+        story.append(_kv_block([
+            ("Overall FWA Risk", risk),
+        ], styles))
+        if summary:
+            story.append(Paragraph(_esc(summary), styles["body"]))
+        for i, row in enumerate(fwa_rows[:10], start=1):
+            if not isinstance(row, dict):
+                continue
+            ind = str(row.get("indicator") or "").strip()
+            if not ind:
+                continue
+            sev = str(row.get("severity") or "").strip()
+            ev = str(row.get("evidence") or "").strip()
+            rec = str(row.get("recommendation") or "").strip()
+            cite = row.get("citation") or {}
+            cite_bits = []
+            if cite.get("filename"):
+                cite_bits.append(str(cite["filename"]))
+            if cite.get("page"):
+                cite_bits.append(f"p.{cite['page']}")
+            cite_lbl = f" [{', '.join(cite_bits)}]" if cite_bits else ""
+            story.append(Paragraph(
+                _esc(f"{i}. [{sev or 'Medium'}] {ind}{cite_lbl}"),
+                styles["q"],
+            ))
+            body = ev
+            if rec:
+                body = f"{ev} Recommendation: {rec}".strip()
+            if body:
+                story.append(Paragraph(_esc(body), styles["a"]))
+
+    # 7. Auditor observations
+    story.append(Paragraph("7. AUDITOR'S OBSERVATIONS", styles["section"]))
     story.append(_kv_block([
         ("Any Missing Documents?", _missing_documents_answer(checklist)),
         ("Diagnosis vs Treatment Appropriate", "Following are the observations-"),
@@ -563,8 +600,8 @@ def generate_glowix_expert_opinion_pdf(data: dict, filename: str = "audit_report
         ("Compliance with Guidelines?", _na(data.get("compliance_verdict"))),
     ], styles))
 
-    # 7. Conclusion / Final audit decision
-    story.append(Paragraph("7. CONCLUSION", styles["section"]))
+    # 8. Conclusion / Final audit decision
+    story.append(Paragraph("8. CONCLUSION", styles["section"]))
     recommended = str(
         data.get("claim_recommended")
         or data.get("claim_recommendation")
@@ -586,13 +623,13 @@ def generate_glowix_expert_opinion_pdf(data: dict, filename: str = "audit_report
         conclusion = " ".join(str(b) for b in bullets[:4]) if bullets else "NA"
     story.append(Paragraph(_esc(conclusion), styles["body"]))
 
-    # 8. Remarks
-    story.append(Paragraph("8. REMARKS", styles["section"]))
+    # 9. Remarks
+    story.append(Paragraph("9. REMARKS", styles["section"]))
     remarks = str(data.get("remarks") or "").strip() or (
-        "This report is based on available documents. We recommend that all future "
-        "OPD/Hospital admission records should include complete clinical notes to support "
-        "claim validation. Hospitals and clinics must follow standard documentation "
-        "practices to avoid ambiguity in insurance claims."
+        "This report is based on available documents and Case Notebook grounded review. "
+        "We recommend that all future OPD/Hospital admission records should include "
+        "complete clinical notes to support claim validation. Hospitals and clinics must "
+        "follow standard documentation practices to avoid ambiguity in insurance claims."
     )
     story.append(Paragraph(_esc(remarks), styles["body"]))
     story.append(Spacer(1, 16))

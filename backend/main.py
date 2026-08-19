@@ -365,7 +365,7 @@ async def audit(
             )
 
         _audit_log(request_id, "fast QA mode (no OCR)")
-        case_text = cached["case_text"]
+        case_text = cached.get("notebook_corpus") or cached["case_text"]
         images = cached.get("images") or []
         stores = cached.get("guideline_stores") or []
         if not stores and cached.get("index") is not None:
@@ -375,6 +375,7 @@ async def audit(
         guidelines_label = cached.get("guideline") or ""
         guidelines_used = cached.get("guidelines") or []
 
+        # Prefer notebook corpus for Ask (fuller grounded context)
         result = run_audit(
             case_text,
             relevant_guideline,
