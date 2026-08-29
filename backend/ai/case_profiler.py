@@ -4,8 +4,8 @@ import json
 import re
 from typing import Any, List
 
-import backend.config  # noqa: F401 — load .env before OpenAI client
-from backend.llm_client import get_openai_client
+import backend.config  # noqa: F401 — load .env before LLM client
+from backend.llm_client import get_llm_provider, model_for
 
 
 def stringify_item(item: Any) -> str:
@@ -118,15 +118,12 @@ CASE:
 {excerpt}
 """
 
-    client = get_openai_client()
-    response = client.responses.create(model="gpt-4o-mini", input=prompt)
-    raw = ""
-    if hasattr(response, "output") and response.output:
-        for item in response.output:
-            if hasattr(item, "content"):
-                for c in item.content:
-                    if hasattr(c, "text"):
-                        raw += c.text
+    provider = get_llm_provider()
+    raw = provider.complete(
+        model=model_for("extract"),
+        text_parts=[prompt],
+        json_mode=True,
+    )
 
     profile = _parse_json(raw)
     profile.setdefault("diagnosis", "")

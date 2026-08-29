@@ -1,4 +1,8 @@
-"""Helpers for OpenAI Responses API — text extraction and image payloads."""
+"""Helpers retained for legacy OpenAI Responses shapes.
+
+New code should use ``backend.llm_client.get_llm_provider().complete(...)``.
+These helpers remain for any residual OpenAI-specific tooling.
+"""
 
 import base64
 from typing import Any

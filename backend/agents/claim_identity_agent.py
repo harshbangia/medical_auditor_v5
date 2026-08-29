@@ -150,25 +150,19 @@ def _vision_extract_page(image_b64: str) -> dict:
     if not image_b64:
         return {}
     try:
-        from backend.ai.llm_helpers import extract_response_text, image_input_part
-        from backend.llm_client import get_openai_client
+        from backend.llm_client import ImageInput, get_llm_provider, model_for
     except Exception as exc:
         print(f"⚠️ claim_identity vision unavailable: {exc}")
         return {}
 
-    content = [
-        {"type": "input_text", "text": _IDENTITY_PROMPT},
-        image_input_part(image_b64, detail="high"),
-    ]
     try:
-        client = get_openai_client()
-        model = os.getenv("VISION_OCR_MODEL", "gpt-4o")
-        response = client.responses.create(
-            model=model,
-            input=[{"role": "user", "content": content}],
-            text={"format": {"type": "json_object"}},
+        raw = get_llm_provider().complete(
+            model=model_for("vision_ocr"),
+            text_parts=[_IDENTITY_PROMPT],
+            images=[ImageInput(b64=image_b64, detail="high")],
+            json_mode=True,
         )
-        return _parse_json(extract_response_text(response) or "")
+        return _parse_json(raw or "")
     except Exception as exc:
         print(f"⚠️ claim_identity vision call failed: {exc}")
         return {}

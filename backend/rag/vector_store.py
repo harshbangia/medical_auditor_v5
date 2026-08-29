@@ -4,8 +4,9 @@ import re
 import faiss
 import numpy as np
 
-import backend.config  # noqa: F401 — load .env before OpenAI client
-from backend.llm_client import get_openai_client
+import backend.config  # noqa: F401 — load .env before LLM client
+from backend.llm_client import get_llm_provider
+from backend.llm.models import embedding_model
 
 _CLINICAL_BOOST = [
     "diagnosis", "treatment", "surgery", "biopsy", "indication", "contraindication",
@@ -16,11 +17,8 @@ _CLINICAL_BOOST = [
 
 
 def get_embedding(text):
-    response = get_openai_client().embeddings.create(
-        model="text-embedding-3-small",
-        input=text,
-    )
-    return response.data[0].embedding
+    vectors = get_llm_provider().embed([text], model=embedding_model())
+    return vectors[0]
 
 
 def chunk_text(text, chunk_size=1200, overlap=150):
@@ -67,11 +65,7 @@ def build_vector_store(text):
     chunks = chunk_text(text)
     print(f"📦 Total chunks: {len(chunks)}")
 
-    response = get_openai_client().embeddings.create(
-        model="text-embedding-3-small",
-        input=chunks,
-    )
-    embeddings = [e.embedding for e in response.data]
+    embeddings = get_llm_provider().embed(chunks, model=embedding_model())
     embeddings = np.array(embeddings).astype("float32")
 
     index = faiss.IndexFlatL2(len(embeddings[0]))

@@ -5,18 +5,15 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Optional
 
-import backend.config  # noqa: F401 — load .env before OpenAI client
+import backend.config  # noqa: F401 — load .env before LLM client
 
-from backend.ai.llm_helpers import extract_response_text, image_input_part
 from backend.ai.case_profiler import normalize_str_list, profile_to_audit_context
 from backend.ai.drug_normalizer import build_medication_evidence_section
 from backend.utils.case_facts_ledger import format_ledger_for_audit
 from backend.agents.orchestrator import mcr_context_for_audit
-from backend.llm_client import get_openai_client
+from backend.llm_client import ImageInput, get_llm_provider, model_for
 
 _VISION_BATCH_SIZE = 1  # one image per API call — avoids multimodal 400 errors
-_VISION_MODEL = os.getenv("VISION_MODEL", "gpt-4o-mini")
-_AUDIT_MODEL = os.getenv("AUDIT_MODEL", "gpt-4o")
 
 _VISION_PROMPT = """You are assisting an INSURANCE MEDICAL AUDITOR reviewing hospital claim documents.
 
@@ -104,8 +101,10 @@ def _select_images_for_audit(images, max_images=12):
 
 
 def _analyze_image_batch(batch, case_hint: str = "") -> str:
-    """Analyze images one per request — reliable format for Responses API vision."""
+    """Analyze images one per request — provider-agnostic multimodal."""
     parts = []
+    provider = get_llm_provider()
+    vision_model = model_for("vision")
     for img in batch:
         b64 = (img.get("base64") or "").strip()
         if not b64:
@@ -113,19 +112,16 @@ def _analyze_image_batch(batch, case_hint: str = "") -> str:
         label = f"Page {img['page']}"
         if img.get("source"):
             label += f" ({img['source']})"
-        content = [
-            {"type": "input_text", "text": _VISION_PROMPT},
-        ]
+        text_parts = [_VISION_PROMPT]
         if case_hint:
-            content.append({"type": "input_text", "text": f"Case context: {case_hint[:800]}"})
-        content.append({"type": "input_text", "text": label})
-        content.append(image_input_part(b64, detail="low"))
+            text_parts.append(f"Case context: {case_hint[:800]}")
+        text_parts.append(label)
         try:
-            response = get_openai_client().responses.create(
-                model=_VISION_MODEL,
-                input=[{"role": "user", "content": content}],
+            text = provider.complete(
+                model=vision_model,
+                text_parts=text_parts,
+                images=[ImageInput(b64=b64, detail="low")],
             )
-            text = extract_response_text(response)
             if text:
                 parts.append(text)
         except Exception as exc:
@@ -508,29 +504,14 @@ GUIDELINE EXCERPTS ({guideline_name}):
 
 
 def _call_audit_llm(prompt: str) -> str:
-    """Call audit model with JSON output; fall back to Chat Completions if needed."""
-    client = get_openai_client()
-
-    try:
-        response = client.responses.create(
-            model=_AUDIT_MODEL,
-            input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
-            text={"format": {"type": "json_object"}},
-        )
-        text = extract_response_text(response)
-        if text:
-            return text
-        print("⚠️ Responses audit returned empty text; trying chat completions fallback")
-    except Exception as exc:
-        print(f"⚠️ Responses audit error: {exc}; trying chat completions fallback")
-
-    response = client.chat.completions.create(
-        model=_AUDIT_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        response_format={"type": "json_object"},
+    """Call audit model with JSON output via configured LLM provider."""
+    provider = get_llm_provider()
+    return provider.complete(
+        model=model_for("audit"),
+        text_parts=[prompt],
+        json_mode=True,
         temperature=0.2,
     )
-    return (response.choices[0].message.content or "").strip()
 
 
 def run_audit(

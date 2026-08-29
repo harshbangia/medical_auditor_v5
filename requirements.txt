@@ -2,6 +2,7 @@ fastapi
 uvicorn[standard]
 python-multipart
 openai
+google-genai
 faiss-cpu
 numpy
 pymupdf

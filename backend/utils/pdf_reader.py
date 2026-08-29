@@ -269,8 +269,7 @@ def _transcribe_page_with_vision(image_b64: str, page_num: int, source_name: str
     if not VISION_OCR_ENABLED or not image_b64:
         return ""
     try:
-        from backend.llm_client import get_openai_client
-        from backend.ai.llm_helpers import extract_response_text, image_input_part
+        from backend.llm_client import ImageInput, get_llm_provider, model_for
     except Exception as exc:
         print(f"⚠️ Vision transcription unavailable (import error): {exc}")
         return ""
@@ -279,19 +278,12 @@ def _transcribe_page_with_vision(image_b64: str, page_num: int, source_name: str
     if source_name:
         label += f" of {source_name}"
 
-    content = [
-        {"type": "input_text", "text": _VISION_OCR_PROMPT},
-        {"type": "input_text", "text": label},
-        image_input_part(image_b64, detail="high"),
-    ]
-
     try:
-        client = get_openai_client()
-        response = client.responses.create(
-            model=VISION_OCR_MODEL,
-            input=[{"role": "user", "content": content}],
-        )
-        text = (extract_response_text(response) or "").strip()
+        text = get_llm_provider().complete(
+            model=model_for("vision_ocr"),
+            text_parts=[_VISION_OCR_PROMPT, label],
+            images=[ImageInput(b64=image_b64, detail="high")],
+        ).strip()
         if not text or text.upper().startswith("BLANK PAGE"):
             return ""
         return text

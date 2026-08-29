@@ -9,8 +9,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 import backend.config  # noqa: F401
 from backend.ai.case_profiler import normalize_case_profile, normalize_str_list, stringify_item
-from backend.ai.llm_helpers import extract_response_text
-from backend.llm_client import get_openai_client
+from backend.llm_client import get_llm_provider, model_for
 from backend.utils.demographics_normalizer import (
     extract_typed_demographics,
     sanitize_mapped_facts,
@@ -18,7 +17,6 @@ from backend.utils.demographics_normalizer import (
 
 ProgressFn = Callable[[str, int, str], None]
 _MAX_DOC_CHARS = 12000
-_MAP_MODEL = "gpt-4o-mini"
 
 
 def _parse_json(text: str) -> dict:
@@ -129,19 +127,12 @@ DOCUMENT TEXT:
 """
 
     try:
-        client = get_openai_client()
-        response = client.responses.create(
-            model=_MAP_MODEL,
-            input=prompt,
-            text={"format": {"type": "json_object"}},
+        provider = get_llm_provider()
+        raw = provider.complete(
+            model=model_for("extract"),
+            text_parts=[prompt],
+            json_mode=True,
         )
-        raw = extract_response_text(response)
-        if not raw and hasattr(response, "output") and response.output:
-            for item in response.output:
-                if hasattr(item, "content"):
-                    for c in item.content:
-                        if hasattr(c, "text"):
-                            raw += c.text
     except Exception as exc:
         base = {
             "source_file": filename,

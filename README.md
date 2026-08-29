@@ -16,7 +16,8 @@ AI-powered medical insurance claim audit platform.
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-# Configure .env (OPENAI_API_KEY, DATABASE_URL, etc.)
+# Configure .env (LLM_PROVIDER, GEMINI_API_KEY or OPENAI_API_KEY, DATABASE_URL, etc.)
+# See .env.example and docs/LLM_PROVIDER_MIGRATION.md
 uvicorn backend.main:app --reload --port 8000
 
 # Frontend (separate terminal)

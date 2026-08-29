@@ -448,8 +448,7 @@ def _looks_like_insurance_letter(page_text: str) -> bool:
 def extract_insurer_from_letterhead(pdf_path: str, page_num: int = 1) -> str:
     """Vision pass on insurance-letter page 1 to read logo/footer company name."""
     try:
-        from backend.ai.llm_helpers import extract_response_text, image_input_part
-        from backend.llm_client import get_openai_client
+        from backend.llm_client import ImageInput, get_llm_provider, model_for
     except Exception as exc:
         print(f"⚠️ Letterhead vision unavailable: {exc}")
         return ""
@@ -458,18 +457,12 @@ def extract_insurer_from_letterhead(pdf_path: str, page_num: int = 1) -> str:
     if not image_b64:
         return ""
 
-    content = [
-        {"type": "input_text", "text": _LETTERHEAD_PROMPT},
-        image_input_part(image_b64, detail="high"),
-    ]
     try:
-        client = get_openai_client()
-        model = __import__("os").getenv("VISION_OCR_MODEL", "gpt-4o")
-        response = client.responses.create(
-            model=model,
-            input=[{"role": "user", "content": content}],
-        )
-        text = (extract_response_text(response) or "").strip()
+        text = get_llm_provider().complete(
+            model=model_for("vision_ocr"),
+            text_parts=[_LETTERHEAD_PROMPT],
+            images=[ImageInput(b64=image_b64, detail="high")],
+        ).strip()
         m = re.search(r"INSURER:\s*(.+)", text, re.I)
         if not m:
             return ""

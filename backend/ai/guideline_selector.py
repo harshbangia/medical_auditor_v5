@@ -1,7 +1,7 @@
 import os
 
 import backend.config  # noqa: F401
-from backend.llm_client import get_openai_client
+from backend.llm_client import get_llm_provider, model_for
 from backend.services.s3_utils import guidelines_cache
 
 
@@ -13,16 +13,6 @@ def _list_guidelines():
     if os.path.isdir("data/guidelines"):
         return [f for f in os.listdir("data/guidelines") if f.lower().endswith(".pdf")]
     return []
-
-def extract_text(response):
-    text = ""
-    if hasattr(response, "output") and response.output:
-        for item in response.output:
-            if hasattr(item, "content"):
-                for c in item.content:
-                    if hasattr(c, "text"):
-                        text += c.text
-    return text.strip()
 
 
 def select_guideline(case_text):
@@ -43,9 +33,8 @@ CASE:
 {case_text[:3000]}
 """
 
-    response = get_openai_client().responses.create(
-        model="gpt-4o-mini",
-        input=prompt
+    text = get_llm_provider().complete(
+        model=model_for("extract"),
+        text_parts=[prompt],
     )
-
-    return extract_text(response)
+    return (text or "").strip()
