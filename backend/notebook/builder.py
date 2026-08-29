@@ -302,10 +302,33 @@ def apply_notebook_to_result(result: dict, notebook: CaseNotebook) -> dict:
 
     # Never copy Assessor hospital/diagnosis onto a mismatched patient
     if not seal.pack_mismatch:
-        if notebook.assessor.get("hospital") and not claim.get("hospital"):
+        if notebook.assessor.get("hospital") and (
+            not claim.get("hospital")
+            or len(str(notebook.assessor["hospital"])) > len(str(claim.get("hospital") or ""))
+        ):
             claim["hospital"] = notebook.assessor["hospital"]
-        if notebook.assessor.get("diagnosis") and not claim.get("diagnosis"):
-            claim["diagnosis"] = notebook.assessor["diagnosis"]
+        dx = str(notebook.assessor.get("diagnosis") or "").strip()
+        cur_dx = str(claim.get("diagnosis") or "").strip().lower()
+        if dx and (
+            not cur_dx
+            or cur_dx in {"na", "n/a", "unknown", "-", "—"}
+            or "not clearly" in cur_dx
+        ):
+            claim["diagnosis"] = dx
+        # Demographics from Assessor (age is critical — LLM often invents child ages)
+        patient = result.setdefault("patient_details", {})
+        if notebook.assessor.get("patient_name"):
+            patient["name"] = notebook.assessor["patient_name"]
+        if notebook.assessor.get("age"):
+            patient["age"] = str(notebook.assessor["age"])
+        if notebook.assessor.get("sex"):
+            patient["sex"] = notebook.assessor["sex"]
+        if notebook.assessor.get("date_of_birth"):
+            patient["date_of_birth"] = notebook.assessor["date_of_birth"]
+        if notebook.assessor.get("date_of_admission"):
+            claim["date_of_admission"] = notebook.assessor["date_of_admission"]
+        if notebook.assessor.get("date_of_discharge"):
+            claim["date_of_discharge"] = notebook.assessor["date_of_discharge"]
 
     _merge_fwa_into_result(result, notebook.fwa_findings)
 

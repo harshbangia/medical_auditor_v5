@@ -46,6 +46,35 @@ def _names_equivalent(a: str, b: str) -> bool:
                 shorter, longer = (x, y) if len(x) < len(y) else (y, x)
                 if shorter in longer:
                     return True
+    # Token overlap for OCR twins: Bhagyashri Vitthal Tatkare ↔ Bhagyshree Tarkate
+    # Require shared surname-ish token (≥4 chars) + shared given-name prefix (≥4 chars)
+    ta = [t for t in re.findall(r"[a-z]{3,}", (a or "").lower()) if t not in {"mrs", "mr", "ms", "miss"}]
+    tb = [t for t in re.findall(r"[a-z]{3,}", (b or "").lower()) if t not in {"mrs", "mr", "ms", "miss"}]
+    if ta and tb:
+        def _token_match(x: str, y: str) -> bool:
+            if x == y or x in y or y in x:
+                return True
+            if abs(len(x) - len(y)) <= 2 and sum(1 for p, q in zip(x, y) if p != q) <= 2:
+                return True
+            # OCR: tatkare/tatkane/tarkate, bhagyashri/bhagyashree/bhruygshree
+            if len(x) >= 5 and len(y) >= 5 and x[:4] == y[:4]:
+                return True
+            return False
+
+        shared = 0
+        used_b = set()
+        for x in ta:
+            for j, y in enumerate(tb):
+                if j in used_b:
+                    continue
+                if _token_match(x, y):
+                    shared += 1
+                    used_b.add(j)
+                    break
+        if shared >= 2:
+            return True
+        if shared >= 1 and (len(ta) == 1 or len(tb) == 1):
+            return True
     return False
 
 
@@ -125,21 +154,54 @@ def detect_foreign_patient_names(
                     or sum(1 for a, b in zip(key, expected) if a != b) >= 3
                 ):
                     seen.add(key)
-                    findings.append({
-                        "category": "identity_fraud",
-                        "indicator": "Patient name mismatch across documents",
-                        "evidence": (
-                            f"'{alien}' on {ch.filename} p.{ch.page or '?'} vs expected "
-                            f"'{expected_name}'."
-                        ),
-                        "severity": "High",
-                        "recommendation": "Reconcile identity with Aadhaar / hospital IP record.",
-                        "citation": {
-                            "filename": ch.filename,
-                            "page": ch.page,
-                            "excerpt": alien,
-                        },
-                    })
+                    # Soft surname/given overlap → OCR twin (Low). Else true foreign (High).
+                    ta = set(re.findall(r"[a-z]{4,}", alien.lower()))
+                    tb = set(re.findall(r"[a-z]{4,}", expected_name.lower()))
+                    soft = False
+                    for x in ta:
+                        for y in tb:
+                            if x[:4] == y[:4] or x in y or y in x:
+                                soft = True
+                                break
+                        if soft:
+                            break
+                    if soft:
+                        findings.append({
+                            "category": "identity_fraud",
+                            "indicator": "Patient name OCR variant across documents",
+                            "evidence": (
+                                f"'{alien}' on {ch.filename} p.{ch.page or '?'} vs expected "
+                                f"'{expected_name}' (likely OCR/spelling variant — verify KYC)."
+                            ),
+                            "severity": "Low",
+                            "recommendation": (
+                                "Confirm Assessor + Aadhaar identity; "
+                                "do not deny solely on OCR spelling."
+                            ),
+                            "citation": {
+                                "filename": ch.filename,
+                                "page": ch.page,
+                                "excerpt": alien,
+                            },
+                        })
+                    else:
+                        findings.append({
+                            "category": "identity_fraud",
+                            "indicator": "Patient name mismatch across documents",
+                            "evidence": (
+                                f"'{alien}' on {ch.filename} p.{ch.page or '?'} vs expected "
+                                f"'{expected_name}'."
+                            ),
+                            "severity": "High",
+                            "recommendation": (
+                                "Reconcile identity with Aadhaar / hospital IP record."
+                            ),
+                            "citation": {
+                                "filename": ch.filename,
+                                "page": ch.page,
+                                "excerpt": alien,
+                            },
+                        })
     return findings
 
 

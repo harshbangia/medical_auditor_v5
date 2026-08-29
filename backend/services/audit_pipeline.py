@@ -192,6 +192,14 @@ def _process_files_sequential(file_items: List[tuple], progress: ProgressFn) -> 
             unique[name] = data
     file_items = list(unique.items())
 
+    # Assessor / KYC / bill / discharge first so seals have text before long clinical packs
+    from backend.utils.pdf_reader import _is_priority_document
+
+    file_items = sorted(
+        file_items,
+        key=lambda kv: (0 if _is_priority_document(kv[0]) else 1, kv[0].lower()),
+    )
+
     total = len(file_items)
     progress("extracting", 10, f"Processing {total} PDF(s)…")
     print(f"[audit] extracting {total} PDF(s)", flush=True)
@@ -360,6 +368,33 @@ def run_full_audit(
         current_policy=str((insurance_facts or {}).get("policy_number") or ""),
         admission_date=admit_for_notebook,
     )
+    # Prefer Assessor-sealed patient name as expected identity for contradiction checks
+    if case_notebook.assessor and case_notebook.assessor.get("patient_name"):
+        assessor_name = str(case_notebook.assessor.get("patient_name") or "").strip()
+        if assessor_name and (
+            not case_notebook.expected_patient_name
+            or len(assessor_name) >= len(case_notebook.expected_patient_name)
+        ):
+            # Rebuild contradictions against Assessor name when identity agent was empty/wrong
+            if not identity.get("patient_name"):
+                case_notebook = build_case_notebook(
+                    case_text=case_text,
+                    doc_blocks=doc_blocks,
+                    expected_patient_name=assessor_name,
+                    current_claim=str(
+                        case_notebook.validated_ids.get("claim_incident_number")
+                        or (insurance_facts or {}).get("claim_incident_number")
+                        or ""
+                    ),
+                    current_policy=str(
+                        case_notebook.validated_ids.get("policy_number")
+                        or (insurance_facts or {}).get("policy_number")
+                        or ""
+                    ),
+                    admission_date=str(
+                        case_notebook.assessor.get("date_of_admission") or admit_for_notebook
+                    ),
+                )
     # Prefer notebook-validated IDs before guideline/audit LLM
     if case_notebook.validated_ids.get("claim_incident_number"):
         insurance_facts["claim_incident_number"] = case_notebook.validated_ids[
@@ -367,6 +402,31 @@ def run_full_audit(
         ].split(".", 1)[0]
     if case_notebook.validated_ids.get("policy_number"):
         insurance_facts["policy_number"] = case_notebook.validated_ids["policy_number"]
+    # Push Assessor demographics into claim/ledger early so LLM sees correct age
+    if case_notebook.assessor and not case_notebook.assessor.get("pack_mismatch"):
+        ass = case_notebook.assessor
+        if ass.get("age"):
+            identity["age"] = str(ass["age"])
+            claim_facts["age"] = str(ass["age"])
+            (case_facts_ledger.setdefault("merged", {}))["age"] = str(ass["age"])
+        if ass.get("patient_name"):
+            identity["patient_name"] = str(ass["patient_name"])
+            (case_facts_ledger.setdefault("merged", {}))["patient_name"] = str(
+                ass["patient_name"]
+            )
+        if ass.get("date_of_admission"):
+            claim_facts["date_of_admission"] = str(ass["date_of_admission"])
+        if ass.get("date_of_discharge"):
+            claim_facts["date_of_discharge"] = str(ass["date_of_discharge"])
+        if ass.get("hospital"):
+            claim_facts["hospital"] = str(ass["hospital"])
+        if ass.get("diagnosis") and not claim_facts.get("diagnosis"):
+            claim_facts["diagnosis"] = str(ass["diagnosis"])
+        if ass.get("claimed_amount"):
+            claim_facts["total_hospital_bill"] = str(ass["claimed_amount"])
+            (case_facts_ledger.setdefault("merged", {}))["bill_amount"] = str(
+                ass["claimed_amount"]
+            )
 
     # Drop policy wordings / uploaded guideline PDFs from clinical reasoning context
     clinical_text = clinical_case_text(case_text)
@@ -504,6 +564,24 @@ def run_full_audit(
             ),
         )
         result = apply_identity_seal(result, final_seal, force_zero_recommended_if_rejected=True)
+
+        progress("narrative", 95, "Deepening auditor observations (NotebookLM-style)…")
+        try:
+            from backend.notebook.deep_narrative import deepen_observations
+
+            result = deepen_observations(
+                result,
+                corpus_text=case_notebook.corpus_text(max_chars=80_000)
+                if hasattr(case_notebook, "corpus_text")
+                else (case_notebook.full_corpus or clinical_text),
+                guideline_text=relevant_guideline or "",
+            )
+            # Re-seal after narrative so headers cannot drift
+            result = apply_identity_seal(
+                result, final_seal, force_zero_recommended_if_rejected=True
+            )
+        except Exception as exc:
+            print(f"⚠️ Deep narrative skipped: {exc}", flush=True)
 
         if all([
             not result.get("patient_details"),

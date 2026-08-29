@@ -32,6 +32,18 @@ MAX_VISION_OCR_PAGES = int(os.getenv("MAX_VISION_OCR_PAGES", "25"))
 VISION_OCR_DPI = int(os.getenv("VISION_OCR_DPI", "220"))
 VISION_OCR_MIN_NATIVE_CHARS = int(os.getenv("VISION_OCR_MIN_NATIVE_CHARS", "120"))
 
+# Priority docs always get more vision pages (Assessor / KYC / bill / discharge).
+_PRIORITY_DOC_RE = re.compile(
+    r"assessor|aadhaar|aadhar|final\s*bill|discharge|claim\s*form|"
+    r"pre[\s-]?auth|cashless|policy\s*schedule|kyc",
+    re.I,
+)
+PRIORITY_VISION_OCR_PAGES = int(os.getenv("PRIORITY_VISION_OCR_PAGES", "40"))
+
+
+def _is_priority_document(source_name: str) -> bool:
+    return bool(_PRIORITY_DOC_RE.search(source_name or ""))
+
 _CLINICAL_KEYWORDS = re.compile(
     r"\b(x-?ray|radiograph|ct\s|mri|ultrasound|usg|ecg|ekg|echo|histopath|biopsy|"
     r"specimen|wound|lesion|ulcer|fracture|scan|impression|film|mammogram|"
@@ -398,8 +410,10 @@ def extract_text_and_images(pdf_path, source_name: str = "", progress_cb=None):
                 # Header-only overlays usually sit on a full-page scan even when
                 # PyMuPDF reports image_count=0 (content-stream drawings) — still try.
                 continue
-            # Prefer early clinical pages when capping
+            # Prefer Assessor / KYC / bill / discharge, then early clinical pages
             priority = 0
+            if _is_priority_document(source_name):
+                priority += 10
             if header_only:
                 priority += 2
             if page_num <= 8:
@@ -412,12 +426,18 @@ def extract_text_and_images(pdf_path, source_name: str = "", progress_cb=None):
 
         candidates = [p for _, __, p in sorted(candidates, reverse=True)]
         if candidates:
-            if len(candidates) > MAX_VISION_OCR_PAGES:
+            page_cap = (
+                PRIORITY_VISION_OCR_PAGES
+                if _is_priority_document(source_name)
+                else MAX_VISION_OCR_PAGES
+            )
+            if len(candidates) > page_cap:
                 print(
-                    f"⚠️ Capping vision transcription to first {MAX_VISION_OCR_PAGES} "
+                    f"⚠️ Capping vision transcription to first {page_cap} "
                     f"of {len(candidates)} text-light / header-overlay pages"
+                    f"{' (priority document)' if _is_priority_document(source_name) else ''}"
                 )
-                candidates = candidates[:MAX_VISION_OCR_PAGES]
+                candidates = candidates[:page_cap]
             print(
                 f"🧠 Vision transcription on {len(candidates)} text-light page(s) "
                 f"using {VISION_OCR_MODEL}"

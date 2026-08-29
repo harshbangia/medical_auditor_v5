@@ -41,6 +41,11 @@ def parse_assessor_text(text: str, filename: str = "") -> Dict[str, Any]:
         "claim_type": "",
         "hospital": "",
         "diagnosis": "",
+        "age": "",
+        "date_of_birth": "",
+        "sex": "",
+        "date_of_admission": "",
+        "date_of_discharge": "",
         "fwa_alerts": [],
         "finance_bills": [],
         "identity_mismatches": [],
@@ -123,6 +128,87 @@ def parse_assessor_text(text: str, filename: str = "") -> Dict[str, Any]:
         re.compile(r"(?:diagnosis|claimed\s*illness)\s*[:.]?\s*([^\n]{5,120})", re.I),
         blob,
     )
+
+    # Demographics — Age / DOB / Gender (Assessor Insurance Details grid)
+    m_age = re.search(
+        r"\b(?:age|aged)\s*[:.]?\s*(\d{1,3})\s*(?:years?|yrs?|y(?:ears?)?)?\b",
+        blob,
+        re.I,
+    )
+    if m_age:
+        try:
+            a = int(m_age.group(1))
+            if 1 <= a <= 120:
+                out["age"] = str(a)
+        except ValueError:
+            pass
+
+    out["date_of_birth"] = _first(
+        re.compile(
+            r"(?:date\s*of\s*birth|d\.?o\.?b\.?)\s*[:.]?\s*"
+            r"(\d{1,2}[\/\-.\s]\d{1,2}[\/\-.\s](?:19|20)\d{2})",
+            re.I,
+        ),
+        blob,
+    )
+    out["sex"] = _first(
+        re.compile(r"\b(?:gender|sex)\s*[:.]?\s*(male|female|m|f)\b", re.I),
+        blob,
+    )
+    if out["sex"]:
+        s = out["sex"].strip().lower()
+        out["sex"] = (
+            "Female" if s.startswith("f") else ("Male" if s.startswith("m") else out["sex"])
+        )
+
+    out["date_of_admission"] = _first(
+        re.compile(
+            r"(?:date\s*of\s*admission|admission\s*date|d\.?o\.?a\.?)\s*[:.]?\s*"
+            r"(\d{1,2}[\/\-.\s]\d{1,2}[\/\-.\s](?:19|20)\d{2})",
+            re.I,
+        ),
+        blob,
+    )
+    out["date_of_discharge"] = _first(
+        re.compile(
+            r"(?:date\s*of\s*discharge|discharge\s*date|d\.?o\.?d\.?)\s*[:.]?\s*"
+            r"(\d{1,2}[\/\-.\s]\d{1,2}[\/\-.\s](?:19|20)\d{2})",
+            re.I,
+        ),
+        blob,
+    )
+
+    # Derive age from DOB when Assessor age missing (e.g. "12/04/1968")
+    if not out["age"] and out["date_of_birth"]:
+        from datetime import datetime
+
+        dob_raw = re.sub(r"\s+", "", out["date_of_birth"])
+        for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y"):
+            try:
+                dob = datetime.strptime(dob_raw, fmt)
+            except ValueError:
+                continue
+            ref = None
+            for d in (out["date_of_admission"], out["date_of_discharge"]):
+                if not d:
+                    continue
+                dd = re.sub(r"\s+", "", d)
+                for fmt2 in ("%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y"):
+                    try:
+                        ref = datetime.strptime(dd, fmt2)
+                        break
+                    except ValueError:
+                        continue
+                if ref:
+                    break
+            if ref is None:
+                ref = datetime(2026, 7, 6)
+            years = ref.year - dob.year - (
+                (ref.month, ref.day) < (dob.month, dob.day)
+            )
+            if 1 <= years <= 120:
+                out["age"] = str(years)
+            break
 
     # Finance table-ish rows: bill no + amount
     for m in re.finditer(
@@ -236,6 +322,11 @@ def merge_assessor_from_chunks(
         "claim_type": "",
         "hospital": "",
         "diagnosis": "",
+        "age": "",
+        "date_of_birth": "",
+        "sex": "",
+        "date_of_admission": "",
+        "date_of_discharge": "",
         "fwa_alerts": [],
         "finance_bills": [],
         "identity_mismatches": [],
@@ -264,6 +355,7 @@ def merge_assessor_from_chunks(
         for key in (
             "claim_number", "sub_claim_number", "policy_number", "patient_name",
             "claimed_amount", "claim_type", "hospital", "diagnosis",
+            "age", "date_of_birth", "sex", "date_of_admission", "date_of_discharge",
         ):
             val = parsed.get(key) or ""
             if not val:

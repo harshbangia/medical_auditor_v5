@@ -44,6 +44,14 @@ class IdentitySeal:
     policy_number: str = ""
     total_hospital_bill: str = ""
     claimed_amount: str = ""
+    patient_name: str = ""
+    age: str = ""
+    sex: str = ""
+    date_of_birth: str = ""
+    date_of_admission: str = ""
+    date_of_discharge: str = ""
+    hospital: str = ""
+    diagnosis: str = ""
     pack_mismatch: bool = False
     assessor_patient: str = ""
     expected_patient: str = ""
@@ -411,9 +419,10 @@ def resolve_bill_amount(
             "labeled_claimed_nextline",
         ),
         (
-            r"(?:total\s*(?:hospital\s*)?bill|grand\s*total|net\s*amount|sum\s*total)\s*[:.]?\s*"
+            r"(?:total\s*(?:hospital\s*)?bill|grand\s*total|net\s*amount|sum\s*total|"
+            r"total\s*bill\s*amount|bill\s*amount)\s*[:.]?\s*"
             r"(?:rs\.?|inr|₹)?\s*([\d,]+(?:\.\d{1,2})?)",
-            60,
+            75,
             "labeled_bill_total",
         ),
     ):
@@ -440,6 +449,9 @@ def resolve_bill_amount(
         # Penalize classic placeholders unless they're the only signal
         if amt in _PLACEHOLDER_BILLS and source != "assessor_claimed":
             weight = min(weight, 5)
+        # Tiny line-item noise (pharmacy lines, etc.) must not beat real bills
+        if amt < 5000 and source in {"current", "assessor_bill_row"}:
+            weight = min(weight, 8)
         scores[amt] += weight
         sources[amt].append(source)
 
@@ -449,6 +461,21 @@ def resolve_bill_amount(
         alts = [a for a in scores if a not in _PLACEHOLDER_BILLS and scores[a] >= 40]
         if alts:
             winner = max(alts, key=lambda a: (scores[a], a))
+
+    # Prefer a hospital grand-total when Assessor claimed is a round claim figure
+    # and a substantially larger labeled bill total exists (e.g. claimed 50k vs bill 79k).
+    claimed = _parse_money(assessor.get("claimed_amount"))
+    bill_totals = [
+        a for a, srcs in sources.items()
+        if any(s.startswith("labeled_bill") for s in srcs) and a >= 10000
+    ]
+    if (
+        claimed
+        and claimed in _PLACEHOLDER_BILLS
+        and bill_totals
+        and max(bill_totals) > claimed * 1.15
+    ):
+        winner = max(bill_totals, key=lambda a: (scores[a], a))
 
     return _fmt_inr(winner), {
         "winner": winner,
@@ -521,11 +548,74 @@ def build_identity_seal(
                 else str(bill_meta["winner"])
             )
 
+    # Assessor-first demographics / dates / hospital (never from OCR noise when present)
+    patient_name = ""
+    age = ""
+    sex = ""
+    dob = ""
+    doa = ""
+    dod = ""
+    hospital = ""
+    diagnosis = ""
+    if not mismatch and assessor:
+        patient_name = str(assessor.get("patient_name") or "").strip()
+        age = str(assessor.get("age") or "").strip()
+        sex = str(assessor.get("sex") or "").strip()
+        dob = str(assessor.get("date_of_birth") or "").strip()
+        doa = str(assessor.get("date_of_admission") or "").strip()
+        dod = str(assessor.get("date_of_discharge") or "").strip()
+        hospital = str(assessor.get("hospital") or "").strip()
+        diagnosis = str(assessor.get("diagnosis") or "").strip()
+        # Age from DOB if still blank
+        if not age and dob:
+            from datetime import datetime
+
+            dob_raw = re.sub(r"\s+", "", dob)
+            for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y"):
+                try:
+                    d0 = datetime.strptime(dob_raw, fmt)
+                except ValueError:
+                    continue
+                ref = None
+                for d in (doa, dod):
+                    if not d:
+                        continue
+                    dd = re.sub(r"\s+", "", d)
+                    for fmt2 in ("%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y"):
+                        try:
+                            ref = datetime.strptime(dd, fmt2)
+                            break
+                        except ValueError:
+                            continue
+                    if ref:
+                        break
+                if ref is None and admission_yyyymmdd and len(admission_yyyymmdd) == 8:
+                    try:
+                        ref = datetime.strptime(admission_yyyymmdd, "%Y%m%d")
+                    except ValueError:
+                        ref = None
+                if ref is None:
+                    ref = datetime(2026, 7, 6)
+                years = ref.year - d0.year - (
+                    (ref.month, ref.day) < (d0.month, d0.day)
+                )
+                if 1 <= years <= 120:
+                    age = str(years)
+                break
+
     return IdentitySeal(
         claim_incident_number=claim,
         policy_number=policy,
         total_hospital_bill=bill,
         claimed_amount=claimed,
+        patient_name=patient_name,
+        age=age,
+        sex=sex,
+        date_of_birth=dob,
+        date_of_admission=doa,
+        date_of_discharge=dod,
+        hospital=hospital,
+        diagnosis=diagnosis,
         pack_mismatch=bool(mismatch),
         assessor_patient=(mismatch or {}).get("assessor_patient", ""),
         expected_patient=(mismatch or {}).get("expected_patient", ""),
@@ -534,6 +624,7 @@ def build_identity_seal(
             "policy": policy_meta,
             "bill": bill_meta,
             "pack_mismatch": mismatch,
+            "demographics_from_assessor": bool(patient_name or age or doa),
         },
     )
 
@@ -584,6 +675,46 @@ def apply_identity_seal(
         if isinstance(savings, dict):
             savings["total_claim_amount"] = seal.total_hospital_bill
 
+    # Assessor-first demographics / admission — overwrite OCR/LLM hallucinations
+    if not seal.pack_mismatch:
+        patient = result.setdefault("patient_details", {})
+        if seal.patient_name:
+            patient["name"] = seal.patient_name
+        if seal.age:
+            # Never keep implausible child ages when Assessor has adult age
+            try:
+                sealed_age = int(re.sub(r"\D", "", seal.age) or "0")
+            except ValueError:
+                sealed_age = 0
+            cur_age = 0
+            try:
+                cur_age = int(re.sub(r"\D", "", str(patient.get("age") or "")) or "0")
+            except ValueError:
+                cur_age = 0
+            if sealed_age >= 12 or cur_age < 12 or not patient.get("age"):
+                patient["age"] = str(sealed_age or seal.age)
+        if seal.sex:
+            patient["sex"] = seal.sex
+        if seal.date_of_birth:
+            patient["date_of_birth"] = seal.date_of_birth
+        if seal.date_of_admission:
+            claim["date_of_admission"] = seal.date_of_admission
+        if seal.date_of_discharge:
+            claim["date_of_discharge"] = seal.date_of_discharge
+        if seal.hospital and (
+            not str(claim.get("hospital") or "").strip()
+            or len(seal.hospital) >= len(str(claim.get("hospital") or ""))
+        ):
+            claim["hospital"] = seal.hospital
+        if seal.diagnosis:
+            cur_dx = str(claim.get("diagnosis") or "").strip().lower()
+            if (
+                not cur_dx
+                or cur_dx in {"na", "n/a", "unknown", "not clearly documented", "-"}
+                or "not clearly" in cur_dx
+            ):
+                claim["diagnosis"] = seal.diagnosis
+
     # Rejected claims should not show a positive recommended approval
     if force_zero_recommended_if_rejected:
         rec = str(result.get("claim_recommended") or "").strip().lower()
@@ -599,6 +730,9 @@ def apply_identity_seal(
         "claim_incident_number": seal.claim_incident_number,
         "policy_number": seal.policy_number,
         "total_hospital_bill": seal.total_hospital_bill,
+        "patient_name": seal.patient_name,
+        "age": seal.age,
+        "date_of_admission": seal.date_of_admission,
         "pack_mismatch": seal.pack_mismatch,
         "provenance": seal.provenance,
     }
