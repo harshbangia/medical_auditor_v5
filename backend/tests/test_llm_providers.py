@@ -141,10 +141,10 @@ class TestGeminiProviderComplete(unittest.TestCase):
         self.assertEqual(text, '{"ok": true}')
         kwargs = mock_client.models.generate_content.call_args.kwargs
         self.assertEqual(kwargs["model"], "gemini-3.6-flash")
-        config = kwargs["config"]
-        self.assertEqual(config.response_mime_type, "application/json")
-        # Gemini 3.x: do not pass temperature (API may reject it)
-        self.assertIsNone(getattr(config, "temperature", None))
+        self.assertEqual(
+            kwargs["config"],
+            {"response_mime_type": "application/json"},
+        )
 
 
 class TestMalformedJsonPath(unittest.TestCase):

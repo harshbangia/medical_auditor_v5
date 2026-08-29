@@ -61,23 +61,24 @@ class GeminiProvider:
         json_mode: bool = False,
         temperature: Optional[float] = None,
     ) -> str:
-        from google.genai import types
-
         contents: List[Any] = []
         for t in text_parts:
             if t:
                 contents.append(str(t))
-        for img in images or []:
-            mime, raw = _raw_b64(img.b64)
-            if not raw:
-                continue
-            try:
-                data = base64.b64decode(raw)
-            except Exception:
-                continue
-            contents.append(
-                types.Part.from_bytes(data=data, mime_type=mime)
-            )
+        if images:
+            from google.genai import types
+
+            for img in images:
+                mime, raw = _raw_b64(img.b64)
+                if not raw:
+                    continue
+                try:
+                    data = base64.b64decode(raw)
+                except Exception:
+                    continue
+                contents.append(
+                    types.Part.from_bytes(data=data, mime_type=mime)
+                )
         if not contents:
             return ""
 
@@ -86,13 +87,15 @@ class GeminiProvider:
         if model_id.lower().startswith("models/"):
             model_id = model_id[7:]
 
-        config_kwargs: dict = {}
+        # Dict config is supported (GenerateContentConfigOrDict).
+        config: Optional[dict] = {}
         if json_mode:
-            config_kwargs["response_mime_type"] = "application/json"
+            config["response_mime_type"] = "application/json"
         if temperature is not None and not model_id.lower().startswith("gemini-3"):
-            config_kwargs["temperature"] = temperature
+            config["temperature"] = temperature
+        if not config:
+            config = None
 
-        config = types.GenerateContentConfig(**config_kwargs) if config_kwargs else None
         response = self._client.models.generate_content(
             model=model_id,
             contents=contents,
