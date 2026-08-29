@@ -320,7 +320,7 @@ def _page_image_for_transcription(doc, pdf_path: str, page_num: int) -> str:
     return ""
 
 
-def extract_text_and_images(pdf_path, source_name: str = ""):
+def extract_text_and_images(pdf_path, source_name: str = "", progress_cb=None):
     text_parts = []
     page_meta = []
     page_count = 0
@@ -425,7 +425,18 @@ def extract_text_and_images(pdf_path, source_name: str = ""):
             doc_for_ocr = fitz.open(pdf_path)
             transcribed_blocks = []
             try:
-                for page_num in candidates:
+                for vi, page_num in enumerate(candidates):
+                    msg = (
+                        f"Vision OCR page {vi + 1}/{len(candidates)} "
+                        f"(PDF p{page_num}"
+                        f"{f', {source_name}' if source_name else ''})"
+                    )
+                    print(f"🧠 {msg}…", flush=True)
+                    if progress_cb:
+                        try:
+                            progress_cb(msg)
+                        except Exception:
+                            pass
                     image_b64 = _page_image_for_transcription(doc_for_ocr, pdf_path, page_num)
                     if not image_b64:
                         # Header-only with image_count=0: force high-DPI render

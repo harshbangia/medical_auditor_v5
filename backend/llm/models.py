@@ -64,7 +64,7 @@ def resolve_models(provider: str | None = None) -> Dict[str, str]:
         "audit": normalize_gemini_model(env("AUDIT_MODEL"), GEMINI_AUDIT_DEFAULT),
         "vision": normalize_gemini_model(env("VISION_MODEL"), GEMINI_FLASH_DEFAULT),
         "vision_ocr": normalize_gemini_model(
-            env("VISION_OCR_MODEL"), GEMINI_AUDIT_DEFAULT
+            env("VISION_OCR_MODEL"), GEMINI_FLASH_DEFAULT
         ),
         "extract": normalize_gemini_model(
             env("EXTRACT_MODEL") or env("VISION_MODEL"),

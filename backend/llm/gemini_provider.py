@@ -98,13 +98,14 @@ class GeminiProvider:
             model_id = model_id[7:]
 
         # Dict config is supported (GenerateContentConfigOrDict).
-        config: Optional[dict] = {}
+        # Disable AFC — OCR/audit prompts are not tool loops; AFC adds latency.
+        config: dict = {
+            "automatic_function_calling": {"disable": True},
+        }
         if json_mode:
             config["response_mime_type"] = "application/json"
         if temperature is not None and not model_id.lower().startswith("gemini-3"):
             config["temperature"] = temperature
-        if not config:
-            config = None
 
         response = self._client.models.generate_content(
             model=model_id,

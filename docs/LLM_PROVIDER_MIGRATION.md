@@ -23,7 +23,7 @@ LLM_PROVIDER=gemini
 GEMINI_API_KEY=...
 AUDIT_MODEL=gemini-3.1-pro-preview
 VISION_MODEL=gemini-3.6-flash
-VISION_OCR_MODEL=gemini-3.1-pro-preview
+VISION_OCR_MODEL=gemini-3.6-flash
 EXTRACT_MODEL=gemini-3.6-flash
 EMBEDDING_MODEL=gemini-embedding-001
 ```

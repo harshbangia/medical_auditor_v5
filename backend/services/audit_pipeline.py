@@ -204,6 +204,7 @@ def _process_files_sequential(file_items: List[tuple], progress: ProgressFn) -> 
 
     for idx, (name, data) in enumerate(file_items):
         pct = 10 + int(55 * idx / max(total, 1))
+        pct_done = 10 + int(55 * (idx + 1) / total)
         progress("extracting", pct, f"Processing PDF {idx + 1}/{total}: {name}")
         tmp_path = None
         try:
@@ -212,7 +213,15 @@ def _process_files_sequential(file_items: List[tuple], progress: ProgressFn) -> 
                 tmp.flush()
                 tmp_path = tmp.name
             temp_pdf_paths.append((tmp_path, name))
-            text, imgs = extract_text_and_images(tmp_path, source_name=name)
+
+            def _vision_progress(msg: str, _pct=pct, _done=pct_done):
+                # Stay inside this PDF's progress band so UI moves during long OCR.
+                mid = min(_done - 1, max(_pct, _pct + 1))
+                progress("extracting", mid, f"PDF {idx + 1}/{total}: {msg}")
+
+            text, imgs = extract_text_and_images(
+                tmp_path, source_name=name, progress_cb=_vision_progress
+            )
             if text.strip():
                 case_texts.append(f"=== Source document: {name} ===\n{text}")
                 doc_blocks.append((name, text))
@@ -220,7 +229,6 @@ def _process_files_sequential(file_items: List[tuple], progress: ProgressFn) -> 
             source_summaries.append(_summarize_source(name, text))
         except Exception as exc:
             raise RuntimeError(f"Failed to read {name}: {exc}") from exc
-        pct_done = 10 + int(55 * (idx + 1) / total)
         progress("extracting", pct_done, f"Finished {idx + 1}/{total}: {name}")
 
     return "\n\n".join(case_texts), images, source_summaries, temp_pdf_paths, doc_blocks

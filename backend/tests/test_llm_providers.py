@@ -35,7 +35,7 @@ class TestModelResolution(unittest.TestCase):
             models = resolve_models("gemini")
             self.assertEqual(models["audit"], GEMINI_AUDIT_DEFAULT)
             self.assertEqual(models["vision"], GEMINI_FLASH_DEFAULT)
-            self.assertEqual(models["vision_ocr"], GEMINI_AUDIT_DEFAULT)
+            self.assertEqual(models["vision_ocr"], GEMINI_FLASH_DEFAULT)
             self.assertTrue(models["embedding"].startswith("gemini"))
 
     def test_retired_gemini_25_remapped(self):
@@ -53,7 +53,7 @@ class TestModelResolution(unittest.TestCase):
             models = resolve_models("gemini")
             self.assertEqual(models["audit"], GEMINI_AUDIT_DEFAULT)
             self.assertEqual(models["vision"], GEMINI_FLASH_DEFAULT)
-            self.assertEqual(models["vision_ocr"], GEMINI_AUDIT_DEFAULT)
+            self.assertEqual(models["vision_ocr"], GEMINI_FLASH_DEFAULT)
             self.assertEqual(models["extract"], GEMINI_FLASH_DEFAULT)
 
     def test_openai_defaults(self):
@@ -143,7 +143,10 @@ class TestGeminiProviderComplete(unittest.TestCase):
         self.assertEqual(kwargs["model"], "gemini-3.6-flash")
         self.assertEqual(
             kwargs["config"],
-            {"response_mime_type": "application/json"},
+            {
+                "automatic_function_calling": {"disable": True},
+                "response_mime_type": "application/json",
+            },
         )
 
 
