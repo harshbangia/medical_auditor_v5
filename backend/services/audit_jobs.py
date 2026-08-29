@@ -61,9 +61,24 @@ def run_job_in_background(
 ) -> None:
     def _work():
         _update(job, status="running", phase="starting", progress=5, message="Starting audit…")
+        print(f"[job:{job.job_id}] worker started", flush=True)
         try:
-            with _audit_lock:
+            # Only one audit at a time (memory). Surface wait so UI is not stuck at "starting".
+            if not _audit_lock.acquire(blocking=False):
+                _update(
+                    job,
+                    phase="waiting",
+                    progress=5,
+                    message="Waiting for another audit to finish…",
+                )
+                print(f"[job:{job.job_id}] waiting for audit lock", flush=True)
+                _audit_lock.acquire()
+            try:
+                _update(job, phase="starting", progress=5, message="Starting audit…")
+                print(f"[job:{job.job_id}] lock acquired; running pipeline", flush=True)
                 result = runner(job)
+            finally:
+                _audit_lock.release()
             if on_success:
                 on_success(job, result)
             _update(
@@ -74,6 +89,7 @@ def run_job_in_background(
                 message="Audit complete",
                 result=result,
             )
+            print(f"[job:{job.job_id}] completed", flush=True)
         except Exception as exc:
             if on_failure:
                 on_failure(job, exc)
@@ -86,6 +102,7 @@ def run_job_in_background(
                 message=str(exc),
                 error=str(exc),
             )
+            print(f"[job:{job.job_id}] failed: {exc}", flush=True)
 
     threading.Thread(target=_work, daemon=True).start()
 

@@ -193,8 +193,9 @@ def _process_files_sequential(file_items: List[tuple], progress: ProgressFn) -> 
     file_items = list(unique.items())
 
     total = len(file_items)
-    progress("extracting", 10, f"Processing {total} PDF(s)…")
-    case_texts = []
+        progress("extracting", 10, f"Processing {total} PDF(s)…")
+        print(f"[audit] extracting {total} PDF(s)", flush=True)
+        case_texts = []
     images = []
     source_summaries = []
     temp_pdf_paths = []

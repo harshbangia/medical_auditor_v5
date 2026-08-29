@@ -50,7 +50,17 @@ class GeminiProvider:
                 "GEMINI_API_KEY (or GOOGLE_API_KEY) is not set. "
                 "Add it to .env or use LLM_PROVIDER=openai."
             )
-        self._client = genai.Client(api_key=key)
+        # Avoid indefinite hangs that block the single-flight audit lock.
+        timeout_ms = int(env("GEMINI_HTTP_TIMEOUT_MS") or "300000")  # 5 min
+        try:
+            from google.genai import types as genai_types
+
+            self._client = genai.Client(
+                api_key=key,
+                http_options=genai_types.HttpOptions(timeout=timeout_ms),
+            )
+        except Exception:
+            self._client = genai.Client(api_key=key)
 
     def complete(
         self,
