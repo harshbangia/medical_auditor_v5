@@ -7,7 +7,12 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from backend.llm.base import ImageInput
-from backend.llm.models import get_provider_name, resolve_models
+from backend.llm.models import (
+    GEMINI_AUDIT_DEFAULT,
+    GEMINI_FLASH_DEFAULT,
+    get_provider_name,
+    resolve_models,
+)
 from backend.llm_client import reset_llm_provider
 
 
@@ -28,10 +33,28 @@ class TestModelResolution(unittest.TestCase):
             clear=False,
         ):
             models = resolve_models("gemini")
-            self.assertTrue(models["audit"].startswith("gemini"))
-            self.assertTrue(models["vision"].startswith("gemini"))
-            self.assertTrue(models["vision_ocr"].startswith("gemini"))
+            self.assertEqual(models["audit"], GEMINI_AUDIT_DEFAULT)
+            self.assertEqual(models["vision"], GEMINI_FLASH_DEFAULT)
+            self.assertEqual(models["vision_ocr"], GEMINI_AUDIT_DEFAULT)
             self.assertTrue(models["embedding"].startswith("gemini"))
+
+    def test_retired_gemini_25_remapped(self):
+        with patch.dict(
+            os.environ,
+            {
+                "LLM_PROVIDER": "gemini",
+                "AUDIT_MODEL": "gemini-2.5-pro",
+                "VISION_MODEL": "gemini-2.5-flash",
+                "VISION_OCR_MODEL": "models/gemini-2.5-pro",
+                "EXTRACT_MODEL": "gemini-2.5-flash",
+            },
+            clear=False,
+        ):
+            models = resolve_models("gemini")
+            self.assertEqual(models["audit"], GEMINI_AUDIT_DEFAULT)
+            self.assertEqual(models["vision"], GEMINI_FLASH_DEFAULT)
+            self.assertEqual(models["vision_ocr"], GEMINI_AUDIT_DEFAULT)
+            self.assertEqual(models["extract"], GEMINI_FLASH_DEFAULT)
 
     def test_openai_defaults(self):
         models = resolve_models("openai")
@@ -110,16 +133,18 @@ class TestGeminiProviderComplete(unittest.TestCase):
         p = GeminiProvider.__new__(GeminiProvider)
         p._client = mock_client
         text = p.complete(
-            model="gemini-2.5-flash",
+            model="gemini-3.6-flash",
             text_parts=["Return JSON"],
             json_mode=True,
             temperature=0.2,
         )
         self.assertEqual(text, '{"ok": true}')
         kwargs = mock_client.models.generate_content.call_args.kwargs
-        self.assertEqual(kwargs["model"], "gemini-2.5-flash")
+        self.assertEqual(kwargs["model"], "gemini-3.6-flash")
         config = kwargs["config"]
         self.assertEqual(config.response_mime_type, "application/json")
+        # Gemini 3.x: do not pass temperature (API may reject it)
+        self.assertIsNone(getattr(config, "temperature", None))
 
 
 class TestMalformedJsonPath(unittest.TestCase):

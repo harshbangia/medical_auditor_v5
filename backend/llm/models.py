@@ -6,6 +6,24 @@ from typing import Dict, Optional
 
 from backend.config import env
 
+# Defaults for new Gemini API keys (2.5 family is blocked for new users).
+GEMINI_AUDIT_DEFAULT = "gemini-3.1-pro-preview"
+GEMINI_FLASH_DEFAULT = "gemini-3.6-flash"
+GEMINI_EMBEDDING_DEFAULT = "gemini-embedding-001"
+
+# Retired / unavailable → current replacements (also remaps stale .env values).
+_GEMINI_MODEL_ALIASES = {
+    "gemini-2.5-flash": GEMINI_FLASH_DEFAULT,
+    "gemini-2.5-flash-lite": GEMINI_FLASH_DEFAULT,
+    "gemini-2.5-pro": GEMINI_AUDIT_DEFAULT,
+    "gemini-2.0-flash": GEMINI_FLASH_DEFAULT,
+    "gemini-2.0-flash-001": GEMINI_FLASH_DEFAULT,
+    "gemini-1.5-flash": GEMINI_FLASH_DEFAULT,
+    "gemini-1.5-pro": GEMINI_AUDIT_DEFAULT,
+    "gemini-pro": GEMINI_AUDIT_DEFAULT,
+    "gemini-flash-latest": GEMINI_FLASH_DEFAULT,
+}
+
 
 def get_provider_name() -> str:
     raw = (env("LLM_PROVIDER") or "gemini").strip().lower()
@@ -15,6 +33,19 @@ def get_provider_name() -> str:
         return "gemini"
     # Unknown → gemini (production target) but log once via caller
     return raw or "gemini"
+
+
+def normalize_gemini_model(raw: Optional[str], default: str) -> str:
+    """Resolve a Gemini model id; ignore OpenAI leftovers; remap retired ids."""
+    if not raw:
+        return default
+    name = raw.strip()
+    if name.lower().startswith("models/"):
+        name = name[7:]
+    lower = name.lower()
+    if lower.startswith("gpt-") or lower.startswith("text-embedding-3"):
+        return default
+    return _GEMINI_MODEL_ALIASES.get(lower, name)
 
 
 def resolve_models(provider: str | None = None) -> Dict[str, str]:
@@ -29,21 +60,19 @@ def resolve_models(provider: str | None = None) -> Dict[str, str]:
             "embedding": env("EMBEDDING_MODEL") or "text-embedding-3-small",
         }
 
-    def _gemini(raw: Optional[str], default: str) -> str:
-        # Ignore leftover OpenAI model names when provider=gemini
-        if not raw or raw.lower().startswith("gpt-") or raw.lower().startswith("text-embedding-3"):
-            return default
-        return raw
-
     return {
-        "audit": _gemini(env("AUDIT_MODEL"), "gemini-2.5-pro"),
-        "vision": _gemini(env("VISION_MODEL"), "gemini-2.5-flash"),
-        "vision_ocr": _gemini(env("VISION_OCR_MODEL"), "gemini-2.5-pro"),
-        "extract": _gemini(
-            env("EXTRACT_MODEL") or env("VISION_MODEL"),
-            "gemini-2.5-flash",
+        "audit": normalize_gemini_model(env("AUDIT_MODEL"), GEMINI_AUDIT_DEFAULT),
+        "vision": normalize_gemini_model(env("VISION_MODEL"), GEMINI_FLASH_DEFAULT),
+        "vision_ocr": normalize_gemini_model(
+            env("VISION_OCR_MODEL"), GEMINI_AUDIT_DEFAULT
         ),
-        "embedding": _gemini(env("EMBEDDING_MODEL"), "gemini-embedding-001"),
+        "extract": normalize_gemini_model(
+            env("EXTRACT_MODEL") or env("VISION_MODEL"),
+            GEMINI_FLASH_DEFAULT,
+        ),
+        "embedding": normalize_gemini_model(
+            env("EMBEDDING_MODEL"), GEMINI_EMBEDDING_DEFAULT
+        ),
     }
 
 

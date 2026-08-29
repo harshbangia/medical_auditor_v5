@@ -81,15 +81,20 @@ class GeminiProvider:
         if not contents:
             return ""
 
+        # Gemini 3.x ignores / may reject temperature, top_p, top_k.
+        model_id = (model or "").strip()
+        if model_id.lower().startswith("models/"):
+            model_id = model_id[7:]
+
         config_kwargs: dict = {}
         if json_mode:
             config_kwargs["response_mime_type"] = "application/json"
-        if temperature is not None:
+        if temperature is not None and not model_id.lower().startswith("gemini-3"):
             config_kwargs["temperature"] = temperature
 
         config = types.GenerateContentConfig(**config_kwargs) if config_kwargs else None
         response = self._client.models.generate_content(
-            model=model,
+            model=model_id,
             contents=contents,
             config=config,
         )
