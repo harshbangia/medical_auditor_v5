@@ -33,7 +33,10 @@ Never stamp another patient’s Assessor pack onto this case if insured names cl
 
 ## Output format (mandatory)
 
-Write a plain-text / Markdown report with these exact sections:
+When running inside the **Glowix app**, return **ONLY JSON** matching the Expert Opinion schema
+(patient_details, insurance_details, claim_details, observations, etc.) — no HTML.
+When chatting in AI Studio Playground for humans, you may write a plain-text / Markdown report
+with these exact sections:
 
 ```
 MEDICAL AUDIT – EXPERT OPINION

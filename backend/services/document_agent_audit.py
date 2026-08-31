@@ -1,14 +1,15 @@
-"""AI Studio–style document agent audit.
+"""AI Studio–style document agent audit → Glowix Expert Opinion JSON/PDF.
 
-Mirrors the working Google AI Studio Playground flow:
-  upload case PDFs → Gemini multimodal → HTML Expert Opinion report
+Mirrors the working Google AI Studio Playground multimodal flow:
+  upload case PDFs → Gemini reads PDFs → structured Expert Opinion fields
 
-Bypasses the legacy OCR → RAG → JSON pipeline when
-AUDIT_PIPELINE=document_agent (default when set).
+Output is the same JSON shape the Glowix letterhead PDF generator expects
+(not HTML). UI cards and Download Expert Opinion PDF both use these fields.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import tempfile
@@ -36,7 +37,6 @@ _STARTER = (
     / "glowix-medical-auditor"
     / "STARTER_PROMPT.txt"
 )
-_SAMPLE_HTML = Path.home() / "Downloads" / "ai_studio_code (1).html"
 
 
 def _noop(phase: str, progress: int, message: str) -> None:
@@ -57,50 +57,138 @@ def _system_instruction() -> str:
         _AGENTS_MD,
         fallback="You are Glowix Medical Services senior insurance medical auditor.",
     )
-    style = """
+    schema = """
 
-## Output for Glowix web (mandatory)
+## Output for Glowix app (MANDATORY)
 
-Return a single complete HTML document (start with <!DOCTYPE html>) for print/PDF.
-Match the visual quality of a Glowix letterhead claim audit:
-- Company header Glowix Medical Services Private Limited
-- Numbered section headers with deep clinical/policy analysis
-- Tables for patient/policy/admission/financials/checklist
-- Detailed auditor observations with evidence and source filenames
-- Final verdict and recommendations
-- Evidence & source references
+Return ONLY one JSON object (no markdown fences, no HTML) with this shape:
 
-Do NOT wrap the HTML in markdown fences.
-Do NOT invent claim IDs, ages, amounts, diagnoses, or policy clauses.
-Prefer Assessor → Aadhaar → Final bill → Discharge → clinical docs when sealing facts.
-OCR name spelling variants of the same patient are Low KYC notes, not High fraud.
+{
+  "compliance_verdict": "Compliant|Partially Compliant|Non-Compliant|Cannot Determine",
+  "claim_recommended": "Yes|No",
+  "claim_not_recommended": "Yes|No",
+  "patient_details": {
+    "name": "",
+    "age": "",
+    "sex": "",
+    "hospital_reg_no": ""
+  },
+  "insurance_details": {
+    "insurance_company": "",
+    "policy_number": "",
+    "policy_period": "",
+    "claim_incident_number": "",
+    "tpa": "NA"
+  },
+  "claim_details": {
+    "hospital": "",
+    "consultation_date": "",
+    "date_of_admission": "",
+    "date_of_discharge": "",
+    "nature_of_admission": "Emergency|Planned / Elective|Day Care|Unknown",
+    "provisional_diagnosis": "",
+    "final_diagnosis": "",
+    "diagnosis": "",
+    "procedure_or_surgery": "",
+    "procedure_date": "",
+    "total_hospital_bill": ""
+  },
+  "treatment_billing_audit": {
+    "room_category_admitted": "",
+    "room_category_eligible": "",
+    "procedures_performed": "",
+    "cross_checked_with_preauth": "",
+    "excluded_items_billed": "",
+    "charges_appropriate": "YES|NO|NA"
+  },
+  "financial_review": {
+    "total_hospital_bill": "",
+    "non_payable_amount": "",
+    "net_claimable_amount": "",
+    "recommended_approval_amount": "",
+    "patient_liability": ""
+  },
+  "clinical_checklist": [
+    {"area": "Pre-authorization Approval Letter", "available": "YES|NO|NA", "remarks": ""},
+    {"area": "Admission Request Form", "available": "YES|NO|NA", "remarks": ""},
+    {"area": "Policy Copy / ID Card", "available": "YES|NO|NA", "remarks": ""},
+    {"area": "Indoor Case Papers", "available": "YES|NO|NA", "remarks": ""},
+    {"area": "Discharge Summary", "available": "YES|NO|NA", "remarks": ""},
+    {"area": "Lab / Radiology Reports/X-Ray", "available": "YES|NO|NA", "remarks": ""},
+    {"area": "Operation Notes (if any)", "available": "YES|NO|NA", "remarks": ""},
+    {"area": "Pharmacy Bills", "available": "YES|NO|NA", "remarks": ""},
+    {"area": "Implant Stickers (if any)", "available": "YES|NO|NA", "remarks": ""},
+    {"area": "Prescriptions", "available": "YES|NO|NA", "remarks": ""}
+  ],
+  "observations": [
+    {
+      "question": "",
+      "answer": "Supported|Partially Supported|Not Supported|Insufficient Evidence",
+      "analysis": "Deep multi-paragraph evidence essay; name source PDF filenames"
+    }
+  ],
+  "auditor_observation_summary": "",
+  "fraud_abuse": {
+    "risk_level": "Low|Medium|High|",
+    "summary": "",
+    "findings": [
+      {
+        "category": "",
+        "indicator": "",
+        "evidence": "",
+        "severity": "High|Medium|Low",
+        "recommendation": ""
+      }
+    ]
+  },
+  "documentation_gaps": [],
+  "timeline": [{"date": "", "event": ""}],
+  "clinical_findings": [
+    {"parameter": "", "value": "", "normal_range": "", "comment": "", "source": ""}
+  ],
+  "inference": "",
+  "auditor_conclusion": "",
+  "remarks": "",
+  "report_summary": []
+}
+
+Rules:
+- Fill patient_details, insurance_details, claim_details from Assessor → Aadhaar → bill → discharge (priority).
+- Never leave patient name / age / claim / policy blank if present in Assessor or KYC.
+- Produce 4–6 deep observations (NotebookLM depth).
+- Do not invent clause numbers, IDs, ages, or amounts.
+- OCR name spelling variants of the same patient are Low KYC, not High fraud.
 """
-    return base + style
+    return base + schema
 
 
 def _user_prompt(guideline_names: Sequence[str]) -> str:
     starter = _read_text(
         _STARTER,
-        fallback="Audit this case as Glowix Medical Services. Produce a full Expert Opinion.",
+        fallback="Audit this case as Glowix Medical Services.",
+    )
+    # Override HTML-only line from starter if present
+    starter = re.sub(
+        r"(?i)return only the full html report\.?",
+        "Return ONLY the JSON Expert Opinion object.",
+        starter,
     )
     gl = ", ".join(n for n in guideline_names if n) or "(none — use uploaded guideline PDFs if any)"
     return (
         f"{starter}\n\n"
         f"Guidelines selected in Glowix UI: {gl}\n"
         f"All attached PDFs are the case file (and optional guidelines/policy). "
-        f"Read every page that is clinically or financially relevant.\n"
-        f"Return ONLY the full HTML report."
+        f"Read every clinically or financially relevant page.\n"
+        f"Return ONLY the JSON object for the Glowix Expert Opinion PDF."
     )
 
 
 def _wait_file_active(client: Any, uploaded: Any, timeout_s: float = 180.0) -> Any:
-    """Poll Files API until the upload is ACTIVE (or return as-is if no state)."""
     name = getattr(uploaded, "name", None) or ""
     deadline = time.time() + timeout_s
     current = uploaded
     while time.time() < deadline:
         state = str(getattr(current, "state", "") or "")
-        # Enum may be FileState.ACTIVE or "ACTIVE"
         if not state or "ACTIVE" in state.upper():
             if "FAILED" in state.upper() or "ERROR" in state.upper():
                 raise RuntimeError(f"Gemini file processing failed for {name}: {state}")
@@ -147,7 +235,9 @@ def _upload_pdfs(
                 config=types.UploadFileConfig(mime_type=mime, display_name=name[:120]),
             )
         except TypeError:
-            # Older SDK signature
+            fobj = client.files.upload(file=path)
+        except Exception:
+            # Fallback without UploadFileConfig
             fobj = client.files.upload(file=path)
         fobj = _wait_file_active(client, fobj)
         uploaded.append(fobj)
@@ -155,127 +245,180 @@ def _upload_pdfs(
     return uploaded, temp_paths
 
 
-def _strip_fences(raw: str) -> str:
+def _parse_json(raw: str) -> dict:
     text = (raw or "").strip()
     if text.startswith("```"):
-        text = re.sub(r"^```(?:html|HTML)?\s*", "", text)
+        text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
-    return text.strip()
-
-
-def _extract_meta(html: str) -> Dict[str, Any]:
-    """Best-effort header fields for Glowix UI from HTML report."""
-
-    def _cell_after(label: str) -> str:
-        pat = re.compile(
-            rf"{re.escape(label)}</td>\s*<td[^>]*>\s*(.*?)\s*</td>",
-            re.I | re.S,
-        )
-        m = pat.search(html)
+    try:
+        data = json.loads(text)
+        return data if isinstance(data, dict) else {}
+    except json.JSONDecodeError:
+        m = re.search(r"\{.*\}", text, re.S)
         if not m:
-            return ""
-        raw = re.sub(r"<[^>]+>", " ", m.group(1))
-        return re.sub(r"\s+", " ", raw).strip()
+            return {}
+        try:
+            data = json.loads(m.group(0))
+            return data if isinstance(data, dict) else {}
+        except json.JSONDecodeError:
+            return {}
 
-    name = _cell_after("Patient Name") or _cell_after("Insured Patient Name")
-    # Strip age/sex suffix like "(40Y / Female)"
-    name_clean = re.sub(r"\s*\([^)]*\)\s*$", "", name).strip()
-    age_sex = ""
-    m = re.search(r"\(([^)]*Female|[^)]*Male|[^)]*\d+\s*[Yy])", name)
-    if m:
-        age_sex = m.group(1)
-    age = ""
-    sex = ""
-    am = re.search(r"(\d{1,3})\s*[Yy]", age_sex or name)
-    if am:
-        age = am.group(1)
-    if re.search(r"female", name + age_sex, re.I):
-        sex = "Female"
-    elif re.search(r"male", name + age_sex, re.I):
-        sex = "Male"
 
-    claim_ref = _cell_after("Claim Reference") or _cell_after("Claim Incident No")
-    claim_no = re.sub(r"\s*/.*$", "", claim_ref).strip()
-    claim_no = re.sub(r"[^\d.]", "", claim_no.split()[0]) if claim_no else ""
+def _pick(*vals: Any) -> str:
+    for v in vals:
+        if v is None:
+            continue
+        s = str(v).strip()
+        if s and s.upper() not in {"NA", "N/A", "NONE", "NULL", "-", "—", "."}:
+            return s
+    return ""
 
-    policy = _cell_after("Policy Number / Type") or _cell_after("Policy Number")
-    policy = re.sub(r"\s*/.*$", "", policy).strip()
-    pol_m = re.search(r"(H[A-Z0-9]{5,12})", policy, re.I)
-    if pol_m:
-        policy = pol_m.group(1).upper()
 
-    hospital = _cell_after("Hospital / Location") or _cell_after("Name of Hospital")
-    hospital = re.sub(r"\s*,.*$", "", hospital).strip() if hospital else ""
-
-    admit = _cell_after("Admission / Discharge") or _cell_after("Date of Admission")
-    doa = ""
-    dod = ""
-    if " to " in admit.lower():
-        parts = re.split(r"\s+to\s+", admit, flags=re.I)
-        doa = parts[0].strip()
-        dod = parts[1].strip() if len(parts) > 1 else ""
-    else:
-        doa = admit
-
-    diagnosis = _cell_after("Primary Diagnosis") or _cell_after("Final Diagnosis")
-    billed = _cell_after("Total Claimed / Billed") or _cell_after("Total Hospital Bill")
-    verdict_raw = (
-        _cell_after("Final Audit Decision")
-        or _cell_after("Final Claim Verdict")
-        or ""
+def _case_text_from_result(result: dict) -> str:
+    """Compact text corpus for Ask follow-ups (no HTML)."""
+    parts: List[str] = []
+    p = result.get("patient_details") or {}
+    i = result.get("insurance_details") or {}
+    c = result.get("claim_details") or {}
+    parts.append(
+        f"Patient: {p.get('name')} | Age: {p.get('age')} | Sex: {p.get('sex')}\n"
+        f"Hospital: {c.get('hospital')} | Diagnosis: {c.get('diagnosis') or c.get('final_diagnosis')}\n"
+        f"DOA: {c.get('date_of_admission')} | DOD: {c.get('date_of_discharge')}\n"
+        f"Insurer: {i.get('insurance_company')} | Policy: {i.get('policy_number')} | "
+        f"Claim: {i.get('claim_incident_number')}\n"
+        f"Bill: {c.get('total_hospital_bill')}\n"
+        f"Verdict: {result.get('compliance_verdict')} | Recommended: {result.get('claim_recommended')}\n"
+        f"Conclusion: {result.get('auditor_conclusion') or result.get('inference')}\n"
+        f"Remarks: {result.get('remarks')}"
     )
-    verdict_l = verdict_raw.lower()
-    if "non" in verdict_l and "approv" in verdict_l:
-        compliance = "Non-Compliant"
-        recommended = "No"
-    elif "partial" in verdict_l:
-        compliance = "Partially Compliant"
-        recommended = "Yes"
-    elif "approv" in verdict_l or "recommend" in verdict_l:
-        compliance = "Compliant"
-        recommended = "Yes"
-    elif "reject" in verdict_l or "repudiat" in verdict_l or "not recommend" in verdict_l:
-        compliance = "Non-Compliant"
-        recommended = "No"
+    for obs in result.get("observations") or []:
+        if not isinstance(obs, dict):
+            continue
+        parts.append(
+            f"Q: {obs.get('question')}\nA: {obs.get('answer')}\n"
+            f"{obs.get('analysis') or obs.get('justification') or ''}"
+        )
+    return "\n\n".join(parts).strip()
+
+
+def _normalize_result(data: dict, file_items: List[Tuple[str, bytes]], guidelines: Sequence[str]) -> dict:
+    """Ensure Glowix PDF + UI always get required sections."""
+    result = dict(data or {})
+    patient = result.setdefault("patient_details", {})
+    if not isinstance(patient, dict):
+        patient = {}
+        result["patient_details"] = patient
+    insurance = result.setdefault("insurance_details", {})
+    if not isinstance(insurance, dict):
+        insurance = {}
+        result["insurance_details"] = insurance
+    claim = result.setdefault("claim_details", {})
+    if not isinstance(claim, dict):
+        claim = {}
+        result["claim_details"] = claim
+    fin = result.setdefault("financial_review", {})
+    if not isinstance(fin, dict):
+        fin = {}
+        result["financial_review"] = fin
+
+    # Flatten common alternate keys Gemini may emit
+    patient["name"] = _pick(
+        patient.get("name"), patient.get("patient_name"), result.get("patient_name")
+    ) or patient.get("name") or ""
+    patient["age"] = _pick(patient.get("age"), patient.get("patient_age")) or patient.get("age") or ""
+    patient["sex"] = _pick(
+        patient.get("sex"), patient.get("gender"), patient.get("patient_sex")
+    ) or patient.get("sex") or ""
+
+    insurance["insurance_company"] = _pick(
+        insurance.get("insurance_company"),
+        insurance.get("company"),
+        insurance.get("insurer"),
+    ) or insurance.get("insurance_company") or ""
+    insurance["policy_number"] = _pick(
+        insurance.get("policy_number"), insurance.get("policy_no"), insurance.get("policy")
+    ) or insurance.get("policy_number") or ""
+    insurance["claim_incident_number"] = _pick(
+        insurance.get("claim_incident_number"),
+        insurance.get("claim_number"),
+        insurance.get("claim_no"),
+        insurance.get("claim_id"),
+    ) or insurance.get("claim_incident_number") or ""
+
+    claim["hospital"] = _pick(
+        claim.get("hospital"), claim.get("hospital_name"), claim.get("name_of_hospital")
+    ) or claim.get("hospital") or ""
+    claim["date_of_admission"] = _pick(
+        claim.get("date_of_admission"), claim.get("doa"), claim.get("admission_date")
+    ) or claim.get("date_of_admission") or ""
+    claim["date_of_discharge"] = _pick(
+        claim.get("date_of_discharge"), claim.get("dod"), claim.get("discharge_date")
+    ) or claim.get("date_of_discharge") or ""
+
+    # Sync diagnosis aliases
+    claim["diagnosis"] = _pick(
+        claim.get("diagnosis"),
+        claim.get("final_diagnosis"),
+        claim.get("provisional_diagnosis"),
+    ) or claim.get("diagnosis") or ""
+    if claim["diagnosis"] and not claim.get("final_diagnosis"):
+        claim["final_diagnosis"] = claim["diagnosis"]
+
+    bill = _pick(
+        claim.get("total_hospital_bill"),
+        fin.get("total_hospital_bill"),
+        claim.get("bill_amount"),
+    )
+    if bill:
+        claim["total_hospital_bill"] = bill
+        fin["total_hospital_bill"] = bill
+
+    rec = str(result.get("claim_recommended") or "").strip()
+    not_rec = str(result.get("claim_not_recommended") or "").strip()
+    if rec.lower() in {"yes", "y"}:
+        result["claim_recommended"] = "Yes"
+        result["claim_not_recommended"] = "No"
+    elif rec.lower() in {"no", "n"} or not_rec.lower() in {"yes", "y"}:
+        result["claim_recommended"] = "No"
+        result["claim_not_recommended"] = "Yes"
     else:
-        compliance = "Cannot Determine"
-        recommended = "No"
+        # Infer from verdict
+        v = str(result.get("compliance_verdict") or "").lower()
+        if "non" in v:
+            result["claim_recommended"] = "No"
+            result["claim_not_recommended"] = "Yes"
+        elif "partial" in v or "compliant" == v.strip():
+            result["claim_recommended"] = "Yes"
+            result["claim_not_recommended"] = "No"
 
-    insurer = _cell_after("Insurer / Sum Insured") or _cell_after("Insurance Company")
-    insurer = re.sub(r"\s*/.*$", "", insurer).strip()
+    if not result.get("auditor_conclusion"):
+        result["auditor_conclusion"] = result.get("inference") or result.get("compliance_verdict") or ""
+    if not result.get("inference"):
+        result["inference"] = result.get("auditor_conclusion") or ""
 
-    return {
-        "patient_details": {
-            "name": name_clean or name or "NA",
-            "age": age,
-            "sex": sex,
-        },
-        "insurance_details": {
-            "insurance_company": insurer,
-            "policy_number": policy,
-            "claim_incident_number": claim_no.split(".")[0] if claim_no else "",
-            "tpa": "NA",
-        },
-        "claim_details": {
-            "hospital": hospital,
-            "date_of_admission": doa,
-            "date_of_discharge": dod,
-            "diagnosis": diagnosis,
-            "total_hospital_bill": billed,
-            "nature_of_admission": "",
-            "procedure_or_surgery": "",
-        },
-        "financial_review": {
-            "total_hospital_bill": billed,
-            "recommended_approval_amount": "",
-            "net_claimable_amount": "",
-        },
-        "compliance_verdict": compliance,
-        "claim_recommended": recommended,
-        "claim_not_recommended": "Yes" if recommended == "No" else "No",
-        "auditor_conclusion": verdict_raw or compliance,
-        "inference": verdict_raw or compliance,
-    }
+    # FWA list for Glowix §6
+    fraud = result.get("fraud_abuse")
+    if not isinstance(fraud, dict):
+        fraud = {"risk_level": "", "findings": [], "summary": ""}
+        result["fraud_abuse"] = fraud
+    findings = fraud.get("findings") or result.get("fraud_abuse_findings") or []
+    if isinstance(findings, list):
+        fraud["findings"] = findings
+        result["fwa_investigation"] = findings[:12]
+
+    if not isinstance(result.get("observations"), list):
+        result["observations"] = []
+    if not isinstance(result.get("clinical_checklist"), list):
+        result["clinical_checklist"] = []
+
+    result["report_format"] = "expert_opinion_pdf"
+    result.pop("report_html", None)
+    result["audit_engine"] = "document_agent"
+    result["guidelines_used"] = list(guidelines or [])
+    result["document_sources"] = [{"filename": n} for n, _ in file_items]
+    result["report_date"] = datetime.utcnow().strftime("%d-%m-%Y")
+    result.setdefault("session_id", str(uuid4()))
+    return result
 
 
 def run_document_agent_audit(
@@ -285,7 +428,7 @@ def run_document_agent_audit(
     progress: ProgressFn = _noop,
     guideline_pdf_items: Optional[List[Tuple[str, bytes]]] = None,
 ) -> dict:
-    """Run Studio-equivalent multimodal audit; return Glowix-compatible result + HTML."""
+    """Multimodal Gemini audit → Glowix Expert Opinion JSON for letterhead PDF."""
     from google import genai
     from google.genai import types
 
@@ -295,7 +438,7 @@ def run_document_agent_audit(
         raise RuntimeError("GEMINI_API_KEY is required for document_agent pipeline")
 
     model = env("DOCUMENT_AGENT_MODEL") or model_for("audit")
-    timeout_ms = int(env("GEMINI_HTTP_TIMEOUT_MS") or "600000")  # 10 min for multi-PDF
+    timeout_ms = int(env("GEMINI_HTTP_TIMEOUT_MS") or "600000")
 
     try:
         client = genai.Client(
@@ -318,13 +461,14 @@ def run_document_agent_audit(
         contents: List[Any] = list(uploaded)
         contents.append(_user_prompt(guidelines or []))
 
-        config = types.GenerateContentConfig(
-            system_instruction=_system_instruction(),
-            automatic_function_calling={"disable": True},
-            # Large HTML reports
-            max_output_tokens=int(env("DOCUMENT_AGENT_MAX_OUTPUT_TOKENS") or "65536"),
-        )
-        # Gemini 3.x may reject temperature — omit for gemini-3*
+        config_kwargs: Dict[str, Any] = {
+            "system_instruction": _system_instruction(),
+            "response_mime_type": "application/json",
+            "automatic_function_calling": {"disable": True},
+            "max_output_tokens": int(env("DOCUMENT_AGENT_MAX_OUTPUT_TOKENS") or "65536"),
+        }
+        config = types.GenerateContentConfig(**config_kwargs)
+
         response = client.models.generate_content(
             model=model,
             contents=contents,
@@ -341,35 +485,19 @@ def run_document_agent_audit(
                         chunks.append(str(t))
             raw = "\n".join(chunks)
 
-        html = _strip_fences(raw)
-        if "<html" not in html.lower():
-            # Model returned markdown/text — wrap minimally
-            html = (
-                "<!DOCTYPE html><html><head><meta charset='UTF-8'>"
-                "<title>Glowix Medical Audit</title></head><body>"
-                f"<pre style='white-space:pre-wrap;font-family:system-ui'>{html}</pre>"
-                "</body></html>"
+        data = _parse_json(raw)
+        if not data:
+            raise RuntimeError(
+                "Document agent returned empty/invalid JSON. "
+                f"Raw snippet: {(raw or '')[:400]}"
             )
 
-        progress("verify", 92, "Assembling Glowix report…")
-        meta = _extract_meta(html)
-        session_id = str(uuid4())
-        today = datetime.utcnow().strftime("%d-%m-%Y")
-        result: Dict[str, Any] = {
-            **meta,
-            "report_format": "html",
-            "report_html": html,
-            "audit_engine": "document_agent",
-            "session_id": session_id,
-            "report_date": today,
-            "observations": [],
-            "clinical_findings": [],
-            "fraud_abuse": {"risk_level": "", "findings": []},
-            "document_sources": [
-                {"filename": n, "pages": None} for n, _ in file_items
-            ],
-            "guidelines_used": list(guidelines or []),
-        }
+        progress("verify", 92, "Assembling Glowix Expert Opinion…")
+        result = _normalize_result(data, file_items, guidelines or [])
+        # Fail loud if identity still empty (UI blank cards)
+        name = str((result.get("patient_details") or {}).get("name") or "").strip()
+        if not name or name.upper() in {"NA", "N/A", "-", "—"}:
+            print("⚠️ Document agent JSON missing patient name — check Assessor PDF", flush=True)
         progress("done", 100, "Document agent audit complete")
         return result
     finally:
@@ -388,7 +516,6 @@ def run_document_agent_audit(
 
 
 def audit_pipeline_mode() -> str:
-    """legacy | document_agent"""
     raw = (env("AUDIT_PIPELINE") or "document_agent").strip().lower()
     if raw in {"legacy", "classic", "ocr", "notebook"}:
         return "legacy"

@@ -658,25 +658,27 @@ def run_job_audit(job: AuditJob, file_items, guideline, user_question, global_ca
             progress=progress,
             guideline_pdf_items=guideline_pdf_items or None,
         )
-        # Keep a light session for Ask (HTML + filenames only)
+        from backend.services.document_agent_audit import _case_text_from_result
+
+        case_text = _case_text_from_result(result)
         session_id = str(result.get("session_id") or uuid4())
         try:
             from backend.services import qa_session_cache
             qa_session_cache.put(
                 session_id,
                 {
-                    "case_text": result.get("report_html") or "",
+                    "case_text": case_text,
                     "images": [],
                     "guidelines": guideline_names,
                     "guideline": "; ".join(guideline_names),
                     "guideline_stores": [],
-                    "notebook_corpus": "",
+                    "notebook_corpus": case_text,
                     "audit_engine": "document_agent",
                 },
             )
         except Exception:
             if isinstance(global_cache, dict):
-                global_cache[session_id] = {"case_text": result.get("report_html") or ""}
+                global_cache[session_id] = {"case_text": case_text}
         result["session_id"] = session_id
         return result
 
