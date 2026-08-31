@@ -74,6 +74,46 @@ class TestDocumentAgentHelpers(unittest.TestCase):
         self.assertEqual(out["claim_details"]["hospital"], "City Hospital")
         self.assertEqual(out["claim_details"]["date_of_admission"], "01/01/2026")
 
+    def test_normalize_sums_disallowances_and_seeds_gap_qa(self):
+        data = {
+            "claim_details": {"total_hospital_bill": "407597"},
+            "financial_review": {
+                "total_hospital_bill": "407597",
+                "non_payable_amount": "25000",
+            },
+            "billing_disallowances": [
+                {
+                    "title": "Physiotherapist misclassified as Super Specialist",
+                    "amount": "12000",
+                    "reason": "Dr. Surbhi notes signed as Physiotherapist",
+                    "evidence": "Progress note 21/08/2026",
+                    "audit_action": "Recommend complete disallowance of Rs. 12,000",
+                },
+                {
+                    "title": "Unrendered laparoscopy charges",
+                    "amount": "15000",
+                    "reason": "Open laparotomy only",
+                    "evidence": "OT notes midline incision",
+                    "audit_action": "Recommend complete disallowance of Rs. 15,000",
+                },
+            ],
+            "documentation_gaps": [
+                {
+                    "title": "Missing GeneXpert / HPE reports",
+                    "finding": "Infibeam Labs receipt billed but reports absent",
+                    "evidence": "Receipt I-33060 dated 20/08/2026",
+                    "audit_action": "Query hospital for HPE, GeneXpert and AFB culture reports",
+                }
+            ],
+            "observations": [],
+        }
+        out = _normalize_result(data, [], [])
+        self.assertEqual(out["financial_review"]["non_payable_amount"], "27000.00")
+        self.assertEqual(out["financial_review"]["net_claimable_amount"], "380597.00")
+        qs = " ".join(o["question"] for o in out["observations"])
+        self.assertIn("GeneXpert", qs)
+        self.assertIn("Physiotherapist", qs)
+
     def test_pipeline_mode(self):
         self.assertIn(audit_pipeline_mode(), {"legacy", "document_agent"})
 

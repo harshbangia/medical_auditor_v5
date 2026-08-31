@@ -121,7 +121,46 @@ def _age_gender(patient: dict) -> str:
     if sex == "NA":
         return f"{age} years" if "year" not in age.lower() else age
     age_part = age if "year" in age.lower() else f"{age} years"
-    return f"{sex} / {age_part}"
+    return f"{age_part} / {sex}"
+
+
+def _money_num(raw: Any) -> Optional[float]:
+    if raw is None:
+        return None
+    s = re.sub(r"[^\d.]", "", str(raw))
+    if not s:
+        return None
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def _fmt_inr(amount: float) -> str:
+    # Keep simple Indian-style grouping-ish display without locale deps
+    whole = int(round(amount))
+    return f"Rs. {whole:,}"
+
+
+def _billing_disallowance_rows(data: dict) -> List[dict]:
+    rows = data.get("billing_disallowances") or data.get("recommended_deductions") or []
+    return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+
+
+def _documentation_gap_rows(data: dict) -> List[Any]:
+    gaps = data.get("documentation_gaps") or []
+    return gaps if isinstance(gaps, list) else []
+
+
+def _sum_disallowances(data: dict) -> Optional[float]:
+    total = 0.0
+    found = False
+    for row in _billing_disallowance_rows(data):
+        n = _money_num(row.get("amount") or row.get("deduction_amount") or row.get("rupees"))
+        if n is not None:
+            total += n
+            found = True
+    return total if found else None
 
 
 def _checklist_status(data: dict) -> List[Tuple[str, str]]:
@@ -503,12 +542,19 @@ def generate_glowix_expert_opinion_pdf(data: dict, filename: str = "audit_report
 
     # 5. Financial review
     story.append(Paragraph("5. FINANCIAL REVIEW", styles["section"]))
+    disallow_sum = _sum_disallowances(data)
+    non_pay_raw = fin.get("non_payable_amount")
+    non_pay_num = _money_num(non_pay_raw)
+    if disallow_sum is not None and (non_pay_num is None or non_pay_num < disallow_sum):
+        non_pay_display = _fmt_inr(disallow_sum)
+    else:
+        non_pay_display = _na(non_pay_raw)
     story.append(_kv_block([
         (
             "Total Hospital Bill",
             _na(savings.get("total_claim_amount") or fin.get("total_hospital_bill") or claim.get("total_hospital_bill")),
         ),
-        ("Non-Payable Amount", _na(fin.get("non_payable_amount"))),
+        ("Non-Payable Amount", non_pay_display),
         (
             "Net Claimable Amount",
             _na(savings.get("admissible_amount") or fin.get("net_claimable_amount")),
@@ -517,8 +563,25 @@ def generate_glowix_expert_opinion_pdf(data: dict, filename: str = "audit_report
             "Amount Recommended for Approval",
             _na(fin.get("recommended_approval_amount") or savings.get("admissible_amount")),
         ),
-        ("Patient Liability (if any)", _na(fin.get("patient_liability"))),
+        ("Patient Liability (if any)", _na(fin.get("patient_liability") or (non_pay_display if disallow_sum else None))),
     ], styles))
+
+    disallow_rows = _billing_disallowance_rows(data)
+    if disallow_rows:
+        story.append(Spacer(1, 4))
+        story.append(Paragraph("<b>Itemised billing disallowances / queries:</b>", styles["body"]))
+        for i, row in enumerate(disallow_rows[:12], start=1):
+            title = str(row.get("title") or row.get("item") or row.get("category") or "Disallowance").strip()
+            amt = str(row.get("amount") or row.get("deduction_amount") or "").strip()
+            reason = str(row.get("reason") or row.get("evidence") or row.get("finding") or "").strip()
+            action = str(row.get("audit_action") or row.get("recommendation") or "").strip()
+            head = f"{i}. {title}"
+            if amt:
+                head += f" — {amt}"
+            story.append(Paragraph(_esc(head), styles["q"]))
+            body_bits = [b for b in (reason, action) if b]
+            if body_bits:
+                story.append(Paragraph(_esc(" ".join(body_bits)), styles["a"]))
 
     # 6. FWA Investigation (Case Notebook)
     fwa_rows = data.get("fwa_investigation") or (data.get("fraud_abuse") or {}).get("findings") or []
@@ -566,21 +629,53 @@ def generate_glowix_expert_opinion_pdf(data: dict, filename: str = "audit_report
     story.append(Spacer(1, 4))
     story.append(Paragraph(_esc(_observation_narrative(data)), styles["body"]))
 
+    gap_rows = _documentation_gap_rows(data)
+    if gap_rows:
+        story.append(Spacer(1, 6))
+        story.append(Paragraph("<b>Documentation & forensic gaps:</b>", styles["body"]))
+        for i, gap in enumerate(gap_rows[:10], start=1):
+            if isinstance(gap, str):
+                text = gap.strip()
+                if text:
+                    story.append(Paragraph(_esc(f"{i}. {text}"), styles["a"]))
+                continue
+            if not isinstance(gap, dict):
+                continue
+            title = str(gap.get("title") or gap.get("gap") or gap.get("category") or "Gap").strip()
+            finding = str(
+                gap.get("finding")
+                or gap.get("forensic_finding")
+                or gap.get("description")
+                or gap.get("detail")
+                or ""
+            ).strip()
+            evidence = str(gap.get("evidence") or "").strip()
+            action = str(gap.get("audit_action") or gap.get("recommendation") or "").strip()
+            story.append(Paragraph(_esc(f"{i}. {title}"), styles["q"]))
+            body = " ".join(b for b in (finding, evidence, action) if b)
+            if body:
+                story.append(Paragraph(_esc(body), styles["a"]))
+
     observations = data.get("observations") or []
     for idx, obs in enumerate(observations, start=1):
         if not isinstance(obs, dict):
             continue
         q = str(obs.get("question") or "").strip()
-        a = str(obs.get("analysis") or obs.get("answer") or "").strip()
+        analysis = str(obs.get("analysis") or obs.get("justification") or "").strip()
+        ans_label = str(obs.get("answer") or "").strip()
+        # Prefer long analysis; avoid using short Supported/Not Supported as the whole answer body
+        a = analysis or (ans_label if len(ans_label) > 40 else "")
         if not q and not a:
             continue
         story.append(Paragraph(f"Q{idx}. {_esc(q)}", styles["q"]))
-        ans_label = str(obs.get("answer") or "").strip()
-        body = a
-        if ans_label and ans_label.lower() not in body.lower()[:80]:
-            body = f"Ans. {ans_label}. {a}".strip()
-        elif not body.lower().startswith("ans"):
+        if ans_label and analysis:
+            body = f"Ans. {ans_label}. {analysis}".strip()
+        elif ans_label and not analysis:
+            body = f"Ans. {ans_label}"
+        elif a and not a.lower().startswith("ans"):
             body = f"Ans. {a}"
+        else:
+            body = a or "Ans. Insufficient Evidence"
         story.append(Paragraph(_esc(body), styles["a"]))
 
     # Extra clinical Q&A if present

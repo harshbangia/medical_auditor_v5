@@ -108,6 +108,23 @@ Return ONLY one JSON object (no markdown fences, no HTML) with this shape:
     "recommended_approval_amount": "",
     "patient_liability": ""
   },
+  "billing_disallowances": [
+    {
+      "title": "Short name of disallowance",
+      "amount": "Rs. 0",
+      "reason": "What was billed vs what records show",
+      "evidence": "Exact quote / filename / date / amount from bill or notes",
+      "audit_action": "Recommend complete disallowance / proportionate deduction / query"
+    }
+  ],
+  "documentation_gaps": [
+    {
+      "title": "Short gap name",
+      "finding": "What is missing or mis-stated",
+      "evidence": "Named source file + quote / date range",
+      "audit_action": "Query hospital for … / withhold until …"
+    }
+  ],
   "clinical_checklist": [
     {"area": "Pre-authorization Approval Letter", "available": "YES|NO|NA", "remarks": ""},
     {"area": "Admission Request Form", "available": "YES|NO|NA", "remarks": ""},
@@ -124,13 +141,14 @@ Return ONLY one JSON object (no markdown fences, no HTML) with this shape:
     {
       "question": "",
       "answer": "Supported|Partially Supported|Not Supported|Insufficient Evidence",
-      "analysis": "Deep multi-paragraph evidence essay; name source PDF filenames"
+      "analysis": "Deep multi-paragraph forensic essay (≥180 words when evidence exists). Name source PDF filenames, dates, rupee amounts, and quotes."
     }
   ],
   "auditor_observation_summary": "",
   "fraud_abuse": {
     "risk_level": "Low|Medium|High|",
     "summary": "",
+    "overbilling": "YES|NO|NA",
     "findings": [
       {
         "category": "",
@@ -141,21 +159,27 @@ Return ONLY one JSON object (no markdown fences, no HTML) with this shape:
       }
     ]
   },
-  "documentation_gaps": [],
   "timeline": [{"date": "", "event": ""}],
   "clinical_findings": [
     {"parameter": "", "value": "", "normal_range": "", "comment": "", "source": ""}
   ],
   "inference": "",
   "auditor_conclusion": "",
-  "remarks": "",
+  "remarks": "Concrete adjudication: numbered rupee deductions + document queries",
   "report_summary": []
 }
 
-Rules:
+Rules (NotebookLM / forensic depth — mandatory):
 - Fill patient_details, insurance_details, claim_details from Assessor → Aadhaar → bill → discharge (priority).
 - Never leave patient name / age / claim / policy blank if present in Assessor or KYC.
-- Produce 4–6 deep observations (NotebookLM depth).
+- Produce **6–8** deep observations. At least **2** must be forensic billing / documentation-gap questions.
+- Each observation.analysis must be elaborative (multi-paragraph): timelines, guideline thresholds, policy waiting periods only if present in uploads, named source files, exact amounts, verbatim clinical quotes where available.
+- Line-by-line final bill vs clinical notes: flag misclassified clinician roles (e.g. physiotherapist billed as super-specialist), unrendered equipment (laparoscopy fees for open laparotomy), duplicate/bundled surgeon fees, IRDAI List-I consumables.
+- Compare billed investigations to attached reports — if GeneXpert / HPE / culture / histopathology are billed but reports are absent, list under documentation_gaps with receipt numbers if present.
+- Check indoor progress notes coverage across full LOS; note missing date ranges.
+- Compare Discharge Summary diagnosis wording to OT notes (e.g. Abdominal Cocoon / encapsulating peritonitis omitted).
+- Fill billing_disallowances with rupee amounts when evidence supports disallowance; sum into financial_review.non_payable_amount and patient_liability; recompute net_claimable and recommended_approval from total − non_payable.
+- remarks must list: (1) each deduction with amount, (2) each hospital query for missing reports/notes.
 - Do not invent clause numbers, IDs, ages, or amounts.
 - OCR name spelling variants of the same patient are Low KYC, not High fraud.
 """
@@ -179,6 +203,8 @@ def _user_prompt(guideline_names: Sequence[str]) -> str:
         f"Guidelines selected in Glowix UI: {gl}\n"
         f"All attached PDFs are the case file (and optional guidelines/policy). "
         f"Read every clinically or financially relevant page.\n"
+        f"Match NotebookLM forensic depth: itemised bill anomalies, missing reports, "
+        f"OT vs discharge mismatches, and multi-paragraph evidence-backed Q&A.\n"
         f"Return ONLY the JSON object for the Glowix Expert Opinion PDF."
     )
 
@@ -372,6 +398,98 @@ def _normalize_result(data: dict, file_items: List[Tuple[str, bytes]], guideline
     if bill:
         claim["total_hospital_bill"] = bill
         fin["total_hospital_bill"] = bill
+
+    # Structured forensic arrays
+    gaps = result.get("documentation_gaps")
+    if not isinstance(gaps, list):
+        result["documentation_gaps"] = []
+    disallow = result.get("billing_disallowances") or result.get("recommended_deductions")
+    if not isinstance(disallow, list):
+        disallow = []
+    result["billing_disallowances"] = disallow
+
+    def _rupee(raw: Any) -> Optional[float]:
+        if raw is None:
+            return None
+        s = re.sub(r"[^\d.]", "", str(raw))
+        if not s:
+            return None
+        try:
+            return float(s)
+        except ValueError:
+            return None
+
+    disallow_sum = 0.0
+    disallow_found = False
+    for row in disallow:
+        if not isinstance(row, dict):
+            continue
+        n = _rupee(row.get("amount") or row.get("deduction_amount") or row.get("rupees"))
+        if n is not None:
+            disallow_sum += n
+            disallow_found = True
+
+    if disallow_found:
+        existing_np = _rupee(fin.get("non_payable_amount"))
+        if existing_np is None or existing_np + 0.01 < disallow_sum:
+            fin["non_payable_amount"] = f"{disallow_sum:.2f}"
+            fin["patient_liability"] = f"{disallow_sum:.2f}"
+        total_n = _rupee(fin.get("total_hospital_bill") or claim.get("total_hospital_bill"))
+        np_n = _rupee(fin.get("non_payable_amount")) or disallow_sum
+        if total_n is not None:
+            net = max(total_n - np_n, 0.0)
+            fin["net_claimable_amount"] = f"{net:.2f}"
+            fin["recommended_approval_amount"] = f"{net:.2f}"
+
+    # If documentation gaps exist but observations lack forensic depth, seed gap Q&As
+    observations = result.get("observations")
+    if not isinstance(observations, list):
+        observations = []
+        result["observations"] = observations
+    obs_blob = " ".join(
+        f"{o.get('question','')} {o.get('analysis','')}" for o in observations if isinstance(o, dict)
+    ).lower()
+    for gap in result.get("documentation_gaps") or []:
+        if not isinstance(gap, dict):
+            continue
+        title = str(gap.get("title") or gap.get("gap") or "").strip()
+        if not title or title.lower() in obs_blob:
+            continue
+        finding = str(gap.get("finding") or gap.get("forensic_finding") or gap.get("description") or "").strip()
+        evidence = str(gap.get("evidence") or "").strip()
+        action = str(gap.get("audit_action") or gap.get("recommendation") or "").strip()
+        analysis = " ".join(p for p in (finding, evidence, action) if p)
+        if len(analysis) < 40:
+            continue
+        observations.append(
+            {
+                "question": f"Documentation / forensic gap: {title}?",
+                "answer": "Supported",
+                "analysis": analysis,
+            }
+        )
+        obs_blob += " " + title.lower()
+    for row in disallow:
+        if not isinstance(row, dict):
+            continue
+        title = str(row.get("title") or row.get("item") or "").strip()
+        if not title or title.lower() in obs_blob:
+            continue
+        reason = str(row.get("reason") or row.get("finding") or "").strip()
+        evidence = str(row.get("evidence") or "").strip()
+        action = str(row.get("audit_action") or row.get("recommendation") or "").strip()
+        amt = str(row.get("amount") or "").strip()
+        analysis = " ".join(p for p in (f"Amount: {amt}" if amt else "", reason, evidence, action) if p)
+        if len(analysis) < 40:
+            continue
+        observations.append(
+            {
+                "question": f"Is the billed item '{title}' admissible / correctly classified?",
+                "answer": "Not Supported" if "disallow" in action.lower() or "deduct" in action.lower() else "Partially Supported",
+                "analysis": analysis,
+            }
+        )
+        obs_blob += " " + title.lower()
 
     rec = str(result.get("claim_recommended") or "").strip()
     not_rec = str(result.get("claim_not_recommended") or "").strip()

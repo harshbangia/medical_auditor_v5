@@ -89,13 +89,30 @@ CASE CORPUS (OCR / vision transcription — ground every fact here; cite source 
 GUIDELINE / POLICY EXCERPTS (cite clause numbers or guideline thresholds when present):
 {guideline_excerpt[:12000] or "(none provided)"}
 
-Write 4–6 deep observations as JSON only:
+Write 6–8 deep observations as JSON only:
 {{
   "observations": [
     {{
-      "question": "Specific clinical or policy question",
+      "question": "Specific clinical, policy, or forensic-billing question",
       "answer": "Supported|Partially Supported|Not Supported|Insufficient Evidence",
-      "analysis": "2–6 paragraph evidence essay: timeline, guideline thresholds, policy clauses, radiological/lab anchors. Name source documents. Do NOT invent facts. Do NOT fabricate citations."
+      "analysis": "Multi-paragraph (≥180 words when evidence exists): timeline, guideline thresholds, policy clauses, radiological/lab anchors, line-item bill vs notes, rupee amounts, quotes. Name source documents. Do NOT invent facts."
+    }}
+  ],
+  "billing_disallowances": [
+    {{
+      "title": "Short disallowance name",
+      "amount": "Rs. 0",
+      "reason": "Billed vs records",
+      "evidence": "Quote / filename / date",
+      "audit_action": "Disallow / proportionate deduct / query"
+    }}
+  ],
+  "documentation_gaps": [
+    {{
+      "title": "Gap name",
+      "finding": "What is missing or misstated",
+      "evidence": "Source + quote",
+      "audit_action": "Query / withhold"
     }}
   ],
   "auditor_observation_summary": "Direct narrative of what hospital did vs what guideline/policy requires",
@@ -103,7 +120,8 @@ Write 4–6 deep observations as JSON only:
 }}
 
 Rules:
-- Prefer depth like: fresh vs old injury timelines, PED vs accident waiting periods, antibiotic stewardship, documentation gaps — ONLY when supported by corpus.
+- Prefer NotebookLM forensic depth: bill line-item anomalies (role miscodes, unrendered equipment fees), billed-but-missing lab reports, missing progress-note date ranges, discharge omitting OT pathology — ONLY when supported by corpus.
+- At least 2 observations must be forensic billing or documentation-gap questions when corpus supports them.
 - Every analysis must reference at least one source filename from the corpus markers.
 - If evidence is missing, say Insufficient Evidence and list what is missing.
 - Do not invent policy clause numbers that are not in the excerpts.
@@ -171,7 +189,7 @@ def deepen_observations(
             "answer": ans or "Insufficient Evidence",
             "analysis": analysis,
         })
-        if len(cleaned) >= 6:
+        if len(cleaned) >= 8:
             break
 
     if len(cleaned) < 2:
@@ -183,11 +201,18 @@ def deepen_observations(
         result["auditor_observation_summary"] = summary
     conclusion = str(data.get("conclusion") or "").strip()
     if conclusion:
-        # Keep existing inference if already rich; else fill
         if len(str(result.get("auditor_conclusion") or "")) < 80:
             result["auditor_conclusion"] = conclusion
         if len(str(result.get("inference") or "")) < 80:
             result["inference"] = conclusion
+
+    for key in ("billing_disallowances", "documentation_gaps"):
+        extra = data.get(key)
+        if isinstance(extra, list) and extra:
+            existing_extra = result.get(key)
+            if not isinstance(existing_extra, list) or not existing_extra:
+                result[key] = [x for x in extra if isinstance(x, dict)]
+
     result["deep_narrative"] = {"applied": True, "count": len(cleaned)}
     print(f"✅ Deep narrative: {len(cleaned)} observation(s)", flush=True)
     return result

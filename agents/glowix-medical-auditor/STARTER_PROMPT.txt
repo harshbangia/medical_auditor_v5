@@ -1,13 +1,20 @@
 Audit this case as Glowix Medical Services.
 
 Instructions:
-1. Read ALL uploaded PDFs (Assessor first, then Aadhaar, final bill, discharge, clinical, policy, guideline).
+1. Read ALL uploaded PDFs (Assessor first, then Aadhaar, final bill, discharge, OT notes, indoor papers, labs, policy, guideline).
 2. Seal identity and finance from Assessor + KYC + final bill before writing opinions.
-3. Produce a Glowix MEDICAL AUDIT – EXPERT OPINION as a single JSON object (fields for patient, insurance, claim, checklist, billing, financials, deep observations Q&A, conclusion, remarks).
-4. Include 4–6 deep, evidence-grounded Q&As (NotebookLM depth): timelines, guideline thresholds, policy clauses only if present in uploads, named source files.
-5. Do not invent claim IDs, ages, amounts, diagnoses, or clause numbers. Use NA / Insufficient Evidence when missing.
-6. Treat OCR name spelling variants of the same patient as Low KYC notes, not High fraud, when Assessor and Aadhaar agree.
-7. End with clear Claim Recommended Yes/No and a concrete query list in remarks.
+3. Produce a Glowix MEDICAL AUDIT – EXPERT OPINION as a single JSON object (patient, insurance, claim, checklist, billing, financials, billing_disallowances, documentation_gaps, deep observations Q&A, conclusion, remarks).
+4. Match NotebookLM forensic depth — not a short clinical summary:
+   - Line-item final bill vs clinical notes (role misclassification, unrendered equipment fees, duplicate/bundled fees, IRDAI List-I consumables).
+   - Billed investigations vs attached reports (HPE / GeneXpert / culture / radiology).
+   - Discharge diagnosis vs OT notes (omitted primary pathology).
+   - Indoor progress-note coverage for the full length of stay.
+5. Include 6–8 deep, evidence-grounded Q&As (≥180 words each when evidence exists): timelines, guideline thresholds, policy clauses only if present in uploads, named source files, exact rupee amounts, quotes.
+6. At least 2 Q&As must address forensic billing or documentation gaps.
+7. Fill billing_disallowances with rupee amounts and roll them into financial_review.non_payable_amount / patient_liability / net_claimable / recommended_approval.
+8. Do not invent claim IDs, ages, amounts, diagnoses, or clause numbers. Use NA / Insufficient Evidence when missing.
+9. Treat OCR name spelling variants of the same patient as Low KYC notes, not High fraud, when Assessor and Aadhaar agree.
+10. End with clear Claim Recommended Yes/No and a concrete numbered query + deduction list in remarks.
 
 Guideline for this run: use the clinical guideline PDF(s) I uploaded (if any). If none, set compliance appropriately and still complete clinical/policy observations from the case files.
 

@@ -26,6 +26,7 @@ SAMPLE_REPORT = {
         "nature_of_admission": "Emergency",
         "diagnosis": "Mild L3 Compression Fracture",
         "procedure_or_surgery": "Medical management",
+        "total_hospital_bill": "100000",
     },
     "clinical_checklist": [
         {"area": "Indoor Case Papers", "available": "YES", "remarks": ""},
@@ -47,13 +48,30 @@ SAMPLE_REPORT = {
             "answer": "Supported",
         },
     ],
+    "billing_disallowances": [
+        {
+            "title": "Non-payable consumables",
+            "amount": "5000",
+            "reason": "IRDAI List I items billed",
+            "evidence": "Pharmacy bill gloves/syringes",
+            "audit_action": "Deduct Rs. 5,000",
+        }
+    ],
+    "documentation_gaps": [
+        {
+            "title": "Missing MRI film copy",
+            "finding": "Report present but film not enclosed",
+            "evidence": "Radiology folder",
+            "audit_action": "Query hospital for films",
+        }
+    ],
     "inference": (
         "Mrs. Durga Devi, 49 years female, admitted after fall with L3 compression fracture. "
         "Admission is justified for medical management."
     ),
     "compliance_verdict": "Compliant",
     "treatment_billing_audit": {},
-    "financial_review": {},
+    "financial_review": {"total_hospital_bill": "100000", "non_payable_amount": "5000"},
 }
 
 

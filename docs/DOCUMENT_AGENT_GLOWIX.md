@@ -22,3 +22,4 @@ Rollback: `AUDIT_PIPELINE=legacy`
 - **PDF only** via `generate_glowix_expert_opinion_pdf` (letterhead)
 - No HTML download
 - Patient / Claim / Insurance cards come from the same JSON as the PDF
+- Observations must be NotebookLM-depth: 6–8 Q&As, itemised `billing_disallowances`, structured `documentation_gaps` (rendered in §5/§7)
