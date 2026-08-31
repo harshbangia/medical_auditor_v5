@@ -29,6 +29,11 @@ from reportlab.platypus import (
     TableStyle,
 )
 
+from backend.utils.inr_money import (
+    billing_disallowance_rows as _billing_disallowance_rows,
+    recompute_financial_review,
+)
+
 # Brand / letterhead constants (from Glowix Expert Opinion proforma)
 _COMPANY = "GLOWIX MEDICAL SERVICES PRIVATE LIMITED"
 _CIN = "U70200HR2024PTC122256"
@@ -124,43 +129,9 @@ def _age_gender(patient: dict) -> str:
     return f"{age_part} / {sex}"
 
 
-def _money_num(raw: Any) -> Optional[float]:
-    if raw is None:
-        return None
-    s = re.sub(r"[^\d.]", "", str(raw))
-    if not s:
-        return None
-    try:
-        return float(s)
-    except ValueError:
-        return None
-
-
-def _fmt_inr(amount: float) -> str:
-    # Keep simple Indian-style grouping-ish display without locale deps
-    whole = int(round(amount))
-    return f"Rs. {whole:,}"
-
-
-def _billing_disallowance_rows(data: dict) -> List[dict]:
-    rows = data.get("billing_disallowances") or data.get("recommended_deductions") or []
-    return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
-
-
 def _documentation_gap_rows(data: dict) -> List[Any]:
     gaps = data.get("documentation_gaps") or []
     return gaps if isinstance(gaps, list) else []
-
-
-def _sum_disallowances(data: dict) -> Optional[float]:
-    total = 0.0
-    found = False
-    for row in _billing_disallowance_rows(data):
-        n = _money_num(row.get("amount") or row.get("deduction_amount") or row.get("rupees"))
-        if n is not None:
-            total += n
-            found = True
-    return total if found else None
 
 
 def _checklist_status(data: dict) -> List[Tuple[str, str]]:
@@ -451,6 +422,7 @@ def _observation_narrative(data: dict) -> str:
 
 def generate_glowix_expert_opinion_pdf(data: dict, filename: str = "audit_report.pdf") -> str:
     """Write Glowix Expert Opinion proforma PDF; return filename."""
+    data = recompute_financial_review(dict(data or {}))
     styles = _build_styles()
     report_dt = _parse_report_date(data)
     ref = _default_ref(data, report_dt)
@@ -540,30 +512,23 @@ def generate_glowix_expert_opinion_pdf(data: dict, filename: str = "audit_report
         ("Charges appropriate", _na(tba.get("charges_appropriate"))),
     ], styles))
 
-    # 5. Financial review
+    # 5. Financial review — always use recomputed fin (never trust broken claim_savings zeros)
     story.append(Paragraph("5. FINANCIAL REVIEW", styles["section"]))
-    disallow_sum = _sum_disallowances(data)
-    non_pay_raw = fin.get("non_payable_amount")
-    non_pay_num = _money_num(non_pay_raw)
-    if disallow_sum is not None and (non_pay_num is None or non_pay_num < disallow_sum):
-        non_pay_display = _fmt_inr(disallow_sum)
-    else:
-        non_pay_display = _na(non_pay_raw)
     story.append(_kv_block([
         (
             "Total Hospital Bill",
-            _na(savings.get("total_claim_amount") or fin.get("total_hospital_bill") or claim.get("total_hospital_bill")),
+            _na(fin.get("total_hospital_bill") or claim.get("total_hospital_bill") or savings.get("total_claim_amount")),
         ),
-        ("Non-Payable Amount", non_pay_display),
+        ("Non-Payable Amount", _na(fin.get("non_payable_amount"))),
         (
             "Net Claimable Amount",
-            _na(savings.get("admissible_amount") or fin.get("net_claimable_amount")),
+            _na(fin.get("net_claimable_amount") or savings.get("admissible_amount")),
         ),
         (
             "Amount Recommended for Approval",
-            _na(fin.get("recommended_approval_amount") or savings.get("admissible_amount")),
+            _na(fin.get("recommended_approval_amount") or fin.get("net_claimable_amount")),
         ),
-        ("Patient Liability (if any)", _na(fin.get("patient_liability") or (non_pay_display if disallow_sum else None))),
+        ("Patient Liability (if any)", _na(fin.get("patient_liability") or fin.get("non_payable_amount"))),
     ], styles))
 
     disallow_rows = _billing_disallowance_rows(data)

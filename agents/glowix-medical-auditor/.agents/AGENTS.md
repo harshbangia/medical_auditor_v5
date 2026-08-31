@@ -115,9 +115,9 @@ Gurgaon - 122001
 - §6 / observations must be **deep and forensic** (NotebookLM depth): timelines, guideline thresholds, policy waiting periods / PED / accident exemptions, radiological or lab anchors, **line-item bill vs clinical notes**, named source documents, exact rupee amounts and quotes.
 - Minimum **6** deep Q&As; prefer **7–8**. At least **2** must be forensic billing or documentation-gap questions.
 - Always emit structured `billing_disallowances` and `documentation_gaps` when evidence supports them (role miscodes, unrendered equipment fees, billed-but-missing lab reports, missing progress-note date ranges, discharge omitting OT pathology).
+- `financial_review` must equal: non_payable = sum(disallowances), net = total − non_payable, recommended = net. Never leave non_payable/net as 0/1 when disallowance rows have real amounts.
 - Do not dump raw OCR garbage into FWA findings.
-- End with a clear recommend / not-recommend stance and a **numbered** deduction + query list when documentation is incomplete or bill anomalies exist.
-## Interaction mode
+- End with a clear recommend / not-recommend stance and a **numbered** deduction + query list when documentation is incomplete or bill anomalies exist.## Interaction mode
 
 User will upload PDFs and say e.g. “Audit this case against Bronchitis MOHFW guideline” or “Produce Expert Opinion”.
 

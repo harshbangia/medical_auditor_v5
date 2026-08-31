@@ -21,6 +21,10 @@ from uuid import uuid4
 
 from backend.config import env
 from backend.llm.models import model_for
+from backend.utils.inr_money import (
+    dedupe_observations,
+    recompute_financial_review,
+)
 
 ProgressFn = Callable[[str, int, str], None]
 
@@ -172,14 +176,22 @@ Return ONLY one JSON object (no markdown fences, no HTML) with this shape:
 Rules (NotebookLM / forensic depth — mandatory):
 - Fill patient_details, insurance_details, claim_details from Assessor → Aadhaar → bill → discharge (priority).
 - Never leave patient name / age / claim / policy blank if present in Assessor or KYC.
-- Produce **6–8** deep observations. At least **2** must be forensic billing / documentation-gap questions.
-- Each observation.analysis must be elaborative (multi-paragraph): timelines, guideline thresholds, policy waiting periods only if present in uploads, named source files, exact amounts, verbatim clinical quotes where available.
-- Line-by-line final bill vs clinical notes: flag misclassified clinician roles (e.g. physiotherapist billed as super-specialist), unrendered equipment (laparoscopy fees for open laparotomy), duplicate/bundled surgeon fees, IRDAI List-I consumables.
-- Compare billed investigations to attached reports — if GeneXpert / HPE / culture / histopathology are billed but reports are absent, list under documentation_gaps with receipt numbers if present.
-- Check indoor progress notes coverage across full LOS; note missing date ranges.
-- Compare Discharge Summary diagnosis wording to OT notes (e.g. Abdominal Cocoon / encapsulating peritonitis omitted).
-- Fill billing_disallowances with rupee amounts when evidence supports disallowance; sum into financial_review.non_payable_amount and patient_liability; recompute net_claimable and recommended_approval from total − non_payable.
-- remarks must list: (1) each deduction with amount, (2) each hospital query for missing reports/notes.
+- Produce **6–8** deep observations ONLY (do not duplicate billing_disallowances as short Q&As). At least **2** must be forensic billing / documentation-gap questions with full multi-paragraph analysis.
+- Each observation.analysis must be elaborative (multi-paragraph, ≥180 words when evidence exists).
+- Line-by-line final bill vs clinical notes: misclassified clinician roles, unrendered equipment, duplicate fees, IRDAI List-I consumables (sum exact pharmacy lines when possible — do not invent a round figure).
+- Billed investigations vs attached reports (HPE / GeneXpert / AFB / culture) → documentation_gaps + billing_disallowances (withhold amount).
+- Indoor progress notes: if notes stop mid-stay, add a documentation_gap with the exact missing date range.
+- Discharge vs OT: if OT names Abdominal Cocoon / encapsulating peritonitis but discharge omits it, add a documentation_gap.
+- Pre-authorization checklist: Available if any pre-auth / cashless / enhancement letter is in the uploads; else Not Available — never guess NA when a letter is present.
+- billing_disallowances[].amount must be plain rupee amounts (e.g. "15000" or "Rs. 15000").
+- financial_review MUST be consistent arithmetic:
+  non_payable_amount = SUM of billing_disallowances amounts
+  patient_liability = non_payable_amount
+  net_claimable_amount = total_hospital_bill − non_payable_amount
+  recommended_approval_amount = net_claimable_amount
+  Never output non_payable/net as 0, 1, or ratios when disallowance rows have real rupee amounts.
+- Do NOT emit claim_savings (the app recomputes it).
+- remarks: numbered deductions with amounts + hospital queries.
 - Do not invent clause numbers, IDs, ages, or amounts.
 - OCR name spelling variants of the same patient are Low KYC, not High fraud.
 """
@@ -399,97 +411,22 @@ def _normalize_result(data: dict, file_items: List[Tuple[str, bytes]], guideline
         claim["total_hospital_bill"] = bill
         fin["total_hospital_bill"] = bill
 
-    # Structured forensic arrays
+    # Structured forensic arrays (do NOT seed duplicate observation Q&As)
     gaps = result.get("documentation_gaps")
     if not isinstance(gaps, list):
         result["documentation_gaps"] = []
     disallow = result.get("billing_disallowances") or result.get("recommended_deductions")
     if not isinstance(disallow, list):
         disallow = []
-    result["billing_disallowances"] = disallow
+    result["billing_disallowances"] = [r for r in disallow if isinstance(r, dict)]
 
-    def _rupee(raw: Any) -> Optional[float]:
-        if raw is None:
-            return None
-        s = re.sub(r"[^\d.]", "", str(raw))
-        if not s:
-            return None
-        try:
-            return float(s)
-        except ValueError:
-            return None
-
-    disallow_sum = 0.0
-    disallow_found = False
-    for row in disallow:
-        if not isinstance(row, dict):
-            continue
-        n = _rupee(row.get("amount") or row.get("deduction_amount") or row.get("rupees"))
-        if n is not None:
-            disallow_sum += n
-            disallow_found = True
-
-    if disallow_found:
-        existing_np = _rupee(fin.get("non_payable_amount"))
-        if existing_np is None or existing_np + 0.01 < disallow_sum:
-            fin["non_payable_amount"] = f"{disallow_sum:.2f}"
-            fin["patient_liability"] = f"{disallow_sum:.2f}"
-        total_n = _rupee(fin.get("total_hospital_bill") or claim.get("total_hospital_bill"))
-        np_n = _rupee(fin.get("non_payable_amount")) or disallow_sum
-        if total_n is not None:
-            net = max(total_n - np_n, 0.0)
-            fin["net_claimable_amount"] = f"{net:.2f}"
-            fin["recommended_approval_amount"] = f"{net:.2f}"
-
-    # If documentation gaps exist but observations lack forensic depth, seed gap Q&As
     observations = result.get("observations")
     if not isinstance(observations, list):
         observations = []
-        result["observations"] = observations
-    obs_blob = " ".join(
-        f"{o.get('question','')} {o.get('analysis','')}" for o in observations if isinstance(o, dict)
-    ).lower()
-    for gap in result.get("documentation_gaps") or []:
-        if not isinstance(gap, dict):
-            continue
-        title = str(gap.get("title") or gap.get("gap") or "").strip()
-        if not title or title.lower() in obs_blob:
-            continue
-        finding = str(gap.get("finding") or gap.get("forensic_finding") or gap.get("description") or "").strip()
-        evidence = str(gap.get("evidence") or "").strip()
-        action = str(gap.get("audit_action") or gap.get("recommendation") or "").strip()
-        analysis = " ".join(p for p in (finding, evidence, action) if p)
-        if len(analysis) < 40:
-            continue
-        observations.append(
-            {
-                "question": f"Documentation / forensic gap: {title}?",
-                "answer": "Supported",
-                "analysis": analysis,
-            }
-        )
-        obs_blob += " " + title.lower()
-    for row in disallow:
-        if not isinstance(row, dict):
-            continue
-        title = str(row.get("title") or row.get("item") or "").strip()
-        if not title or title.lower() in obs_blob:
-            continue
-        reason = str(row.get("reason") or row.get("finding") or "").strip()
-        evidence = str(row.get("evidence") or "").strip()
-        action = str(row.get("audit_action") or row.get("recommendation") or "").strip()
-        amt = str(row.get("amount") or "").strip()
-        analysis = " ".join(p for p in (f"Amount: {amt}" if amt else "", reason, evidence, action) if p)
-        if len(analysis) < 40:
-            continue
-        observations.append(
-            {
-                "question": f"Is the billed item '{title}' admissible / correctly classified?",
-                "answer": "Not Supported" if "disallow" in action.lower() or "deduct" in action.lower() else "Partially Supported",
-                "analysis": analysis,
-            }
-        )
-        obs_blob += " " + title.lower()
+    result["observations"] = dedupe_observations(observations, max_items=8)
+
+    # Force §5 math from itemised disallowances (models often emit Rs.1 / 0.00 junk)
+    recompute_financial_review(result)
 
     rec = str(result.get("claim_recommended") or "").strip()
     not_rec = str(result.get("claim_not_recommended") or "").strip()
