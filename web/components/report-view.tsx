@@ -110,13 +110,27 @@ export function ReportView({
       const a = document.createElement("a");
       a.href = url;
       const name = str(patient.name).replace(/\s+/g, "_");
-      a.download = name !== "—" ? `${name}_Expert_Opinion.pdf` : "Glowix_Expert_Opinion.pdf";
+      const isHtml =
+        String(data.report_format || "").toLowerCase() === "html" ||
+        Boolean(data.report_html);
+      a.download = isHtml
+        ? name !== "—"
+          ? `${name}_Medical_Audit.html`
+          : "Glowix_Medical_Audit.html"
+        : name !== "—"
+          ? `${name}_Expert_Opinion.pdf`
+          : "Glowix_Expert_Opinion.pdf";
       a.click();
       URL.revokeObjectURL(url);
     } finally {
       setDownloading(false);
     }
   }
+
+  const isHtmlReport =
+    String(data.report_format || "").toLowerCase() === "html" &&
+    typeof data.report_html === "string" &&
+    Boolean(data.report_html);
 
   const verdict = str(data.compliance_verdict);
   const verdictVariant =
@@ -156,10 +170,32 @@ export function ReportView({
           )}
           <Button onClick={downloadPdf} disabled={downloading}>
             <Download className="h-4 w-4" />
-            {downloading ? "Generating…" : "Download Expert Opinion PDF"}
+            {downloading
+              ? "Generating…"
+              : isHtmlReport
+                ? "Download HTML report"
+                : "Download Expert Opinion PDF"}
           </Button>
         </div>
       </div>
+
+      {isHtmlReport && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <FileText className="h-4 w-4" />
+              Gemini document-agent report
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <iframe
+              title="Audit report"
+              className="h-[75vh] w-full rounded border border-slate-200 bg-white"
+              srcDoc={String(data.report_html)}
+            />
+          </CardContent>
+        </Card>
+      )}
 
       {editingIdentity && (
         <p className="text-sm text-slate-500">

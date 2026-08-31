@@ -6,6 +6,7 @@ from typing import List, Optional
 from uuid import uuid4
 import os
 import json
+import re
 import tempfile
 import traceback
 
@@ -477,6 +478,26 @@ def _unlink_temp(path: str):
 
 @app.post("/generate-pdf")
 async def generate_pdf_api(data: dict):
+    # Document-agent HTML reports: return HTML download instead of legacy PDF
+    html = str((data or {}).get("report_html") or "").strip()
+    if html and str((data or {}).get("report_format") or "").lower() == "html":
+        patient = ((data or {}).get("patient_details") or {}).get("name") or "Glowix_Audit"
+        safe = re.sub(r"[^\w\-]+", "_", str(patient))[:60] or "Glowix_Audit"
+        fd, tmp_path = tempfile.mkstemp(suffix=".html")
+        os.close(fd)
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                f.write(html)
+        except Exception:
+            _unlink_temp(tmp_path)
+            raise
+        return FileResponse(
+            path=tmp_path,
+            filename=f"{safe}_Medical_Audit.html",
+            media_type="text/html; charset=utf-8",
+            background=BackgroundTask(_unlink_temp, tmp_path),
+        )
+
     download_name = pdf_download_filename(data)
     fd, tmp_path = tempfile.mkstemp(suffix=".pdf")
     os.close(fd)

@@ -634,6 +634,52 @@ def run_job_audit(job: AuditJob, file_items, guideline, user_question, global_ca
         from backend.services.audit_jobs import _update
         _update(job, phase=phase, progress=pct, message=message)
 
+    from backend.services.document_agent_audit import audit_pipeline_mode, run_document_agent_audit
+
+    if audit_pipeline_mode() == "document_agent":
+        # Optional: attach selected guideline PDFs from S3 alongside case files
+        guideline_names = _normalize_guideline_list(guideline, guidelines)
+        guideline_pdf_items = []
+        for gname in guideline_names:
+            try:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                    download_guideline(gname, tmp.name)
+                    with open(tmp.name, "rb") as f:
+                        guideline_pdf_items.append((gname, f.read()))
+                try:
+                    os.remove(tmp.name)
+                except OSError:
+                    pass
+            except Exception as exc:
+                print(f"⚠️ Could not attach guideline {gname}: {exc}", flush=True)
+        result = run_document_agent_audit(
+            file_items,
+            guidelines=guideline_names,
+            progress=progress,
+            guideline_pdf_items=guideline_pdf_items or None,
+        )
+        # Keep a light session for Ask (HTML + filenames only)
+        session_id = str(result.get("session_id") or uuid4())
+        try:
+            from backend.services import qa_session_cache
+            qa_session_cache.put(
+                session_id,
+                {
+                    "case_text": result.get("report_html") or "",
+                    "images": [],
+                    "guidelines": guideline_names,
+                    "guideline": "; ".join(guideline_names),
+                    "guideline_stores": [],
+                    "notebook_corpus": "",
+                    "audit_engine": "document_agent",
+                },
+            )
+        except Exception:
+            if isinstance(global_cache, dict):
+                global_cache[session_id] = {"case_text": result.get("report_html") or ""}
+        result["session_id"] = session_id
+        return result
+
     return run_full_audit(
         file_items, guideline, user_question, global_cache, progress=progress, guidelines=guidelines
     )
