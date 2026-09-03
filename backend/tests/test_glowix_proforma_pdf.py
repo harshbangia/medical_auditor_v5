@@ -18,16 +18,25 @@ SAMPLE_REPORT = {
     "insurance_details": {
         "insurance_company": "Iffco Tokio General Insurance",
         "policy_number": "H1685201",
+        "policy_period": "01/01/2026 to 31/12/2026",
         "claim_incident_number": "2026071800281",
     },
     "claim_details": {
         "hospital": "Gokuldas Hospital Pvt. Ltd.",
         "date_of_admission": "18/07/2026",
+        "date_of_discharge": "20/07/2026",
         "nature_of_admission": "Emergency",
         "diagnosis": "Mild L3 Compression Fracture",
         "procedure_or_surgery": "Medical management",
         "total_hospital_bill": "100000",
     },
+    "clinical_findings": [
+        {"parameter": "Hemoglobin", "value": "12.1", "normal_range": "12-15", "comment": "Normal"},
+    ],
+    "timeline": [
+        {"date": "18/07/2026", "event": "Admitted"},
+        {"date": "20/07/2026", "event": "Discharged"},
+    ],
     "clinical_checklist": [
         {"area": "Indoor Case Papers", "available": "YES", "remarks": ""},
         {"area": "Lab / Radiology", "available": "YES", "remarks": "X-ray/MRI"},
@@ -38,13 +47,13 @@ SAMPLE_REPORT = {
     ],
     "observations": [
         {
-            "question": "Whether the fracture is acute or secondary to spondylotic changes?",
-            "analysis": "The fracture is acute. Osteoporotic changes are degenerative.",
+            "question": "Whether the fracture is acute or secondary to spondylotic changes",
+            "analysis": "The fracture is acute. Osteoporotic changes are degenerative and do not explain the acute presentation after fall.",
             "answer": "Supported",
         },
         {
-            "question": "Is hospitalization required or can this be managed OPD?",
-            "analysis": "Admission justified due to immobility and need for IV therapy.",
+            "question": "Is hospitalization required or can this be managed OPD",
+            "analysis": "Admission justified due to immobility and need for IV therapy with close monitoring.",
             "answer": "Supported",
         },
     ],
@@ -69,7 +78,10 @@ SAMPLE_REPORT = {
         "Mrs. Durga Devi, 49 years female, admitted after fall with L3 compression fracture. "
         "Admission is justified for medical management."
     ),
+    "auditor_conclusion": "Admission justified; deduct non-payable consumables.",
+    "auditor_observation_summary": "Acute L3 compression fracture with medically necessary short admission.",
     "compliance_verdict": "Compliant",
+    "claim_recommended": "Yes",
     "treatment_billing_audit": {},
     "financial_review": {"total_hospital_bill": "100000", "non_payable_amount": "5000"},
 }
@@ -99,10 +111,14 @@ class GlowixProformaPdfTests(unittest.TestCase):
             import fitz
             doc = fitz.open(path)
             text = "\n".join(page.get_text("text") for page in doc)
-            self.assertIn("MEDICAL AUDIT", text)
+            self.assertIn("Medical Audit Report", text)
             self.assertIn("GLOWIX", text)
             self.assertIn("Mrs. Durga Devi", text)
             self.assertIn("H1685201", text)
+            self.assertIn("1. Patient Details", text)
+            self.assertIn("6. Observations", text)
+            self.assertNotIn("Q1.", text)
+            self.assertNotIn("Ans.", text)
             self.assertGreaterEqual(doc.page_count, 1)
         finally:
             try:

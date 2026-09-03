@@ -1,8 +1,10 @@
-"""Glowix MEDICAL AUDIT – EXPERT OPINION proforma PDF.
+"""Glowix MEDICAL AUDIT REPORT proforma PDF.
 
-Generates the client-facing letter format matching Glowix Medical Services'
-standard expert-opinion layout (patient/policy, admission, documentation
-checklist, treatment/billing, financial, observations Q&A, conclusion, remarks).
+Client-facing letter format matching Glowix Medical Services' Medical Audit
+Report (patient/claim details, clinical findings table, documentation gaps,
+timeline, narrative observations, inference, conclusion, remarks).
+
+Not Q&A / Expert-Opinion style — observations render as prose under §6.
 """
 
 from __future__ import annotations
@@ -420,20 +422,82 @@ def _observation_narrative(data: dict) -> str:
     )
 
 
-def generate_glowix_expert_opinion_pdf(data: dict, filename: str = "audit_report.pdf") -> str:
-    """Write Glowix Expert Opinion proforma PDF; return filename."""
+def _bullet(text: str, styles: Dict[str, ParagraphStyle]) -> Paragraph:
+    return Paragraph(f"• {_esc(text)}", styles["body"])
+
+
+def _simple_table(
+    headers: Sequence[str],
+    rows: Sequence[Sequence[str]],
+    col_widths: Sequence[float],
+    styles: Dict[str, ParagraphStyle],
+) -> Table:
+    data = [[Paragraph(f"<b>{_esc(h)}</b>", styles["label"]) for h in headers]]
+    for row in rows:
+        data.append([Paragraph(_esc(c), styles["value"]) for c in row])
+    table = Table(data, colWidths=list(col_widths))
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F3F4F6")),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#CBD5E1")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+    ]))
+    return table
+
+
+def _topic_heading(question: str) -> str:
+    """Turn a model question into a proforma subheading (no Q1 / Ans)."""
+    q = re.sub(r"^\s*Q\d*\.?\s*", "", str(question or "").strip())
+    q = re.sub(r"\?+\s*$", "", q).strip()
+    if not q:
+        return "Clinical observation"
+    # Keep readable; don't force title-case on medical prose
+    if len(q) > 110:
+        q = q[:107].rstrip() + "…"
+    return q
+
+
+def _gap_lines(data: dict) -> List[str]:
+    lines: List[str] = []
+    for gap in data.get("documentation_gaps") or []:
+        if isinstance(gap, str) and gap.strip():
+            lines.append(gap.strip())
+            continue
+        if not isinstance(gap, dict):
+            continue
+        title = str(gap.get("title") or gap.get("gap") or gap.get("category") or "").strip()
+        finding = str(
+            gap.get("finding")
+            or gap.get("forensic_finding")
+            or gap.get("description")
+            or gap.get("detail")
+            or ""
+        ).strip()
+        evidence = str(gap.get("evidence") or "").strip()
+        action = str(gap.get("audit_action") or gap.get("recommendation") or "").strip()
+        body = " ".join(p for p in (finding, evidence, action) if p)
+        if title and body:
+            lines.append(f"{title}: {body}")
+        elif title or body:
+            lines.append(title or body)
+    return lines
+
+
+def generate_glowix_medical_audit_report_pdf(data: dict, filename: str = "audit_report.pdf") -> str:
+    """Write Glowix Medical Audit Report proforma PDF (narrative, not Q&A)."""
     data = recompute_financial_review(dict(data or {}))
     styles = _build_styles()
     report_dt = _parse_report_date(data)
     ref = _default_ref(data, report_dt)
-    dated = report_dt.strftime("%d-%m-%Y")
+    dated = report_dt.strftime("%d/%m/%Y")
 
     patient = data.get("patient_details") or {}
     insurance = data.get("insurance_details") or {}
     claim = data.get("claim_details") or {}
-    tba = data.get("treatment_billing_audit") or {}
     fin = data.get("financial_review") or {}
-    savings = data.get("claim_savings") or {}
 
     doc = BaseDocTemplate(
         filename,
@@ -454,11 +518,10 @@ def generate_glowix_expert_opinion_pdf(data: dict, filename: str = "audit_report
 
     story: List[Any] = []
 
-    # Ref / date line
     meta = Table(
         [[
             Paragraph(f"<b>Ref. No. :</b> {_esc(ref)}", styles["meta"]),
-            Paragraph(f"<b>Dated :</b> {_esc(dated)}", styles["meta"]),
+            Paragraph(f"<b>Dated :</b> {_esc(dated)}........", styles["meta"]),
         ]],
         colWidths=[280, 220],
     )
@@ -469,227 +532,229 @@ def generate_glowix_expert_opinion_pdf(data: dict, filename: str = "audit_report
         ("RIGHTPADDING", (0, 0), (-1, -1), 0),
     ]))
     story.append(meta)
-    story.append(Paragraph("MEDICAL AUDIT – EXPERT OPINION", styles["title"]))
+    story.append(Paragraph("Medical Audit Report", styles["title"]))
     story.append(HRFlowable(width="100%", thickness=0.6, color=colors.HexColor("#CCCCCC")))
 
-    # 1. Patient & policy
-    story.append(Paragraph("1. PATIENT & POLICY INFORMATION", styles["section"]))
-    story.append(_kv_block([
-        ("Patient Name", _na(patient.get("name"))),
-        ("Age / Gender", _age_gender(patient)),
-        ("Hospital Reg. No.", _na(patient.get("hospital_reg_no") or patient.get("uhid"))),
-        ("Insurance Company", _na(insurance.get("insurance_company"))),
-        ("TPA (if applicable)", _na(insurance.get("tpa"))),
-        ("Policy No.", _na(insurance.get("policy_number"))),
-        ("Claim Incident No.", _na(insurance.get("claim_incident_number"))),
-    ], styles))
+    # 1. Patient Details
+    story.append(Paragraph("1. Patient Details", styles["section"]))
+    for line in (
+        f"Name: {_na(patient.get('name'))}",
+        f"Age: {_na(patient.get('age'))} years" if "year" not in str(patient.get("age") or "").lower() else f"Age: {_na(patient.get('age'))}",
+        f"Sex: {_na(patient.get('sex') or patient.get('gender'))}",
+        f"Claim Number: {_na(insurance.get('claim_incident_number'))}",
+        f"Policy Number: {_na(insurance.get('policy_number'))}",
+        f"Policy Period: {_na(insurance.get('policy_period'))}",
+    ):
+        story.append(_bullet(line, styles))
 
-    # 2. Admission & diagnosis
-    story.append(Paragraph("2. ADMISSION & DIAGNOSIS", styles["section"]))
-    story.append(_kv_block([
-        ("Name of Hospital", _na(claim.get("hospital"))),
-        ("Date & Time of Admission", _na(claim.get("date_of_admission"))),
-        ("Nature of Admission (Emergency / Planned)", _na(claim.get("nature_of_admission"))),
-        ("Provisional Diagnosis", _na(claim.get("provisional_diagnosis") or claim.get("diagnosis"))),
-        ("Final Diagnosis", _na(claim.get("final_diagnosis") or claim.get("diagnosis"))),
-        ("Procedure / Surgery", _na(claim.get("procedure_or_surgery"))),
-        ("Date & Time of Surgery/Procedure", _na(claim.get("procedure_date"))),
-    ], styles))
+    # 2. Claim Details
+    story.append(Paragraph("2. Claim Details", styles["section"]))
+    lab_status = "Available"
+    for row in data.get("clinical_checklist") or []:
+        if not isinstance(row, dict):
+            continue
+        area = str(row.get("area") or "").lower()
+        if "lab" in area or "radiology" in area:
+            av = str(row.get("available") or "").strip().upper()
+            if av in {"NO", "N", "NOT AVAILABLE"}:
+                lab_status = "Not Available"
+            elif av in {"YES", "Y", "AVAILABLE"}:
+                lab_status = "Available"
+            break
+    illness = _na(
+        claim.get("final_diagnosis")
+        or claim.get("diagnosis")
+        or claim.get("provisional_diagnosis")
+    )
+    for line in (
+        f"Hospital Name: {_na(claim.get('hospital'))}",
+        f"Consultation Date: {_na(claim.get('consultation_date') or claim.get('date_of_admission'))}",
+        f"Claimed Illness: {illness}",
+        f"Lab Test: {lab_status}",
+    ):
+        story.append(_bullet(line, styles))
 
-    # 3. Documentation checklist
-    story.append(Paragraph("3. DOCUMENTATION CHECKLIST", styles["section"]))
+    # 3. Summary of Clinical Findings
+    story.append(Paragraph("3. Summary of Clinical Findings", styles["section"]))
+    cf_rows: List[List[str]] = []
+    for item in data.get("clinical_findings") or []:
+        if not isinstance(item, dict):
+            continue
+        cf_rows.append([
+            str(item.get("parameter") or "—"),
+            str(item.get("value") or "—"),
+            str(item.get("normal_range") or "—"),
+            str(item.get("comment") or "—"),
+        ])
+    if not cf_rows:
+        cf_rows = [["—", "Not documented in structured form", "—", "See Observations"]]
+    story.append(_simple_table(
+        ["Parameter", "Value", "Normal Range", "Comments"],
+        cf_rows[:20],
+        [120, 100, 110, 170],
+        styles,
+    ))
+
+    # 4. Documentation Gaps
+    story.append(Paragraph("4. Documentation Gaps in Record", styles["section"]))
+    intro_bits = [
+        _observation_narrative(data),
+    ]
+    # Prefer a short clinical opener from claim facts
+    opener = (
+        f"{_na(patient.get('name'))}, {_na(patient.get('age'))} years, "
+        f"{_na(patient.get('sex') or patient.get('gender'))}, admitted with "
+        f"{illness}. Date of admission: {_na(claim.get('date_of_admission'))}; "
+        f"date of discharge: {_na(claim.get('date_of_discharge'))}."
+    )
+    story.append(Paragraph(_esc(opener), styles["body"]))
+    if intro_bits[0] and intro_bits[0] != opener:
+        # Only add summary if distinct
+        pass
+
+    gaps = _gap_lines(data)
+    if gaps:
+        story.append(Paragraph(
+            "The following documentation / record gaps were identified:",
+            styles["body"],
+        ))
+        for g in gaps[:12]:
+            story.append(_bullet(g, styles))
+    else:
+        story.append(Paragraph(
+            "No major mandatory-document gaps were identified beyond the checklist remarks below.",
+            styles["body"],
+        ))
+
+    # FWA / identity notes as gap bullets when present
+    fraud = data.get("fraud_abuse") or {}
+    if isinstance(fraud, dict) and str(fraud.get("summary") or "").strip():
+        story.append(Paragraph("<b>FWA / integrity notes:</b>", styles["body"]))
+        story.append(Paragraph(_esc(fraud.get("summary")), styles["body"]))
+        for finding in (fraud.get("findings") or [])[:6]:
+            if not isinstance(finding, dict):
+                continue
+            ind = str(finding.get("indicator") or "").strip()
+            ev = str(finding.get("evidence") or "").strip()
+            if ind or ev:
+                story.append(_bullet(" ".join(p for p in (ind, ev) if p), styles))
+
     checklist = _checklist_status(data)
-    story.append(_kv_block(checklist, styles))
-
-    # 4. Treatment & billing
-    story.append(Paragraph("4. TREATMENT & BILLING AUDIT", styles["section"]))
-    story.append(_kv_block([
-        ("Room Category Admitted", _na(tba.get("room_category_admitted"))),
-        ("Room Category Eligible (per policy)", _na(tba.get("room_category_eligible"))),
-        ("Procedures performed", _na(tba.get("procedures_performed") or claim.get("procedure_or_surgery"))),
-        ("Cross-checked with Pre-Auth", _na(tba.get("cross_checked_with_preauth"))),
-        ("Excluded items billed", _na(tba.get("excluded_items_billed"))),
-        ("Charges appropriate", _na(tba.get("charges_appropriate"))),
-    ], styles))
-
-    # 5. Financial review — always use recomputed fin (never trust broken claim_savings zeros)
-    story.append(Paragraph("5. FINANCIAL REVIEW", styles["section"]))
-    story.append(_kv_block([
-        (
-            "Total Hospital Bill",
-            _na(fin.get("total_hospital_bill") or claim.get("total_hospital_bill") or savings.get("total_claim_amount")),
-        ),
-        ("Non-Payable Amount", _na(fin.get("non_payable_amount"))),
-        (
-            "Net Claimable Amount",
-            _na(fin.get("net_claimable_amount") or savings.get("admissible_amount")),
-        ),
-        (
-            "Amount Recommended for Approval",
-            _na(fin.get("recommended_approval_amount") or fin.get("net_claimable_amount")),
-        ),
-        ("Patient Liability (if any)", _na(fin.get("patient_liability") or fin.get("non_payable_amount"))),
-    ], styles))
-
-    disallow_rows = _billing_disallowance_rows(data)
-    if disallow_rows:
+    if checklist:
         story.append(Spacer(1, 4))
-        story.append(Paragraph("<b>Itemised billing disallowances / queries:</b>", styles["body"]))
-        for i, row in enumerate(disallow_rows[:12], start=1):
-            title = str(row.get("title") or row.get("item") or row.get("category") or "Disallowance").strip()
-            amt = str(row.get("amount") or row.get("deduction_amount") or "").strip()
-            reason = str(row.get("reason") or row.get("evidence") or row.get("finding") or "").strip()
-            action = str(row.get("audit_action") or row.get("recommendation") or "").strip()
-            head = f"{i}. {title}"
-            if amt:
-                head += f" — {amt}"
-            story.append(Paragraph(_esc(head), styles["q"]))
-            body_bits = [b for b in (reason, action) if b]
-            if body_bits:
-                story.append(Paragraph(_esc(" ".join(body_bits)), styles["a"]))
+        story.append(Paragraph("<b>Documentation / clinical checklist:</b>", styles["body"]))
+        cl_rows = [[label, status] for label, status in checklist]
+        story.append(_simple_table(
+            ["Clinical / Document Area", "Available?", "Remarks"],
+            [[a, b, ""] for a, b in cl_rows],
+            [220, 90, 190],
+            styles,
+        ))
 
-    # 6. FWA Investigation (Case Notebook)
-    fwa_rows = data.get("fwa_investigation") or (data.get("fraud_abuse") or {}).get("findings") or []
-    if isinstance(fwa_rows, list) and fwa_rows:
-        story.append(Paragraph("6. FWA INVESTIGATION (CASE NOTEBOOK)", styles["section"]))
-        risk = _na((data.get("fraud_abuse") or {}).get("risk_level"))
-        summary = str((data.get("fraud_abuse") or {}).get("summary") or "").strip()
-        story.append(_kv_block([
-            ("Overall FWA Risk", risk),
-        ], styles))
-        if summary:
-            story.append(Paragraph(_esc(summary), styles["body"]))
-        for i, row in enumerate(fwa_rows[:10], start=1):
-            if not isinstance(row, dict):
-                continue
-            ind = str(row.get("indicator") or "").strip()
-            if not ind:
-                continue
-            sev = str(row.get("severity") or "").strip()
-            ev = str(row.get("evidence") or "").strip()
-            rec = str(row.get("recommendation") or "").strip()
-            cite = row.get("citation") or {}
-            cite_bits = []
-            if cite.get("filename"):
-                cite_bits.append(str(cite["filename"]))
-            if cite.get("page"):
-                cite_bits.append(f"p.{cite['page']}")
-            cite_lbl = f" [{', '.join(cite_bits)}]" if cite_bits else ""
-            story.append(Paragraph(
-                _esc(f"{i}. [{sev or 'Medium'}] {ind}{cite_lbl}"),
-                styles["q"],
-            ))
-            body = ev
-            if rec:
-                body = f"{ev} Recommendation: {rec}".strip()
-            if body:
-                story.append(Paragraph(_esc(body), styles["a"]))
+    # 5. Timeline Review
+    story.append(Paragraph("5. Timeline Review", styles["section"]))
+    tl_rows: List[List[str]] = []
+    for item in data.get("timeline") or []:
+        if not isinstance(item, dict):
+            continue
+        tl_rows.append([
+            str(item.get("date") or item.get("when") or "—"),
+            str(item.get("event") or item.get("description") or "—"),
+        ])
+    if not tl_rows:
+        if claim.get("date_of_admission"):
+            tl_rows.append([str(claim.get("date_of_admission")), "Admitted"])
+        if claim.get("date_of_discharge"):
+            tl_rows.append([str(claim.get("date_of_discharge")), "Discharged"])
+    if not tl_rows:
+        tl_rows = [["—", "Timeline not documented"]]
+    story.append(_simple_table(["Date", "Event"], tl_rows[:20], [140, 360], styles))
 
-    # 7. Auditor observations
-    story.append(Paragraph("7. AUDITOR'S OBSERVATIONS", styles["section"]))
-    story.append(_kv_block([
-        ("Any Missing Documents?", _missing_documents_answer(checklist)),
-        ("Diagnosis vs Treatment Appropriate", "Following are the observations-"),
-    ], styles))
-    story.append(Spacer(1, 4))
+    # 6. Observations — narrative prose only (no Q1/Ans)
+    story.append(Paragraph("6. Observations", styles["section"]))
     story.append(Paragraph(_esc(_observation_narrative(data)), styles["body"]))
 
-    gap_rows = _documentation_gap_rows(data)
-    if gap_rows:
-        story.append(Spacer(1, 6))
-        story.append(Paragraph("<b>Documentation & forensic gaps:</b>", styles["body"]))
-        for i, gap in enumerate(gap_rows[:10], start=1):
-            if isinstance(gap, str):
-                text = gap.strip()
-                if text:
-                    story.append(Paragraph(_esc(f"{i}. {text}"), styles["a"]))
-                continue
-            if not isinstance(gap, dict):
-                continue
-            title = str(gap.get("title") or gap.get("gap") or gap.get("category") or "Gap").strip()
-            finding = str(
-                gap.get("finding")
-                or gap.get("forensic_finding")
-                or gap.get("description")
-                or gap.get("detail")
-                or ""
-            ).strip()
-            evidence = str(gap.get("evidence") or "").strip()
-            action = str(gap.get("audit_action") or gap.get("recommendation") or "").strip()
-            story.append(Paragraph(_esc(f"{i}. {title}"), styles["q"]))
-            body = " ".join(b for b in (finding, evidence, action) if b)
-            if body:
-                story.append(Paragraph(_esc(body), styles["a"]))
-
     observations = data.get("observations") or []
-    for idx, obs in enumerate(observations, start=1):
+    for obs in observations:
         if not isinstance(obs, dict):
             continue
         q = str(obs.get("question") or "").strip()
         analysis = str(obs.get("analysis") or obs.get("justification") or "").strip()
         ans_label = str(obs.get("answer") or "").strip()
-        # Prefer long analysis; avoid using short Supported/Not Supported as the whole answer body
-        a = analysis or (ans_label if len(ans_label) > 40 else "")
-        if not q and not a:
+        # Skip stub / short items
+        body = analysis
+        if not body and ans_label and len(ans_label) > 60:
+            body = ans_label
+        if not body:
             continue
-        story.append(Paragraph(f"Q{idx}. {_esc(q)}", styles["q"]))
-        if ans_label and analysis:
-            body = f"Ans. {ans_label}. {analysis}".strip()
-        elif ans_label and not analysis:
-            body = f"Ans. {ans_label}"
-        elif a and not a.lower().startswith("ans"):
-            body = f"Ans. {a}"
+        # Strip accidental Q/Ans prefixes from model output
+        body = re.sub(r"(?i)^\s*ans\.?\s*", "", body).strip()
+        if q:
+            story.append(Paragraph(f"<b>{_esc(_topic_heading(q))}</b>", styles["q"]))
+        if ans_label and ans_label.lower() not in {"supported", "not supported", "partially supported", "insufficient evidence"}:
+            story.append(Paragraph(_esc(body), styles["body"]))
         else:
-            body = a or "Ans. Insufficient Evidence"
-        story.append(Paragraph(_esc(body), styles["a"]))
+            # Optionally lead with stance in prose, not "Ans. Supported."
+            if ans_label and analysis:
+                story.append(Paragraph(
+                    _esc(f"({ans_label}) {analysis}"),
+                    styles["body"],
+                ))
+            else:
+                story.append(Paragraph(_esc(body), styles["body"]))
 
-    # Extra clinical Q&A if present
-    for qa in data.get("qa_section") or []:
-        if not isinstance(qa, dict):
-            continue
-        q = str(qa.get("question") or "").strip()
-        a = str(qa.get("answer") or "").strip()
-        just = str(qa.get("justification") or "").strip()
-        if not q:
-            continue
-        story.append(Paragraph(f"Q. {_esc(q)}", styles["q"]))
-        story.append(Paragraph(_esc(f"Ans. {a}" + (f" {just}" if just else "")), styles["a"]))
+    # Billing disallowances as narrative bullets under observations (not Q&A)
+    disallow_rows = _billing_disallowance_rows(data)
+    if disallow_rows:
+        story.append(Paragraph("<b>Billing / financial observations</b>", styles["q"]))
+        for row in disallow_rows[:12]:
+            title = str(row.get("title") or row.get("item") or "Disallowance").strip()
+            amt = str(row.get("amount") or row.get("deduction_amount") or "").strip()
+            reason = str(row.get("reason") or row.get("evidence") or "").strip()
+            action = str(row.get("audit_action") or row.get("recommendation") or "").strip()
+            head = title + (f" — {amt}" if amt else "")
+            detail = " ".join(p for p in (reason, action) if p)
+            story.append(_bullet(f"{head}. {detail}".strip(), styles))
+        if fin.get("total_hospital_bill") or fin.get("non_payable_amount"):
+            story.append(Paragraph(
+                _esc(
+                    f"Financial summary: Total hospital bill {_na(fin.get('total_hospital_bill'))}; "
+                    f"non-payable / patient liability {_na(fin.get('non_payable_amount') or fin.get('patient_liability'))}; "
+                    f"net claimable / recommended {_na(fin.get('net_claimable_amount') or fin.get('recommended_approval_amount'))}."
+                ),
+                styles["body"],
+            ))
 
-    story.append(_kv_block([
-        ("Evidence of Over-billing?", _na((data.get("fraud_abuse") or {}).get("overbilling") or "NA")),
-        ("Compliance with Guidelines?", _na(data.get("compliance_verdict"))),
-    ], styles))
+    # 7. Inference
+    story.append(Paragraph("7. Inference", styles["section"]))
+    inference = str(data.get("inference") or "").strip()
+    if not inference:
+        inference = str(data.get("auditor_conclusion") or data.get("compliance_verdict") or "").strip()
+    if not inference:
+        inference = "Inference is based on the available clinical records and policy documents reviewed for this audit."
+    story.append(Paragraph(_esc(inference), styles["body"]))
 
-    # 8. Conclusion / Final audit decision
-    story.append(Paragraph("8. CONCLUSION", styles["section"]))
-    recommended = str(
-        data.get("claim_recommended")
-        or data.get("claim_recommendation")
-        or ""
-    ).strip()
-    not_recommended = str(data.get("claim_not_recommended") or "").strip()
-    if recommended or not_recommended:
-        story.append(_kv_block([
-            ("Claim Recommended", _na(recommended or "NA")),
-            ("Claim Not Recommended", _na(not_recommended or ("NA" if recommended.lower() in {"yes", "y"} else ""))),
-        ], styles))
-    conclusion = str(
-        data.get("inference")
-        or data.get("auditor_conclusion")
-        or ""
-    ).strip()
-    if not conclusion:
-        bullets = data.get("report_summary") or []
-        conclusion = " ".join(str(b) for b in bullets[:4]) if bullets else "NA"
-    story.append(Paragraph(_esc(conclusion), styles["body"]))
+    # 8. Auditor's Conclusion
+    story.append(Paragraph("8. Auditor's Conclusion", styles["section"]))
+    conclusion = str(data.get("auditor_conclusion") or data.get("inference") or "").strip()
+    recommended = str(data.get("claim_recommended") or "").strip()
+    if recommended:
+        story.append(Paragraph(
+            _esc(f"Claim recommendation: {recommended}."),
+            styles["body"],
+        ))
+    if conclusion:
+        story.append(Paragraph(_esc(conclusion), styles["body"]))
+    verdict = str(data.get("compliance_verdict") or "").strip()
+    if verdict:
+        story.append(Paragraph(_esc(f"Guideline / compliance assessment: {verdict}."), styles["body"]))
 
     # 9. Remarks
-    story.append(Paragraph("9. REMARKS", styles["section"]))
+    story.append(Paragraph("9. Remarks", styles["section"]))
     remarks = str(data.get("remarks") or "").strip() or (
-        "This report is based on available documents and Case Notebook grounded review. "
-        "We recommend that all future OPD/Hospital admission records should include "
-        "complete clinical notes to support claim validation. Hospitals and clinics must "
-        "follow standard documentation practices to avoid ambiguity in insurance claims."
+        "This report is based on available documents. We recommend that all future "
+        "hospital admission records include complete clinical notes to support claim "
+        "validation and avoid ambiguity in insurance claims."
     )
     story.append(Paragraph(_esc(remarks), styles["body"]))
     story.append(Spacer(1, 16))
@@ -710,3 +775,9 @@ def generate_glowix_expert_opinion_pdf(data: dict, filename: str = "audit_report
 
     doc.build(story)
     return filename
+
+
+def generate_glowix_expert_opinion_pdf(data: dict, filename: str = "audit_report.pdf") -> str:
+    """Backward-compatible alias — downloads now use Medical Audit Report proforma."""
+    return generate_glowix_medical_audit_report_pdf(data, filename)
+

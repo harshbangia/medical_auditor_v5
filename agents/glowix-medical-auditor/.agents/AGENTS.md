@@ -33,8 +33,9 @@ Never stamp another patient’s Assessor pack onto this case if insured names cl
 
 ## Output format (mandatory)
 
-When running inside the **Glowix app**, return **ONLY JSON** matching the Expert Opinion schema
-(patient_details, insurance_details, claim_details, observations, etc.) — no HTML.
+When running inside the **Glowix app**, return **ONLY JSON** for the **Medical Audit Report**
+proforma (patient/claim details, clinical findings, documentation gaps, timeline, narrative
+observations, inference, conclusion, remarks) — no HTML and no chatbot Q1/Ans letter layout.
 When chatting in AI Studio Playground for humans, you may write a plain-text / Markdown report
 with these exact sections:
 

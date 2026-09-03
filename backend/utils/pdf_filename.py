@@ -37,8 +37,8 @@ def pdf_download_filename(
     report_data: dict,
     completed_at: Optional[Union[datetime, str]] = None,
 ) -> str:
-    """Build filename: PatientName_Expert_Opinion_YYYYMMDD_HHMMSS.pdf"""
+    """Build filename: PatientName_Medical_Audit_Report_YYYYMMDD_HHMMSS.pdf"""
     slug = _safe_patient_slug(report_data)
     ts = _format_timestamp(completed_at)
-    return f"{slug}_Expert_Opinion_{ts}.pdf"
+    return f"{slug}_Medical_Audit_Report_{ts}.pdf"
 

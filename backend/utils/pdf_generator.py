@@ -15,7 +15,7 @@ def _rows_from_dict(d: dict, mapping: list) -> list:
 
 
 def generate_pdf(data, filename="audit_report.pdf"):
-    """Default download: Glowix Expert Opinion proforma (client letter format)."""
+    """Default download: Glowix Medical Audit Report proforma (client letter format)."""
     return generate_glowix_expert_opinion_pdf(data, filename)
 
 

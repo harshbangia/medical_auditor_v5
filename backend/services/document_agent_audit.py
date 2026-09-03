@@ -65,7 +65,9 @@ def _system_instruction() -> str:
 
 ## Output for Glowix app (MANDATORY)
 
-Return ONLY one JSON object (no markdown fences, no HTML) with this shape:
+Return ONLY one JSON object (no markdown fences, no HTML) with this shape.
+The PDF is a **Medical Audit Report** (proforma sections 1–9), NOT a Q&A letter.
+Observations must be narrative prose suitable for §6 Observations — do not write the PDF content as Q1/Ans pairs.
 
 {
   "compliance_verdict": "Compliant|Partially Compliant|Non-Compliant|Cannot Determine",
@@ -143,12 +145,12 @@ Return ONLY one JSON object (no markdown fences, no HTML) with this shape:
   ],
   "observations": [
     {
-      "question": "",
+      "question": "Short §6 topic heading (e.g. Evidence of chronic kidney disease) — NOT a chatbot question",
       "answer": "Supported|Partially Supported|Not Supported|Insufficient Evidence",
-      "analysis": "Deep multi-paragraph forensic essay (≥180 words when evidence exists). Name source PDF filenames, dates, rupee amounts, and quotes."
+      "analysis": "Deep multi-paragraph narrative for Medical Audit Report §6 (≥180 words when evidence exists). Name source files, dates, amounts, quotes. Never write 'Q1.' or 'Ans.' inside analysis."
     }
   ],
-  "auditor_observation_summary": "",
+  "auditor_observation_summary": "Opening narrative for §6 Observations (one rich paragraph)",
   "fraud_abuse": {
     "risk_level": "Low|Medium|High|",
     "summary": "",
@@ -163,26 +165,29 @@ Return ONLY one JSON object (no markdown fences, no HTML) with this shape:
       }
     ]
   },
-  "timeline": [{"date": "", "event": ""}],
+  "timeline": [{"date": "DD/MM/YYYY", "event": "Admitted / key event / Discharged"}],
   "clinical_findings": [
-    {"parameter": "", "value": "", "normal_range": "", "comment": "", "source": ""}
+    {"parameter": "e.g. Creatinine / Hemoglobin / Platelets", "value": "", "normal_range": "", "comment": "High/Normal/Low + note", "source": "lab file/date"}
   ],
-  "inference": "",
-  "auditor_conclusion": "",
-  "remarks": "Concrete adjudication: numbered rupee deductions + document queries",
+  "inference": "§7 Inference narrative",
+  "auditor_conclusion": "§8 Auditor's Conclusion narrative",
+  "remarks": "§9 Remarks: numbered deductions + document queries",
   "report_summary": []
 }
 
-Rules (NotebookLM / forensic depth — mandatory):
+Rules (Medical Audit Report + forensic depth — mandatory):
 - Fill patient_details, insurance_details, claim_details from Assessor → Aadhaar → bill → discharge (priority).
 - Never leave patient name / age / claim / policy blank if present in Assessor or KYC.
-- Produce **6–8** deep observations ONLY (do not duplicate billing_disallowances as short Q&As). At least **2** must be forensic billing / documentation-gap questions with full multi-paragraph analysis.
+- Populate clinical_findings (lab/radiology table) and timeline whenever present in uploads.
+- Produce **6–8** deep observation narratives for §6 (topic heading + analysis). Do NOT format as chatbot Q&A.
+- At least **2** observations must cover forensic billing / documentation gaps.
 - Each observation.analysis must be elaborative (multi-paragraph, ≥180 words when evidence exists).
 - Line-by-line final bill vs clinical notes: misclassified clinician roles, unrendered equipment, duplicate fees, IRDAI List-I consumables (sum exact pharmacy lines when possible — do not invent a round figure).
-- Billed investigations vs attached reports (HPE / GeneXpert / AFB / culture) → documentation_gaps + billing_disallowances (withhold amount).
+- Billed investigations vs attached reports → documentation_gaps + billing_disallowances (withhold amount).
 - Indoor progress notes: if notes stop mid-stay, add a documentation_gap with the exact missing date range.
-- Discharge vs OT: if OT names Abdominal Cocoon / encapsulating peritonitis but discharge omits it, add a documentation_gap.
-- Pre-authorization checklist: Available if any pre-auth / cashless / enhancement letter is in the uploads; else Not Available — never guess NA when a letter is present.
+- Structural chronic disease evidence (e.g. bilateral small kidneys / chronic renal parenchymal disease on USG, pre-admission elevated creatinine/proteinuria) MUST be discussed as probable PED / waiting-period risk with policy clauses when the policy PDF is attached — do not dismiss as “incidental, no concealment” without weighing objective chronic markers against waiting periods.
+- Name spelling variants, declarant vs signature mismatches, and impossible date timelines → documentation_gaps / FWA notes.
+- Pre-authorization checklist: Available if any pre-auth / cashless / enhancement letter is in the uploads; else Not Available.
 - billing_disallowances[].amount must be plain rupee amounts (e.g. "15000" or "Rs. 15000").
 - financial_review MUST be consistent arithmetic:
   non_payable_amount = SUM of billing_disallowances amounts

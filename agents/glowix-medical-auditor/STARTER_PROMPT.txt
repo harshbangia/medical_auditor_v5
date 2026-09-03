@@ -3,23 +3,18 @@ Audit this case as Glowix Medical Services.
 Instructions:
 1. Read ALL uploaded PDFs (Assessor first, then Aadhaar, final bill, discharge, OT notes, indoor papers, labs, policy, guideline).
 2. Seal identity and finance from Assessor + KYC + final bill before writing opinions.
-3. Produce a Glowix MEDICAL AUDIT – EXPERT OPINION as a single JSON object (patient, insurance, claim, checklist, billing, financials, billing_disallowances, documentation_gaps, deep observations Q&A, conclusion, remarks).
-4. Match NotebookLM forensic depth:
-   - Line-item final bill vs clinical notes (role misclassification, unrendered equipment fees, duplicate/bundled fees, IRDAI List-I consumables with exact line sums when possible).
-   - Billed investigations vs attached reports (HPE / GeneXpert / culture / radiology).
-   - Discharge diagnosis vs OT notes (omitted primary pathology such as Abdominal Cocoon).
-   - Indoor progress-note coverage for the full length of stay (missing date ranges = documentation_gap).
-5. Include 6–8 deep Q&As only (≥180 words each when evidence exists). Do NOT also repeat each disallowance as a short stub question — put rupee deductions in billing_disallowances.
-6. At least 2 Q&As must address forensic billing or documentation gaps in full prose.
-7. financial_review arithmetic is mandatory:
-   non_payable = SUM(billing_disallowances.amount)
-   net_claimable = total_hospital_bill − non_payable
-   recommended_approval = net_claimable
-   patient_liability = non_payable
-   Never leave non_payable/net as 0, 1, or a ratio when disallowance rows have real amounts.
+3. Produce JSON for a Glowix **Medical Audit Report** proforma (sections 1–9): patient details, claim details, clinical findings table, documentation gaps, timeline, narrative observations, inference, conclusion, remarks — NOT a chatbot Q&A letter.
+4. Match NotebookLM forensic depth in narrative form:
+   - Line-item final bill vs clinical notes.
+   - Billed investigations vs attached reports.
+   - Discharge vs OT / imaging mismatches.
+   - Indoor progress-note coverage for full LOS.
+   - Objective chronic-disease markers (e.g. small kidneys, pre-admission creatinine) vs PED / waiting-period clauses when policy PDF is present.
+   - Name / declarant / date anomalies.
+5. Include 6–8 deep §6 observation narratives (topic heading + analysis ≥180 words when evidence exists). Do NOT use Q1/Ans formatting.
+6. Fill clinical_findings and timeline arrays whenever labs/events exist.
+7. financial_review arithmetic: non_payable = SUM(billing_disallowances); net = total − non_payable; recommended = net.
 8. Do NOT emit claim_savings.
-9. Pre-auth checklist = Available if any pre-auth/cashless/enhancement letter is uploaded.
-10. Do not invent claim IDs, ages, amounts, diagnoses, or clause numbers.
-11. End with Claim Recommended Yes/No and a numbered deduction + query list in remarks.
+9. End with Claim Recommended Yes/No and numbered deductions + queries in remarks.
 
 Return ONLY JSON (no HTML, no markdown fences).

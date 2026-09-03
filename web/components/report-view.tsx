@@ -110,7 +110,7 @@ export function ReportView({
       const a = document.createElement("a");
       a.href = url;
       const name = str(patient.name).replace(/\s+/g, "_");
-      a.download = name !== "—" ? `${name}_Expert_Opinion.pdf` : "Glowix_Expert_Opinion.pdf";
+      a.download = name !== "—" ? `${name}_Medical_Audit_Report.pdf` : "Glowix_Medical_Audit_Report.pdf";
       a.click();
       URL.revokeObjectURL(url);
     } finally {
@@ -156,7 +156,7 @@ export function ReportView({
           )}
           <Button onClick={downloadPdf} disabled={downloading}>
             <Download className="h-4 w-4" />
-            {downloading ? "Generating…" : "Download Expert Opinion PDF"}
+            {downloading ? "Generating…" : "Download Medical Audit Report"}
           </Button>
         </div>
       </div>
@@ -164,7 +164,7 @@ export function ReportView({
       {editingIdentity && (
         <p className="text-sm text-slate-500">
           Correct patient / hospital / insurance fields below. Changes apply to this
-          report view and the next Expert Opinion PDF download.
+          report view and the next Medical Audit Report PDF download.
         </p>
       )}
 
