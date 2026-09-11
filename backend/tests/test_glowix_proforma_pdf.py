@@ -84,6 +84,17 @@ SAMPLE_REPORT = {
     "claim_recommended": "Yes",
     "treatment_billing_audit": {},
     "financial_review": {"total_hospital_bill": "100000", "non_payable_amount": "5000"},
+    "qa_section": [
+        {
+            "question": "Whether surgery is required in this case or not.",
+            "answer": "Surgery is not mandatory; medical management is appropriate.",
+            "justification": "Imaging shows stable compression fracture without cord compression.",
+        },
+        {
+            "question": "Also specify if acute or chronic condition as fresh policy with ITGI.",
+            "answer": "The fracture is acute, consistent with the recent fall history.",
+        },
+    ],
 }
 
 
@@ -117,8 +128,11 @@ class GlowixProformaPdfTests(unittest.TestCase):
             self.assertIn("H1685201", text)
             self.assertIn("1. Patient Details", text)
             self.assertIn("6. Observations", text)
+            self.assertIn("Additional Questions & Answers", text)
+            self.assertIn("Whether surgery is required in this case or not.", text)
+            self.assertIn("acute or chronic condition as fresh policy with ITGI.", text)
+            self.assertIn("Surgery is not mandatory", text)
             self.assertNotIn("Q1.", text)
-            self.assertNotIn("Ans.", text)
             self.assertGreaterEqual(doc.page_count, 1)
         finally:
             try:

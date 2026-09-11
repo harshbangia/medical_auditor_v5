@@ -384,6 +384,19 @@ async def audit(
             guideline_name=guidelines_label,
             guidelines_used=guidelines_used,
         )
+        # Ensure Ask answers are always downloadable via qa_section on the report
+        if isinstance(result, dict) and str(result.get("mode") or "").lower() == "qa":
+            q_text = str(result.get("question") or question or "").strip()
+            a_text = str(result.get("answer") or "").strip()
+            j_text = str(result.get("justification") or "").strip()
+            if q_text and not result.get("qa_section"):
+                result["qa_section"] = [
+                    {
+                        "question": q_text,
+                        "answer": a_text,
+                        "justification": j_text,
+                    }
+                ]
         _audit_log(
             request_id,
             f"fast QA completed; response keys={list(result.keys()) if isinstance(result, dict) else type(result)}"

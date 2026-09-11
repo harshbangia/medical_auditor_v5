@@ -749,6 +749,34 @@ def generate_glowix_medical_audit_report_pdf(data: dict, filename: str = "audit_
     if verdict:
         story.append(Paragraph(_esc(f"Guideline / compliance assessment: {verdict}."), styles["body"]))
 
+    # Client / auditor follow-up Q&A (Ask feature) — must appear in download when present
+    qa_items = data.get("qa_section") or []
+    if isinstance(qa_items, list) and any(
+        isinstance(qa, dict) and str(qa.get("question") or "").strip() for qa in qa_items
+    ):
+        story.append(Paragraph("Additional Questions & Answers", styles["section"]))
+        story.append(Paragraph(
+            "The following questions were raised during this audit review, with answers based on the uploaded case documents and guidelines.",
+            styles["body"],
+        ))
+        q_idx = 0
+        for qa in qa_items:
+            if not isinstance(qa, dict):
+                continue
+            q = str(qa.get("question") or "").strip()
+            if not q:
+                continue
+            q_idx += 1
+            a = str(qa.get("answer") or "").strip()
+            just = str(qa.get("justification") or qa.get("analysis") or "").strip()
+            story.append(Paragraph(f"<b>Question {q_idx}.</b> {_esc(q)}", styles["q"]))
+            ans_body = a
+            if just and just.lower() not in a.lower():
+                ans_body = f"{a} {just}".strip() if a else just
+            if not ans_body:
+                ans_body = "Answer not recorded."
+            story.append(Paragraph(f"<b>Answer:</b> {_esc(ans_body)}", styles["body"]))
+
     # 9. Remarks
     story.append(Paragraph("9. Remarks", styles["section"]))
     remarks = str(data.get("remarks") or "").strip() or (
