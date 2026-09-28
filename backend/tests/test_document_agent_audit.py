@@ -6,7 +6,13 @@ import tempfile
 import os
 import unittest
 
-from backend.services.document_agent_audit import _normalize_result, _parse_json, audit_pipeline_mode
+from backend.services.document_agent_audit import (
+    _normalize_result,
+    _parse_json,
+    audit_pipeline_mode,
+    build_ask_session_corpus,
+    _case_text_from_result,
+)
 from backend.utils.inr_money import parse_inr, recompute_financial_review, sum_disallowances
 from backend.utils.glowix_proforma_pdf import generate_glowix_expert_opinion_pdf
 
@@ -210,6 +216,39 @@ class TestDocumentAgentHelpers(unittest.TestCase):
 
     def test_pipeline_mode(self):
         self.assertIn(audit_pipeline_mode(), {"legacy", "document_agent"})
+
+    def test_ask_corpus_keeps_every_uploaded_filename_and_indoor_text(self):
+        result = {
+            "patient_details": {"name": "NIKHIL KUMAR", "age": "39", "sex": "Male"},
+            "insurance_details": {"claim_incident_number": "2026091900347"},
+            "claim_details": {"hospital": "Felix Hospital", "diagnosis": "LRTI"},
+            "document_sources": [
+                {"filename": "NIKHIL--1.pdf"},
+                {"filename": "NIKHIL--2.pdf"},
+            ],
+            "document_codes": {
+                "scanned": True,
+                "summary": "16 QR codes decoded across NIKHIL--1.pdf",
+                "files_with_codes": ["NIKHIL--1.pdf"],
+            },
+            "observations": [],
+        }
+        extracted = (
+            "=== Source document: NIKHIL--2.pdf ===\n"
+            "Continuation sheet 18/09/2026 at 11:40 PM. C/o loose stools x 2 episodes. "
+            "Cap Redotil, Cap Bifilac, IVF NS — gastroenteritis treatment."
+        )
+        corpus = build_ask_session_corpus(
+            result,
+            [("NIKHIL--1.pdf", b""), ("NIKHIL--2.pdf", b"")],
+            extracted,
+        )
+        self.assertIn("NIKHIL--1.pdf", corpus)
+        self.assertIn("NIKHIL--2.pdf", corpus)
+        self.assertIn("11:40 PM", corpus)
+        self.assertIn("loose stools", corpus.lower())
+        compact = _case_text_from_result(result)
+        self.assertIn("NIKHIL--2.pdf", compact)
 
 
 if __name__ == "__main__":

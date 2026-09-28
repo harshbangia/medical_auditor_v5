@@ -322,6 +322,16 @@ def _case_text_from_result(result: dict) -> str:
     from backend.utils.barcode_qr_scanner import format_document_codes_block
 
     parts: List[str] = []
+    names = [
+        str(s.get("filename") or "").strip()
+        for s in (result.get("document_sources") or [])
+        if isinstance(s, dict) and str(s.get("filename") or "").strip()
+    ]
+    if names:
+        parts.append(
+            "=== UPLOADED SOURCE DOCUMENTS (every file below WAS uploaded) ===\n"
+            + "\n".join(f"- {n}" for n in names)
+        )
     p = result.get("patient_details") or {}
     i = result.get("insurance_details") or {}
     c = result.get("claim_details") or {}
@@ -346,6 +356,60 @@ def _case_text_from_result(result: dict) -> str:
             f"Q: {obs.get('question')}\nA: {obs.get('answer')}\n"
             f"{obs.get('analysis') or obs.get('justification') or ''}"
         )
+    return "\n\n".join(parts).strip()
+
+
+def extract_uploaded_pdf_corpus(
+    file_items: List[Tuple[str, bytes]],
+    progress: ProgressFn = _noop,
+) -> str:
+    """OCR/vision-transcribe every uploaded case PDF for Ask follow-ups."""
+    from backend.utils.pdf_reader import process_pdf_file
+
+    blocks: List[str] = []
+    total = max(len(file_items or []), 1)
+    for idx, (name, data) in enumerate(file_items or []):
+        progress(
+            "verify",
+            min(99, 94 + int(5 * idx / total)),
+            f"Indexing uploaded file {idx + 1}/{total} for Ask: {name}",
+        )
+        text = ""
+        try:
+            out = process_pdf_file(data or b"", filename=name)
+            text = str((out or {}).get("text") or "").strip()
+        except Exception as exc:
+            print(f"⚠️ Ask corpus extract failed for {name}: {exc}", flush=True)
+            text = f"(extract failed: {exc})"
+        blocks.append(f"=== Source document: {name} ===\n{text or '(no readable text)'}")
+    return "\n\n".join(blocks).strip()
+
+
+def build_ask_session_corpus(
+    result: dict,
+    file_items: Optional[List[Tuple[str, bytes]]] = None,
+    extracted_text: str = "",
+) -> str:
+    """Ask must see every uploaded filename plus transcribed page text, not only the report summary."""
+    names: List[str] = []
+    for n, _data in file_items or []:
+        if n and str(n).strip() and str(n) not in names:
+            names.append(str(n).strip())
+    for src in (result.get("document_sources") or []):
+        if not isinstance(src, dict):
+            continue
+        n = str(src.get("filename") or "").strip()
+        if n and n not in names:
+            names.append(n)
+    header = ""
+    if names:
+        header = (
+            "=== UPLOADED SOURCE DOCUMENTS (every file below WAS uploaded and must be treated as present) ===\n"
+            "Indoor / continuation sheets are contemporaneous records. Do not say a listed file is missing.\n"
+            + "\n".join(f"- {n}" for n in names)
+        )
+    summary = _case_text_from_result(result)
+    parts = [p for p in (header, summary, (extracted_text or "").strip()) if p]
     return "\n\n".join(parts).strip()
 
 

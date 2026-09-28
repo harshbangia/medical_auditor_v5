@@ -309,6 +309,13 @@ authoritative. Quote decoded payloads, hospital issuer, printed name/UHID/BAR CD
 whether the codes belong to this patient. Do NOT say codes were absent, that images
 were not extracted, or that QR/barcodes cannot be examined when that section exists.
 Remote HIS URLs were decoded locally and were not fetched.
+
+SOURCE FILES: If CASE lists "=== UPLOADED SOURCE DOCUMENTS ===" or
+"=== Source document: <filename> ===", that file WAS uploaded. Never say it is missing,
+that only NIKHIL--1 / lab PDFs exist, or that no images were extracted. Indoor /
+continuation sheets are contemporaneous records — quote date, time, and complaints
+from those pages when asked. A discharge summary or ER note does not override indoor
+notes when they conflict (e.g. loose stools documented on continuation sheets).
 {multi_block}
 Return ONLY JSON:
 {{

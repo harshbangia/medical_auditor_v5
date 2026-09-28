@@ -719,9 +719,20 @@ def run_job_audit(job: AuditJob, file_items, guideline, user_question, global_ca
             progress=progress,
             guideline_pdf_items=guideline_pdf_items or None,
         )
-        from backend.services.document_agent_audit import _case_text_from_result
+        from backend.services.document_agent_audit import (
+            build_ask_session_corpus,
+            extract_uploaded_pdf_corpus,
+        )
 
-        case_text = _case_text_from_result(result)
+        # Gemini audit does not persist page text. Ask must still be able to
+        # open indoor files (e.g. NIKHIL--2) that never had a QR code.
+        extracted = ""
+        try:
+            progress("verify", 94, "Indexing all uploaded PDFs for Ask follow-ups…")
+            extracted = extract_uploaded_pdf_corpus(file_items, progress=progress)
+        except Exception as exc:
+            print(f"⚠️ Ask corpus extract failed: {exc}", flush=True)
+        case_text = build_ask_session_corpus(result, file_items, extracted)
         session_id = str(result.get("session_id") or uuid4())
         try:
             from backend.services import qa_session_cache

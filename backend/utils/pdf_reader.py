@@ -35,7 +35,8 @@ VISION_OCR_MIN_NATIVE_CHARS = int(os.getenv("VISION_OCR_MIN_NATIVE_CHARS", "120"
 # Priority docs always get more vision pages (Assessor / KYC / bill / discharge).
 _PRIORITY_DOC_RE = re.compile(
     r"assessor|aadhaar|aadhar|final\s*bill|discharge|claim\s*form|"
-    r"pre[\s-]?auth|cashless|policy\s*schedule|kyc",
+    r"pre[\s-]?auth|cashless|policy\s*schedule|kyc|"
+    r"indoor|continuation|icp|case\s*paper",
     re.I,
 )
 PRIORITY_VISION_OCR_PAGES = int(os.getenv("PRIORITY_VISION_OCR_PAGES", "40"))
