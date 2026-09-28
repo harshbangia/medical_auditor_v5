@@ -639,6 +639,42 @@ def generate_glowix_medical_audit_report_pdf(data: dict, filename: str = "audit_
             if ind or ev:
                 story.append(_bullet(" ".join(p for p in (ind, ev) if p), styles))
 
+    codes = data.get("document_codes") or {}
+    if isinstance(codes, dict) and codes.get("scanned"):
+        story.append(Paragraph("<b>Document QR / barcode authenticity:</b>", styles["body"]))
+        related = str(codes.get("related_to_patient") or "").strip()
+        summary = str(codes.get("summary") or "").strip()
+        if related:
+            story.append(Paragraph(_esc(f"Related to this patient? {related}"), styles["body"]))
+        if summary:
+            story.append(Paragraph(_esc(summary), styles["body"]))
+        story.append(Paragraph(
+            "QR codes and barcodes were decoded from the uploaded page images. "
+            "Verification URLs were not fetched from the hospital.",
+            styles["body"],
+        ))
+        for g in (codes.get("unique_codes") or [])[:8]:
+            if not isinstance(g, dict):
+                continue
+            payload = str(g.get("payload") or "").strip()
+            if not payload:
+                continue
+            pages = ", ".join(str(p) for p in (g.get("pages") or [])[:6])
+            rel = str(g.get("related") or "inconclusive")
+            reasons = "; ".join(str(r) for r in (g.get("reasons") or [])[:2])
+            line = f"{g.get('format') or 'Code'}: {payload}"
+            if pages:
+                line += f" ({pages})"
+            line += f" — related: {rel}."
+            if reasons:
+                line += f" {reasons}"
+            story.append(_bullet(line, styles))
+        if not codes.get("unique_codes"):
+            story.append(_bullet(
+                "No machine-readable QR or barcode was decoded on the uploaded pages.",
+                styles,
+            ))
+
     checklist = _checklist_status(data)
     if checklist:
         story.append(Spacer(1, 4))

@@ -83,6 +83,7 @@ export function ReportView({
   const fraud = (data.fraud_abuse as Record<string, unknown>) || {};
   const verification = (data.verification as Record<string, unknown>) || {};
   const docAnalysis = (data.document_analysis as Array<Record<string, unknown>>) || [];
+  const codes = (data.document_codes as Record<string, unknown>) || {};
   const timeline = (data.timeline as Array<Record<string, unknown>>) || [];
   const observations = (data.observations as Array<Record<string, unknown>>) || [];
   const deviations = (data.guideline_deviations as Array<Record<string, unknown>>) || [];
@@ -270,6 +271,35 @@ export function ReportView({
           </Card>
         </Section>
       )}
+
+      {codes && codes.scanned ? (
+        <Section title="QR / barcode authenticity">
+          <Card>
+            <CardContent className="pt-6 space-y-3">
+              <p className="text-sm text-slate-800">
+                <span className="text-slate-500">Related to this patient? </span>
+                {str(codes.related_to_patient)}
+              </p>
+              <p className="text-sm text-slate-700">{str(codes.summary)}</p>
+              {Array.isArray(codes.unique_codes) && codes.unique_codes.length > 0 && (
+                <ul className="space-y-2 text-sm text-slate-700">
+                  {(codes.unique_codes as Array<Record<string, unknown>>).slice(0, 8).map((g, i) => (
+                    <li key={i} className="rounded-md border border-slate-100 p-2">
+                      <p className="font-medium text-slate-900">
+                        {str(g.format)} — related: {str(g.related)}
+                      </p>
+                      <p className="break-all text-xs text-slate-600">{str(g.payload)}</p>
+                      <p className="text-xs text-slate-500">
+                        {Array.isArray(g.pages) ? (g.pages as string[]).join(", ") : ""}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
+        </Section>
+      ) : null}
 
       {docAnalysis.length > 0 && (
         <Section title="Document analysis">

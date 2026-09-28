@@ -250,6 +250,32 @@ def generate_detailed_pdf(data, filename="audit_report.pdf"):
         content.append(kv_table([("Findings", "None identified")], header=False))
     content.append(Spacer(1, 12))
 
+    doc_codes = data.get("document_codes") or {}
+    if isinstance(doc_codes, dict) and doc_codes.get("scanned"):
+        content.extend(section("Document QR / Barcode Authenticity", styles))
+        content.append(kv_table([
+            ("Related to patient?", doc_codes.get("related_to_patient") or "—"),
+            ("Summary", doc_codes.get("summary") or "—"),
+        ], header=False))
+        code_rows = []
+        for g in (doc_codes.get("unique_codes") or [])[:12]:
+            if not isinstance(g, dict):
+                continue
+            code_rows.append([
+                g.get("format") or "—",
+                (g.get("payload") or "—")[:80],
+                ", ".join(g.get("pages") or []) or "—",
+                g.get("related") or "—",
+            ])
+        if code_rows:
+            content.append(Spacer(1, 6))
+            content.append(data_table(
+                ["Type", "Decoded payload", "Pages", "Related?"],
+                code_rows,
+                col_widths=[70, 200, 140, 90],
+            ))
+        content.append(Spacer(1, 12))
+
     # 4. Imaging Findings
     imaging = data.get("imaging_findings") or []
     if imaging:

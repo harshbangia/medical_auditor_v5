@@ -280,6 +280,12 @@ def run_full_audit(
     if len(case_text.strip()) < 50:
         raise RuntimeError("No meaningful text extracted from uploaded PDFs")
 
+    from backend.utils.barcode_qr_scanner import scan_pdf_paths
+
+    codes_executor = ThreadPoolExecutor(max_workers=1)
+    codes_scan = codes_executor.submit(scan_pdf_paths, list(temp_pdf_paths))
+    document_code_hits: list = []
+
     progress("claim", 57, "Extracting dates and claim fields…")
     claim_facts = enrich_claim_facts(case_text, temp_pdf_paths)
 
@@ -348,6 +354,48 @@ def run_full_audit(
             merged["bill_amount"] = identity["bill_amount"]
         case_facts_ledger["merged"] = merged
         case_facts_ledger["claim_identity"] = identity
+
+    try:
+        document_code_hits = codes_scan.result(timeout=180)
+    except Exception as exc:
+        print(f"⚠️ QR/barcode scan failed: {exc}", flush=True)
+    finally:
+        codes_executor.shutdown(wait=False)
+
+    from backend.utils.barcode_qr_scanner import (
+        apply_document_codes,
+        build_document_codes_report,
+        format_document_codes_block,
+    )
+
+    codes_identity = {
+        "patient_name": str(
+            identity.get("patient_name")
+            or (case_facts_ledger.get("merged") or {}).get("patient_name")
+            or ""
+        ),
+        "hospital": str(
+            identity.get("hospital")
+            or (case_facts_ledger.get("merged") or {}).get("hospital")
+            or (claim_facts or {}).get("hospital")
+            or ""
+        ),
+        "uhid": str(identity.get("uhid") or identity.get("hospital_reg_no") or ""),
+    }
+    document_codes_report = build_document_codes_report(
+        document_code_hits,
+        identity=codes_identity,
+        case_text=case_text,
+        scanned_files=[name for _path, name in (temp_pdf_paths or [])],
+    )
+    codes_block = format_document_codes_block(document_codes_report)
+    if codes_block:
+        case_text = (case_text + "\n\n" + codes_block).strip()
+        print(
+            f"[audit] QR/barcode scan: {document_codes_report.get('decoded_count', 0)} "
+            f"decoded, overall={document_codes_report.get('overall')}",
+            flush=True,
+        )
 
     progress("notebook", 65, "Building Case Notebook (corpus + Assessor FWA)…")
     from backend.notebook import build_case_notebook, apply_notebook_to_result
@@ -519,6 +567,12 @@ def run_full_audit(
             result, case_text, insurance_facts, claim_facts, source_summaries,
             case_facts_ledger=case_facts_ledger,
         )
+        result = apply_document_codes(
+            result,
+            document_code_hits,
+            case_text=case_text,
+            scanned_files=[name for _path, name in (temp_pdf_paths or [])],
+        )
         result = apply_notebook_to_result(result, case_notebook)
         progress("verify", 92, "Verifying evidence & assembling case record…")
         result = apply_agent_postprocess(
@@ -590,6 +644,13 @@ def run_full_audit(
             not (result.get("auditor_conclusion") or result.get("inference")),
         ]):
             raise RuntimeError("AI returned empty structured response")
+
+        result = apply_document_codes(
+            result,
+            document_code_hits,
+            case_text=case_text,
+            scanned_files=[name for _path, name in (temp_pdf_paths or [])],
+        )
 
         session_id = str(uuid4())
         first_name, first_index, first_chunks = guideline_stores[0]

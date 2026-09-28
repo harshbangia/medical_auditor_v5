@@ -319,6 +319,8 @@ def _pick(*vals: Any) -> str:
 
 def _case_text_from_result(result: dict) -> str:
     """Compact text corpus for Ask follow-ups (no HTML)."""
+    from backend.utils.barcode_qr_scanner import format_document_codes_block
+
     parts: List[str] = []
     p = result.get("patient_details") or {}
     i = result.get("insurance_details") or {}
@@ -334,6 +336,9 @@ def _case_text_from_result(result: dict) -> str:
         f"Conclusion: {result.get('auditor_conclusion') or result.get('inference')}\n"
         f"Remarks: {result.get('remarks')}"
     )
+    codes = result.get("document_codes") or {}
+    if isinstance(codes, dict) and codes.get("scanned"):
+        parts.append(format_document_codes_block(codes) or str(codes.get("summary") or ""))
     for obs in result.get("observations") or []:
         if not isinstance(obs, dict):
             continue
@@ -514,6 +519,14 @@ def run_document_agent_audit(
 
     uploaded: List[Any] = []
     temp_paths: List[str] = []
+    from concurrent.futures import ThreadPoolExecutor
+    from backend.utils.barcode_qr_scanner import (
+        apply_document_codes,
+        scan_file_items,
+    )
+
+    codes_executor = ThreadPoolExecutor(max_workers=1)
+    codes_scan = codes_executor.submit(scan_file_items, list(file_items))
     try:
         uploaded, temp_paths = _upload_pdfs(client, all_files, progress)
         progress("ai_audit", 70, f"Running Gemini document agent ({model})…")
@@ -552,8 +565,19 @@ def run_document_agent_audit(
                 f"Raw snippet: {(raw or '')[:400]}"
             )
 
-        progress("verify", 92, "Assembling Glowix Expert Opinion…")
+        progress("verify", 92, "Scanning document QR / barcodes and assembling report…")
         result = _normalize_result(data, file_items, guidelines or [])
+        hits: List[dict] = []
+        try:
+            hits = codes_scan.result(timeout=180)
+        except Exception as exc:
+            print(f"⚠️ QR/barcode scan failed: {exc}", flush=True)
+        result = apply_document_codes(
+            result,
+            hits,
+            case_text=_case_text_from_result(result),
+            scanned_files=[n for n, _ in file_items],
+        )
         # Fail loud if identity still empty (UI blank cards)
         name = str((result.get("patient_details") or {}).get("name") or "").strip()
         if not name or name.upper() in {"NA", "N/A", "-", "—"}:
@@ -561,6 +585,7 @@ def run_document_agent_audit(
         progress("done", 100, "Document agent audit complete")
         return result
     finally:
+        codes_executor.shutdown(wait=False)
         for path in temp_paths:
             try:
                 os.remove(path)

@@ -300,8 +300,15 @@ MULTIPLE GUIDELINES APPLY to this case. Cross-examine the hospital against EACH 
         guideline_header = f"GUIDELINE(S) ({guideline_name})"
         return f"""You are a SENIOR INSURANCE MEDICAL AUDITOR answering a follow-up question.
 
-Answer ONLY from case documents, image analysis, and guideline excerpts. Be direct and evidence-based.
+Answer ONLY from case documents, image analysis, guideline excerpts, and the
+DOCUMENT QR / BARCODE AUDIT section when present. Be direct and evidence-based.
 If the hospital's position is weak, say so clearly.
+
+QR / barcode questions: if CASE contains "DOCUMENT QR / BARCODE AUDIT", that scan is
+authoritative. Quote decoded payloads, hospital issuer, printed name/UHID/BAR CD, and
+whether the codes belong to this patient. Do NOT say codes were absent, that images
+were not extracted, or that QR/barcodes cannot be examined when that section exists.
+Remote HIS URLs were decoded locally and were not fetched.
 {multi_block}
 Return ONLY JSON:
 {{

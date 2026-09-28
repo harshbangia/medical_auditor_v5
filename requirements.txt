@@ -9,6 +9,7 @@ pymupdf
 pdf2image
 pytesseract
 Pillow
+zxing-cpp
 boto3
 python-dotenv
 requests
