@@ -36,9 +36,12 @@ def _format_timestamp(completed_at: Optional[Union[datetime, str]] = None) -> st
 def pdf_download_filename(
     report_data: dict,
     completed_at: Optional[Union[datetime, str]] = None,
+    kind: str = "medical",
 ) -> str:
     """Build filename: PatientName_Medical_Audit_Report_YYYYMMDD_HHMMSS.pdf"""
     slug = _safe_patient_slug(report_data)
     ts = _format_timestamp(completed_at)
+    if kind == "inspection":
+        return f"{slug}_Inspection_Report_{ts}.pdf"
     return f"{slug}_Medical_Audit_Report_{ts}.pdf"
 

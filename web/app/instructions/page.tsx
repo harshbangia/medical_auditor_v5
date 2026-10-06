@@ -41,7 +41,7 @@ const STEPS = [
   {
     icon: Download,
     title: "Download PDF",
-    body: "Use Download PDF for a shareable file named with the patient when available. Save it to your case file as needed.",
+    body: "Download Medical Audit Report for the clinical audit letter. Download Inspection Report for the QCI document-verification proforma (GMS/FOR/DV/01). Both use the saved case, including older audits opened from the dashboard.",
   },
   {
     icon: LogOut,

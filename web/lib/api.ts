@@ -99,8 +99,11 @@ export async function getHistory(): Promise<HistoryItem[]> {
   return handle<HistoryItem[]>(res);
 }
 
-export async function generatePdf(report: AuditReport): Promise<Blob> {
-  const res = await fetch(`${API_BASE}/generate-pdf`, {
+export async function generatePdf(
+  report: AuditReport,
+  reportType: "medical" | "inspection" = "medical",
+): Promise<Blob> {
+  const res = await fetch(`${API_BASE}/generate-pdf?report_type=${reportType}`, {
     method: "POST",
     headers: { ...authHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify(report),

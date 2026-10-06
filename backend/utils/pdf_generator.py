@@ -14,9 +14,23 @@ def _rows_from_dict(d: dict, mapping: list) -> list:
     return rows
 
 
+def resolve_report_kind(report_type: str | None) -> str:
+    """Medical audit remains the default download. Inspection is opt-in."""
+    kind = (report_type or "medical").strip().lower()
+    if kind in {"inspection", "qci", "nabcb", "document_verification"}:
+        return "inspection"
+    return "medical"
+
+
 def generate_pdf(data, filename="audit_report.pdf"):
     """Default download: Glowix Medical Audit Report proforma (client letter format)."""
     return generate_glowix_expert_opinion_pdf(data, filename)
+
+
+def generate_inspection_pdf(data, filename="inspection_report.pdf"):
+    """QCI document-verification inspection report (GMS/FOR/DV/01)."""
+    from backend.utils.inspection_proforma_pdf import generate_inspection_report_pdf
+    return generate_inspection_report_pdf(data, filename)
 
 
 def generate_detailed_pdf(data, filename="audit_report.pdf"):

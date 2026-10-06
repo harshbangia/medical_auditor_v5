@@ -69,7 +69,7 @@ export function ReportView({
   sessionId?: string | null;
   onReportChange?: (next: AuditReport) => void;
 }) {
-  const [downloading, setDownloading] = useState(false);
+  const [downloading, setDownloading] = useState<null | "medical" | "inspection">(null);
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
   const [askError, setAskError] = useState("");
@@ -103,19 +103,23 @@ export function ReportView({
     });
   }
 
-  async function downloadPdf() {
-    setDownloading(true);
+  async function downloadPdf(kind: "medical" | "inspection") {
+    setDownloading(kind);
     try {
-      const blob = await generatePdf({ ...data, qa_section: localQa });
+      const blob = await generatePdf({ ...data, qa_section: localQa }, kind);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
       const name = str(patient.name).replace(/\s+/g, "_");
-      a.download = name !== "—" ? `${name}_Medical_Audit_Report.pdf` : "Glowix_Medical_Audit_Report.pdf";
+      if (kind === "inspection") {
+        a.download = name !== "—" ? `${name}_Inspection_Report.pdf` : "Glowix_Inspection_Report.pdf";
+      } else {
+        a.download = name !== "—" ? `${name}_Medical_Audit_Report.pdf` : "Glowix_Medical_Audit_Report.pdf";
+      }
       a.click();
       URL.revokeObjectURL(url);
     } finally {
-      setDownloading(false);
+      setDownloading(null);
     }
   }
 
@@ -155,17 +159,29 @@ export function ReportView({
               {editingIdentity ? "Done editing" : "Edit identity"}
             </Button>
           )}
-          <Button onClick={downloadPdf} disabled={downloading}>
+          <Button onClick={() => downloadPdf("medical")} disabled={downloading !== null}>
             <Download className="h-4 w-4" />
-            {downloading ? "Generating…" : "Download Medical Audit Report"}
+            {downloading === "medical" ? "Generating…" : "Download Medical Audit Report"}
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => downloadPdf("inspection")}
+            disabled={downloading !== null}
+          >
+            <Download className="h-4 w-4" />
+            {downloading === "inspection" ? "Generating…" : "Download Inspection Report"}
           </Button>
         </div>
       </div>
+      <p className="text-sm text-slate-500">
+        Inspection Report is the QCI document-verification proforma (GMS/FOR/DV/01).
+        Open any saved case, including older audits, and use either download.
+      </p>
 
       {editingIdentity && (
         <p className="text-sm text-slate-500">
           Correct patient / hospital / insurance fields below. Changes apply to this
-          report view and the next Medical Audit Report PDF download.
+          report view and the next Medical Audit Report or Inspection Report download.
         </p>
       )}
 

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Form, Header, Request
+from fastapi import FastAPI, UploadFile, File, Form, Header, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi import HTTPException
@@ -11,7 +11,7 @@ import traceback
 
 import backend.config  # noqa: F401 — load .env at startup
 from backend.ai.audit_engine import run_audit
-from backend.utils.pdf_generator import generate_pdf
+from backend.utils.pdf_generator import generate_inspection_pdf, generate_pdf, resolve_report_kind
 from backend.utils.pdf_filename import pdf_download_filename
 from starlette.background import BackgroundTask
 from backend.auth import (
@@ -489,12 +489,16 @@ def _unlink_temp(path: str):
 
 
 @app.post("/generate-pdf")
-async def generate_pdf_api(data: dict):
-    download_name = pdf_download_filename(data)
+async def generate_pdf_api(data: dict, report_type: Optional[str] = Query("medical")):
+    kind = resolve_report_kind(report_type)
+    download_name = pdf_download_filename(data, kind=kind)
     fd, tmp_path = tempfile.mkstemp(suffix=".pdf")
     os.close(fd)
     try:
-        generate_pdf(data, tmp_path)
+        if kind == "inspection":
+            generate_inspection_pdf(data, tmp_path)
+        else:
+            generate_pdf(data, tmp_path)
     except Exception:
         _unlink_temp(tmp_path)
         raise
@@ -552,16 +556,28 @@ def admin_user_audits(user_id: int, authorization: str = Header(None)):
 
 
 @app.get("/admin/audits/{audit_id}/pdf")
-def admin_audit_pdf(audit_id: int, authorization: str = Header(None)):
+def admin_audit_pdf(
+    audit_id: int,
+    report_type: Optional[str] = Query("medical"),
+    authorization: str = Header(None),
+):
     require_admin(authorization)
     entry = get_completed_audit_report(audit_id)
     if not entry:
         raise HTTPException(status_code=404, detail="Audit report not found")
-    download_name = entry["download_filename"]
+    kind = resolve_report_kind(report_type)
+    download_name = pdf_download_filename(
+        entry["report"],
+        completed_at=entry.get("completed_at"),
+        kind=kind,
+    )
     fd, tmp_path = tempfile.mkstemp(suffix=".pdf")
     os.close(fd)
     try:
-        generate_pdf(entry["report"], tmp_path)
+        if kind == "inspection":
+            generate_inspection_pdf(entry["report"], tmp_path)
+        else:
+            generate_pdf(entry["report"], tmp_path)
     except Exception:
         _unlink_temp(tmp_path)
         raise
